@@ -67,97 +67,41 @@
             </div>
           </div>
 
-          <div class="cli-preview" aria-label="LD-gpt-check 运行结果示例">
-            <div class="cli-titlebar">
+          <div class="terminal-frame" aria-label="LD-gpt-check 运行结果示例">
+            <div class="terminal-titlebar">
               <div class="flex items-center gap-2" aria-hidden="true">
-                <span class="cli-dot bg-[#ff5f57]"></span>
-                <span class="cli-dot bg-[#febc2e]"></span>
-                <span class="cli-dot bg-[#28c840]"></span>
+                <span class="terminal-dot bg-[#ff5f57]"></span>
+                <span class="terminal-dot bg-[#febc2e]"></span>
+                <span class="terminal-dot bg-[#28c840]"></span>
               </div>
-              <div class="cli-title">LD-gpt-check / local benchmark</div>
-              <div class="cli-live">LIVE</div>
+              <div class="terminal-title">LD-gpt-check / Codex health check</div>
+              <div class="terminal-live">RUNNING</div>
             </div>
-            <div class="cli-body">
-              <div class="cli-command-line">
-                <span class="cli-prompt">~/bench</span>
-                <div class="shiki-code cli-command" data-shiki-code data-lang="bash">
-                  <pre><code>ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload</code></pre>
-                </div>
+            <div class="terminal-strip" aria-hidden="true">
+              <div class="terminal-chip terminal-chip-blue">
+                <span>model</span>
+                <strong>gpt-5.5</strong>
               </div>
-
-              <div class="cli-progress" aria-hidden="true">
-                <div class="cli-progress-head">
-                  <span>candy_21</span>
-                  <strong>5 / 5</strong>
-                </div>
-                <div class="cli-progress-bar"><span style="width: 100%"></span></div>
+              <div class="terminal-chip terminal-chip-violet">
+                <span>reasoning</span>
+                <strong>xhigh</strong>
               </div>
-
-              <div class="cli-status-list" aria-hidden="true">
-                <div class="cli-status-row">
-                  <span class="cli-status-index">01</span>
-                  <p>答案是 21 个...</p>
-                  <strong class="cli-pass">PASS</strong>
-                </div>
-                <div class="cli-status-row">
-                  <span class="cli-status-index">02</span>
-                  <p>最少需要取出 27 个...</p>
-                  <strong class="cli-fail">FAIL</strong>
-                </div>
-                <div class="cli-status-row">
-                  <span class="cli-status-index">05</span>
-                  <p>最少需要取出 21 个...</p>
-                  <strong class="cli-pass">PASS</strong>
-                </div>
+              <div class="terminal-chip terminal-chip-emerald">
+                <span>tests</span>
+                <strong>5</strong>
               </div>
-
-              <div class="cli-metrics" aria-hidden="true">
-                <div><span>Accuracy</span><strong>80.0%</strong></div>
-                <div><span>Avg TPS</span><strong>38.9</strong></div>
-                <div><span>Avg Time</span><strong>19.4s</strong></div>
-                <div><span>Reason Tok</span><strong>2.3k</strong></div>
+              <div class="terminal-chip terminal-chip-amber">
+                <span>upload</span>
+                <strong>summary only</strong>
               </div>
-
-              <div class="cli-table-wrap" aria-hidden="true">
-                <table class="cli-table">
-                  <thead>
-                    <tr>
-                      <th>Run</th>
-                      <th>In Tok</th>
-                      <th>Out Tok</th>
-                      <th>Reason</th>
-                      <th>TPS</th>
-                      <th>OK</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>1</td>
-                      <td>412</td>
-                      <td>736</td>
-                      <td>2100</td>
-                      <td>39.4</td>
-                      <td><span class="cli-check">✓</span></td>
-                    </tr>
-                    <tr>
-                      <td>2</td>
-                      <td>412</td>
-                      <td>812</td>
-                      <td>2800</td>
-                      <td>38.1</td>
-                      <td><span class="cli-cross">×</span></td>
-                    </tr>
-                    <tr>
-                      <td>5</td>
-                      <td>412</td>
-                      <td>690</td>
-                      <td>1900</td>
-                      <td>38.5</td>
-                      <td><span class="cli-check">✓</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            </div>
+            <div class="terminal-stage" aria-hidden="true">
+              <div id="hero-terminal" class="terminal-screen"></div>
+            </div>
+            <div class="terminal-footer" aria-hidden="true">
+              <div><span>accuracy</span><strong>80.0%</strong></div>
+              <div><span>avg tps</span><strong>38.9</strong></div>
+              <div><span>reason tok</span><strong>2.3k</strong></div>
             </div>
           </div>
         </section>

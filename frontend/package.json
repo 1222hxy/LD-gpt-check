@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@fontsource/noto-sans-sc": "^5.2.9",
-    "shiki": "^4.3.0"
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0"
   }
 }

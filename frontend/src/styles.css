@@ -82,161 +82,105 @@
     @apply mt-2 mb-0 text-sm leading-6 text-slate-500;
   }
 
-  .cli-preview {
+  .terminal-frame {
     @apply relative min-w-0 overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-2xl shadow-blue-100/80;
   }
 
-  .cli-preview::before {
-    @apply pointer-events-none absolute inset-x-8 top-8 -z-10 h-40 rounded-full opacity-60 blur-3xl;
+  .terminal-frame::before {
+    @apply pointer-events-none absolute -right-14 top-10 h-36 w-36 rounded-full opacity-70 blur-3xl;
     content: "";
-    background: linear-gradient(90deg, rgba(37, 99, 235, 0.22), rgba(34, 211, 238, 0.22), rgba(139, 92, 246, 0.16));
+    background: rgba(34, 211, 238, 0.34);
   }
 
-  .cli-titlebar {
-    @apply flex min-w-0 items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-white via-blue-50/70 to-cyan-50 px-4 py-3;
+  .terminal-frame::after {
+    @apply pointer-events-none absolute -bottom-12 left-8 h-32 w-48 rounded-full opacity-60 blur-3xl;
+    content: "";
+    background: rgba(169, 151, 255, 0.28);
   }
 
-  .cli-dot {
+  .terminal-titlebar {
+    @apply relative z-10 flex min-w-0 items-center justify-between gap-3 border-b border-slate-800 bg-slate-950 px-4 py-3;
+  }
+
+  .terminal-dot {
     @apply block size-3 rounded-full shadow-sm;
   }
 
-  .cli-title {
-    @apply min-w-0 truncate font-mono text-xs font-semibold text-slate-500;
+  .terminal-title {
+    @apply min-w-0 truncate font-mono text-xs font-semibold text-slate-300;
   }
 
-  .cli-live {
-    @apply rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-700;
+  .terminal-live {
+    @apply rounded-full border border-emerald-300/40 bg-emerald-300/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-300;
   }
 
-  .cli-body {
-    @apply grid gap-4 p-4 sm:p-5;
+  .terminal-strip {
+    @apply relative z-10 grid grid-cols-2 gap-2 border-b border-blue-100 bg-gradient-to-r from-blue-50 via-white to-cyan-50 p-3 sm:grid-cols-4;
   }
 
-  .cli-command-line {
-    @apply grid min-w-0 gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center;
+  .terminal-chip {
+    @apply min-w-0 rounded-lg border bg-white/80 px-3 py-2 shadow-sm shadow-blue-100/60;
   }
 
-  .cli-prompt {
-    @apply font-mono text-xs font-semibold text-blue-600;
+  .terminal-chip span {
+    @apply block truncate font-mono text-[10px] uppercase text-slate-400;
   }
 
-  .shiki-code {
-    @apply min-w-0 overflow-hidden;
+  .terminal-chip strong {
+    @apply mt-0.5 block truncate text-sm font-semibold text-slate-950;
   }
 
-  .cli-command .shiki {
-    @apply m-0 overflow-x-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] leading-5 sm:text-[13px];
+  .terminal-chip-blue {
+    @apply border-blue-100;
   }
 
-  .cli-command code {
-    @apply block min-w-max font-mono;
+  .terminal-chip-violet {
+    @apply border-violet/25;
   }
 
-  .cli-progress {
-    @apply rounded-xl border border-blue-100 bg-blue-50/70 p-3;
+  .terminal-chip-emerald {
+    @apply border-emerald-200;
   }
 
-  .cli-progress-head {
-    @apply mb-2 flex items-center justify-between gap-3 font-mono text-xs;
+  .terminal-chip-amber {
+    @apply border-amber/30;
   }
 
-  .cli-progress-head span {
-    @apply text-blue-700;
+  .terminal-stage {
+    @apply relative z-10 bg-slate-100/70 p-3 sm:p-4;
   }
 
-  .cli-progress-head strong {
-    @apply text-slate-900;
+  .terminal-screen {
+    @apply h-[18.75rem] overflow-hidden rounded-xl border border-slate-800 bg-[#08111f] p-3 shadow-2xl shadow-slate-900/25 sm:h-[20.5rem] sm:p-4;
   }
 
-  .cli-progress-bar {
-    @apply h-2 overflow-hidden rounded-full bg-white;
+  .terminal-screen .xterm {
+    @apply h-full;
   }
 
-  .cli-progress-bar span {
-    @apply block h-full rounded-full bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-400;
+  .terminal-screen .xterm-viewport {
+    background-color: transparent !important;
+    overflow: hidden !important;
   }
 
-  .cli-status-list {
-    @apply grid gap-2;
+  .terminal-screen .xterm-screen {
+    @apply mx-auto;
   }
 
-  .cli-status-row {
-    @apply grid min-h-11 grid-cols-[2rem_minmax(0,1fr)_4rem] items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 shadow-sm shadow-blue-50;
+  .terminal-footer {
+    @apply relative z-10 grid grid-cols-3 gap-px border-t border-blue-100 bg-blue-100;
   }
 
-  .cli-status-index {
-    @apply font-mono text-xs font-semibold text-slate-400;
+  .terminal-footer div {
+    @apply bg-white/90 px-4 py-3;
   }
 
-  .cli-status-row p {
-    @apply m-0 min-w-0 truncate text-sm text-slate-600;
+  .terminal-footer span {
+    @apply block truncate font-mono text-[10px] uppercase text-slate-400;
   }
 
-  .cli-pass,
-  .cli-fail {
-    @apply justify-self-end rounded-full px-2 py-1 font-mono text-[10px] font-bold;
-  }
-
-  .cli-pass {
-    @apply bg-emerald-50 text-emerald-700;
-  }
-
-  .cli-fail {
-    @apply bg-rose-50 text-rose-700;
-  }
-
-  .cli-metrics {
-    @apply grid grid-cols-2 gap-2 lg:grid-cols-4;
-  }
-
-  .cli-metrics div {
-    @apply rounded-xl border border-blue-100 bg-gradient-to-br from-white to-blue-50/60 p-3;
-  }
-
-  .cli-metrics span {
-    @apply block truncate font-mono text-[10px] uppercase text-slate-400 sm:text-[11px];
-  }
-
-  .cli-metrics strong {
-    @apply mt-1 block text-xl font-semibold leading-none text-slate-950;
-  }
-
-  .cli-table-wrap {
-    @apply overflow-x-auto rounded-xl border border-slate-200 bg-white;
-  }
-
-  .cli-table {
-    @apply w-full min-w-[31rem] border-collapse text-left font-mono text-[11px] sm:text-xs;
-  }
-
-  .cli-table th,
-  .cli-table td {
-    @apply whitespace-nowrap border-b border-slate-100 px-3 py-2;
-  }
-
-  .cli-table th {
-    @apply bg-slate-50 font-semibold text-slate-400;
-  }
-
-  .cli-table td {
-    @apply text-slate-600;
-  }
-
-  .cli-table tbody tr:last-child td {
-    @apply border-b-0;
-  }
-
-  .cli-check,
-  .cli-cross {
-    @apply inline-grid size-6 place-items-center rounded-full font-sans text-sm font-bold;
-  }
-
-  .cli-check {
-    @apply bg-emerald-50 text-emerald-700;
-  }
-
-  .cli-cross {
-    @apply bg-rose-50 text-rose-700;
+  .terminal-footer strong {
+    @apply mt-1 block text-lg font-semibold leading-none text-slate-950;
   }
 
   .result-tile {
