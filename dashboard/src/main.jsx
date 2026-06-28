@@ -188,7 +188,7 @@ function Sidebar({ filters, models, onChange }) {
         </label>
       </div>
       <div className="mt-5 rounded-md border border-stone-200 bg-stone-50 p-3 text-xs leading-5 text-stone-500">
-        当前数据来自本地 mock API；生产环境接 Cloudflare Worker 的 D1 聚合接口。
+        当前数据来自 Cloudflare Worker 的 D1 聚合接口。
       </div>
     </aside>
   );

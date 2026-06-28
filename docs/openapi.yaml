@@ -350,7 +350,7 @@ paths:
   /api/v1/admin/bridges/identify:
     post:
       tags: [Bridges]
-      summary: Detect bridge name, slug, homepage, and icon for a base URL
+      summary: Read page title, slug, homepage, and icon for a base URL
       operationId: identifyBridge
       requestBody:
         required: true
@@ -365,6 +365,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeIdentifyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/bridge-suggestions/status:
+    post:
+      tags: [Bridges]
+      summary: Update a bridge suggestion status
+      operationId: updateBridgeSuggestionStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeSuggestionStatusRequest"
+      responses:
+        "200":
+          description: Suggestion status updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeSuggestionStatusResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -516,7 +541,7 @@ components:
 
     BridgeIdentifyResponse:
       type: object
-      required: [ok, base_url, host, detected_name, slug, confidence]
+      required: [ok, base_url, host, detected_name, slug]
       properties:
         ok:
           type: boolean
@@ -534,16 +559,30 @@ components:
           type: string
         slug:
           type: string
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
         reason:
           type: string
-        ai_used:
+
+    BridgeSuggestionStatusRequest:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, rejected]
+
+    BridgeSuggestionStatusResponse:
+      type: object
+      required: [ok, id, status]
+      properties:
+        ok:
           type: boolean
-        ai_configured:
-          type: boolean
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, rejected]
 
     User:
       type: object

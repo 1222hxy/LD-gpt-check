@@ -13,9 +13,6 @@ export interface Env {
   TURNSTILE_SECRET_KEY?: string;
   ADMIN_LINUXDO_IDS?: string;
   ADMIN_USER_IDS?: string;
-  BRIDGE_AI_BASE_URL?: string;
-  BRIDGE_AI_API_KEY?: string;
-  BRIDGE_AI_MODEL?: string;
 }
 
 const DEVICE_EXPIRES_SECONDS = 600;
@@ -79,6 +76,7 @@ export default {
       if (request.method === "GET" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesGet(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges/identify") return withCommonHeaders(await adminBridgeIdentifyPost(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/admin/bridge-suggestions/status") return withCommonHeaders(await adminBridgeSuggestionStatusPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/bridge-suggestions") return withCommonHeaders(await bridgeSuggestionPost(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/start", "/api/v1/device-authorizations")) return withCommonHeaders(await deviceStart(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/poll", "/api/v1/device-authorizations/token")) return withCommonHeaders(await devicePoll(request, env), request, env, requestID);
@@ -87,6 +85,7 @@ export default {
       if (request.method === "GET" && path === "/auth/linuxdo/start") return withCommonHeaders(await oauthStart(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/auth/linuxdo/callback") return withCommonHeaders(await oauthCallback(request, env), request, env, requestID);
       if (request.method === "GET" && matches(path, "/api/me", "/api/v1/me")) return withCommonHeaders(await apiMe(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/api/dashboard/overview") return withCommonHeaders(await dashboardOverview(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/submissions") return withCommonHeaders(await createSubmission(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/api/v1/submissions") return withCommonHeaders(await listSubmissions(request, env), request, env, requestID);
       if (request.method === "DELETE" && path === "/api/v1/submissions") return withCommonHeaders(await deleteAllSubmissions(request, env), request, env, requestID);
@@ -264,8 +263,7 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
   const suggestions = await env.DB.prepare(
     `SELECT bridge_suggestions.id, bridge_suggestions.base_url, bridge_suggestions.host, bridge_suggestions.source,
             bridge_suggestions.submitted_name, bridge_suggestions.page_title, bridge_suggestions.icon_url,
-            bridge_suggestions.ai_name, bridge_suggestions.ai_slug, bridge_suggestions.ai_confidence,
-            bridge_suggestions.ai_reason, bridge_suggestions.status, bridge_suggestions.occurrence_count,
+            bridge_suggestions.status, bridge_suggestions.occurrence_count,
             bridge_suggestions.created_at, bridge_suggestions.updated_at, bridge_suggestions.last_seen_at,
             users.username, users.login
      FROM bridge_suggestions
@@ -351,18 +349,32 @@ async function adminBridgeIdentifyPost(request: Request, env: Env): Promise<Resp
   if (!user) return jsonError("login required", 401, "unauthorized");
   if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
   const body = await readJson<any>(request);
-  const detected = await identifyBridgeCandidate(env, body.base_url, str(body.name || body.submitted_name, MAX_STRING_LENGTH));
+  const detected = await identifyBridgeCandidate(body.base_url, str(body.name || body.submitted_name, MAX_STRING_LENGTH));
   const suggestionID = str(body.suggestion_id, MAX_STRING_LENGTH);
   if (suggestionID) {
     await env.DB.prepare(
       `UPDATE bridge_suggestions
-       SET page_title = ?, icon_url = ?, ai_name = ?, ai_slug = ?, ai_confidence = ?, ai_reason = ?, updated_at = ?
+       SET page_title = ?, icon_url = ?, updated_at = ?
        WHERE id = ?`
     )
-      .bind(detected.page_title, detected.icon_url, detected.detected_name, detected.slug, detected.confidence, detected.reason, iso(new Date()), suggestionID)
+      .bind(detected.page_title, detected.icon_url, iso(new Date()), suggestionID)
       .run();
   }
   return json({ ok: true, ...detected });
+}
+
+async function adminBridgeSuggestionStatusPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const body = await readJson<any>(request);
+  const id = str(body.id, MAX_STRING_LENGTH);
+  const status = str(body.status, 32);
+  if (!id) return jsonError("id is required", 400, "bad_request");
+  if (!["pending", "rejected"].includes(status)) return jsonError("status must be pending or rejected", 400, "bad_request");
+  await env.DB.prepare(`UPDATE bridge_suggestions SET status = ?, updated_at = ? WHERE id = ?`).bind(status, iso(new Date()), id).run();
+  return json({ ok: true, id, status });
 }
 
 async function bridgeSuggestionPost(request: Request, env: Env): Promise<Response> {
@@ -1066,6 +1078,193 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
   });
 }
 
+async function dashboardOverview(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const range = dashboardRange(url.searchParams.get("range"));
+  const model = str(url.searchParams.get("model") || "all", MAX_STRING_LENGTH) || "all";
+  const cutoff = iso(addSeconds(new Date(), -range.days * 86400));
+  const modelFilter = model !== "all" ? model : "";
+  const where = modelFilter ? "s.created_at >= ? AND s.model = ?" : "s.created_at >= ?";
+  const binds = modelFilter ? [cutoff, modelFilter] : [cutoff];
+
+  const modelsRow = await env.DB.prepare(
+    `SELECT DISTINCT model FROM benchmark_submissions
+     WHERE model IS NOT NULL AND model != ''
+     ORDER BY model ASC`
+  ).all<any>();
+  const models = (modelsRow.results ?? []).map((row: any) => String(row.model || "")).filter(Boolean);
+
+  const summaryRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS submissions, COUNT(DISTINCT s.user_id) AS active_users,
+            AVG(s.accuracy) AS average_accuracy, AVG(s.avg_time_seconds) AS average_latency_seconds,
+            AVG(s.avg_tps) AS average_tps, SUM(s.attempt_count) AS total_attempts
+     FROM benchmark_submissions s
+     WHERE ${where}`
+  ).bind(...binds).first<any>();
+  const tokenRow = await env.DB.prepare(
+    `SELECT COALESCE(SUM(a.total_tokens), 0) AS token_total
+     FROM benchmark_attempts a
+     JOIN benchmark_submissions s ON s.id = a.submission_id
+     WHERE ${where}`
+  ).bind(...binds).first<any>();
+  const trendRows = await env.DB.prepare(
+    `SELECT substr(s.created_at, 1, 10) AS date, COUNT(*) AS submissions,
+            AVG(s.accuracy) AS accuracy, AVG(s.avg_tps) AS avg_tps,
+            COALESCE(SUM(t.tokens), 0) AS tokens
+     FROM benchmark_submissions s
+     LEFT JOIN (
+       SELECT submission_id, SUM(total_tokens) AS tokens
+       FROM benchmark_attempts
+       GROUP BY submission_id
+     ) t ON t.submission_id = s.id
+     WHERE ${where}
+     GROUP BY date
+     ORDER BY date ASC`
+  ).bind(...binds).all<any>();
+  const modelRows = await env.DB.prepare(
+    `SELECT s.model AS model, COUNT(*) AS submissions, AVG(s.accuracy) AS accuracy,
+            AVG(s.avg_tps) AS avg_tps, AVG(s.avg_time_seconds) AS avg_time_seconds,
+            SUM(s.attempt_count) AS attempts
+     FROM benchmark_submissions s
+     WHERE ${where}
+     GROUP BY s.model
+     ORDER BY submissions DESC, model ASC`
+  ).bind(...binds).all<any>();
+  const questionRows = await env.DB.prepare(
+    `SELECT q.question_id AS question_id, MAX(q.question_title) AS title,
+            SUM(q.test_count) AS attempts, SUM(q.correct_count) AS correct,
+            AVG(q.avg_time_seconds) AS avg_time_seconds
+     FROM benchmark_question_results q
+     JOIN benchmark_submissions s ON s.id = q.submission_id
+     WHERE ${where}
+     GROUP BY q.question_id
+     ORDER BY (1.0 * SUM(q.correct_count) / CASE WHEN SUM(q.test_count) > 0 THEN SUM(q.test_count) ELSE 1 END) ASC, attempts DESC
+     LIMIT 24`
+  ).bind(...binds).all<any>();
+  const recentRows = await env.DB.prepare(
+    `SELECT s.id, s.model, s.question_count, s.attempt_count, s.correct_count, s.accuracy,
+            s.avg_time_seconds, s.is_anonymous, s.created_at,
+            users.username, users.login, users.name, users.avatar_url, users.avatar_template,
+            bridges.name AS codex_bridge_name
+     FROM benchmark_submissions s
+     JOIN users ON users.id = s.user_id
+     LEFT JOIN bridges ON bridges.id = s.codex_bridge_id
+     WHERE ${where}
+     ORDER BY s.created_at DESC
+     LIMIT 20`
+  ).bind(...binds).all<any>();
+  const segmentRows = await env.DB.prepare(
+    `SELECT
+       CASE
+         WHEN s.codex_channel = 'official' THEN '官方'
+         WHEN s.codex_channel = 'bridge' THEN COALESCE(NULLIF(bridges.name, ''), '中转站')
+         WHEN s.codex_channel = 'unknown_bridge' THEN '未知中转站'
+         ELSE COALESCE(NULLIF(s.codex_channel, ''), '未知')
+       END AS label,
+       COUNT(*) AS count,
+       AVG(s.accuracy) AS accuracy
+     FROM benchmark_submissions s
+     LEFT JOIN bridges ON bridges.id = s.codex_bridge_id
+     WHERE ${where}
+     GROUP BY label
+     ORDER BY count DESC, label ASC
+     LIMIT 12`
+  ).bind(...binds).all<any>();
+  const hourlyRows = await env.DB.prepare(
+    `SELECT CAST(strftime('%H', s.created_at) AS INTEGER) AS hour,
+            COUNT(*) AS submissions, SUM(s.attempt_count) AS attempts,
+            AVG(s.accuracy) AS accuracy, AVG(s.avg_time_seconds) AS avg_latency_seconds
+     FROM benchmark_submissions s
+     WHERE ${where}
+     GROUP BY hour
+     ORDER BY hour ASC`
+  ).bind(...binds).all<any>();
+
+  const trend = (trendRows.results ?? []).map((row: any) => ({
+    date: String(row.date || ""),
+    submissions: int(row.submissions),
+    accuracy: ratio(row.accuracy),
+    avgTps: round(num(row.avg_tps), 1),
+    tokens: int(row.tokens),
+  }));
+  const modelBreakdown = (modelRows.results ?? []).map((row: any) => ({
+    model: str(row.model || "unknown", MAX_STRING_LENGTH),
+    submissions: int(row.submissions),
+    accuracy: ratio(row.accuracy),
+    avgTps: round(num(row.avg_tps), 1),
+    avgTimeSeconds: round(num(row.avg_time_seconds), 1),
+    attempts: int(row.attempts),
+  }));
+  const questionQuality = (questionRows.results ?? []).map((row: any) => {
+    const attempts = int(row.attempts);
+    const accuracy = attempts > 0 ? clampRatio(int(row.correct) / attempts) : 0;
+    return {
+      questionId: str(row.question_id || "unknown", MAX_STRING_LENGTH),
+      title: str(row.title || row.question_id || "Unknown question", MAX_STRING_LENGTH),
+      accuracy: round(accuracy, 3),
+      attempts,
+      avgTimeSeconds: round(num(row.avg_time_seconds), 1),
+      failureRate: round(1 - accuracy, 3),
+    };
+  });
+  const recentSubmissions = (recentRows.results ?? []).map((row: any) => ({
+    id: str(row.id, MAX_STRING_LENGTH),
+    user: submissionDisplayUser(row, !!row.is_anonymous),
+    model: str(row.model || "unknown", MAX_STRING_LENGTH),
+    accuracy: ratio(row.accuracy),
+    questionCount: int(row.question_count),
+    attemptCount: int(row.attempt_count),
+    avgTimeSeconds: round(num(row.avg_time_seconds), 1),
+    createdAt: str(row.created_at, MAX_STRING_LENGTH),
+    status: dashboardStatus(ratio(row.accuracy)),
+  }));
+  const segments = (segmentRows.results ?? []).map((row: any) => ({
+    label: str(row.label || "未知", MAX_STRING_LENGTH),
+    count: int(row.count),
+    accuracy: ratio(row.accuracy),
+  }));
+  const hourlyBuckets = normalizeHourlyBuckets(hourlyRows.results ?? []);
+  const accuracyValues = recentSubmissions.map((item: any) => item.accuracy);
+  const latencyValues = recentSubmissions.map((item: any) => item.avgTimeSeconds);
+  const totalAttempts = int(summaryRow?.total_attempts);
+  const averageAccuracy = ratio(summaryRow?.average_accuracy);
+  const statistics = buildDashboardStatistics({
+    trend,
+    modelBreakdown,
+    questionQuality,
+    recentSubmissions,
+    hourlyBuckets,
+    accuracyValues,
+    latencyValues,
+    totalAttempts,
+    averageAccuracy,
+  });
+
+  return json({
+    updatedAt: iso(new Date()),
+    filters: {
+      range: range.value,
+      model: modelFilter || "all",
+      models,
+    },
+    summary: {
+      submissions: int(summaryRow?.submissions),
+      activeUsers: int(summaryRow?.active_users),
+      averageAccuracy,
+      averageLatencySeconds: round(num(summaryRow?.average_latency_seconds), 1),
+      averageTps: round(num(summaryRow?.average_tps), 1),
+      tokenTotal: int(tokenRow?.token_total),
+    },
+    trend,
+    modelBreakdown: modelBreakdown.map(({ attempts, ...item }: any) => item),
+    questionQuality,
+    recentSubmissions,
+    segments,
+    hourlyBuckets,
+    statistics,
+  });
+}
+
 async function deleteSubmission(request: Request, env: Env): Promise<Response> {
   const auth = await getBearerUser(request, env);
   if (!auth) return jsonError("unauthorized", 401, "unauthorized");
@@ -1440,9 +1639,11 @@ function knownPath(path: string): boolean {
     "/health",
     "/api/questions",
     "/api/v1/questions",
+    "/api/dashboard/overview",
     "/api/v1/admin/questions",
     "/api/v1/admin/bridges",
     "/api/v1/admin/bridges/identify",
+    "/api/v1/admin/bridge-suggestions/status",
     "/api/v1/bridge-suggestions",
     "/api/device/start",
     "/api/v1/device-authorizations",
@@ -1832,13 +2033,13 @@ async function upsertBridgeSuggestion(
       .run();
     return { id: existing.id, base_url: input.baseURL, status: existing.status || "pending" };
   }
-  const detected = await identifyBridgeCandidate(env, input.baseURL, input.submittedName);
+  const detected = await identifyBridgeCandidate(input.baseURL, input.submittedName);
   const id = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO bridge_suggestions
        (id, user_id, base_url, host, source, submitted_name, page_title, icon_url,
-        ai_name, ai_slug, ai_confidence, ai_reason, status, occurrence_count, created_at, updated_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`
+        status, occurrence_count, created_at, updated_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`
   )
     .bind(
       id,
@@ -1849,10 +2050,6 @@ async function upsertBridgeSuggestion(
       input.submittedName,
       detected.page_title,
       detected.icon_url,
-      detected.detected_name,
-      detected.slug,
-      detected.confidence,
-      detected.reason,
       now,
       now,
       now
@@ -1861,24 +2058,16 @@ async function upsertBridgeSuggestion(
   return { id, base_url: input.baseURL, status: "pending", detected_name: detected.detected_name, icon_url: detected.icon_url };
 }
 
-async function identifyBridgeCandidate(env: Env, rawBaseURL: unknown, submittedName = ""): Promise<Record<string, unknown>> {
+async function identifyBridgeCandidate(rawBaseURL: unknown, submittedName = ""): Promise<Record<string, unknown>> {
   const baseURL = normalizeProviderBaseURL(rawBaseURL);
   if (!baseURL) throw new APIError(400, "bad_request", "base_url must be a valid https URL");
   const host = hostFromProviderBaseURL(baseURL);
   const homepageURL = providerHomepageURL(baseURL);
   const page = await fetchBridgePageInfo(homepageURL);
   const fallbackName = str(submittedName || page.title || host.replace(/^api\./, ""), MAX_STRING_LENGTH);
-  const ai = await identifyBridgeWithAI(env, {
-    baseURL,
-    host,
-    homepageURL,
-    submittedName,
-    pageTitle: page.title,
-  });
-  const detectedName = str(ai?.name || fallbackName, MAX_STRING_LENGTH);
-  const slug = slugify(str(ai?.slug || detectedName, MAX_STRING_LENGTH)) || slugify(host) || `bridge-${crypto.randomUUID().slice(0, 8)}`;
-  const confidence = typeof ai?.confidence === "number" && Number.isFinite(ai.confidence) ? Math.max(0, Math.min(1, ai.confidence)) : page.title ? 0.55 : 0.35;
-  const reason = str(ai?.reason || (page.title ? "matched from page title and host" : "matched from host"), MAX_METADATA_LENGTH);
+  const detectedName = str(fallbackName, MAX_STRING_LENGTH);
+  const slug = slugify(detectedName) || slugify(host) || `bridge-${crypto.randomUUID().slice(0, 8)}`;
+  const reason = page.title ? "matched from page title and host" : "matched from host";
   return {
     base_url: baseURL,
     host,
@@ -1887,10 +2076,7 @@ async function identifyBridgeCandidate(env: Env, rawBaseURL: unknown, submittedN
     icon_url: page.iconURL,
     detected_name: detectedName,
     slug,
-    confidence,
     reason,
-    ai_used: !!ai,
-    ai_configured: !!(env.BRIDGE_AI_BASE_URL && env.BRIDGE_AI_API_KEY),
   };
 }
 
@@ -1987,71 +2173,6 @@ async function iconURLReachable(url: string): Promise<boolean> {
     }
   }
   return false;
-}
-
-async function identifyBridgeWithAI(
-  env: Env,
-  input: { baseURL: string; host: string; homepageURL: string; submittedName: string; pageTitle: string }
-): Promise<{ name?: string; slug?: string; confidence?: number; reason?: string } | null> {
-  if (!env.BRIDGE_AI_BASE_URL || !env.BRIDGE_AI_API_KEY) return null;
-  const endpoint = `${env.BRIDGE_AI_BASE_URL.replace(/\/+$/, "")}/chat/completions`;
-  try {
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${env.BRIDGE_AI_API_KEY}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: env.BRIDGE_AI_MODEL || "gpt-4.1-mini",
-        temperature: 0,
-        max_tokens: 180,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: "Return compact JSON only. Identify the likely AI API bridge/provider name from URL and page metadata." },
-          {
-            role: "user",
-            content: JSON.stringify({
-              base_url: input.baseURL,
-              host: input.host,
-              homepage_url: input.homepageURL,
-              submitted_name: input.submittedName,
-              page_title: input.pageTitle,
-              expected_schema: { name: "string", slug: "kebab-case string", confidence: "0..1 number", reason: "short string" },
-            }),
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) return null;
-    const data: any = await resp.json();
-    const content = String(data?.choices?.[0]?.message?.content || "");
-    const parsed = parseJSONFromText(content);
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      name: str((parsed as any).name, MAX_STRING_LENGTH),
-      slug: slugify(str((parsed as any).slug, MAX_STRING_LENGTH)),
-      confidence: Number((parsed as any).confidence),
-      reason: str((parsed as any).reason, MAX_METADATA_LENGTH),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseJSONFromText(text: string): any | null {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = /\{[\s\S]*\}/.exec(text);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
 }
 
 async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL: string; host: string; channel: string; bridgeID: string | null; bridgeName: string }> {
@@ -2220,6 +2341,666 @@ function validNumber(v: unknown, min: number, max: number): boolean {
 
 function stringArray(v: unknown, maxItems: number, maxItemLength: number): boolean {
   return Array.isArray(v) && v.length <= maxItems && v.every((item) => typeof item === "string" && item.length <= maxItemLength);
+}
+
+function dashboardRange(value: string | null): { value: string; days: number } {
+  if (value === "7d") return { value: "7d", days: 7 };
+  if (value === "90d") return { value: "90d", days: 90 };
+  return { value: "30d", days: 30 };
+}
+
+function normalizeHourlyBuckets(rows: any[]): any[] {
+  const byHour = new Map<number, any>();
+  for (const row of rows) {
+    byHour.set(int(row.hour), {
+      hour: int(row.hour),
+      submissions: int(row.submissions),
+      attempts: int(row.attempts),
+      accuracy: ratio(row.accuracy),
+      avgLatencySeconds: round(num(row.avg_latency_seconds), 1),
+    });
+  }
+  return Array.from({ length: 24 }, (_, hour) => byHour.get(hour) || {
+    hour,
+    submissions: 0,
+    attempts: 0,
+    accuracy: 0,
+    avgLatencySeconds: 0,
+  });
+}
+
+function buildDashboardStatistics(input: any): Record<string, unknown> {
+  const trend = input.trend as any[];
+  const modelBreakdown = input.modelBreakdown as any[];
+  const questionQuality = input.questionQuality as any[];
+  const recentSubmissions = input.recentSubmissions as any[];
+  const hourlyBuckets = input.hourlyBuckets as any[];
+  const accuracyValues = input.accuracyValues as number[];
+  const latencyValues = input.latencyValues as number[];
+  const totalAttempts = int(input.totalAttempts);
+  const averageAccuracy = clampRatio(input.averageAccuracy);
+  const accuracy = statisticalAccuracy(averageAccuracy, totalAttempts, accuracyValues);
+  const latency = latencySummary(latencyValues);
+  const regression = regressionSummary(trend, averageAccuracy);
+  const modelComparisons = modelComparisonStats(modelBreakdown);
+  const pairwiseTests = pairwiseStats(modelBreakdown);
+  const testCoverage = testCoverageStats({ totalAttempts, recentSubmissions, questionQuality, modelBreakdown, hourlyBuckets });
+  const trendStability = trendStabilityStats(trend);
+  const timeOfDay = timeOfDayStats(hourlyBuckets, averageAccuracy);
+  const forecast = {
+    accuracy: forecastSeries(trend.map((item) => item.accuracy), true),
+    submissions: forecastSeries(trend.map((item) => item.submissions), false),
+  };
+  const correlations = correlationStats(trend, recentSubmissions, questionQuality);
+  const questionDiagnostics = questionDiagnosticStats(questionQuality, averageAccuracy);
+  const modelRanking = modelRankingStats(modelBreakdown);
+  const robustness = robustnessStats(recentSubmissions, questionQuality);
+  const distributionShape = {
+    dailyAccuracy: distributionSummary(trend.map((item) => item.accuracy)),
+    dailySubmissions: distributionSummary(trend.map((item) => item.submissions)),
+    recentLatency: distributionSummary(latencyValues),
+    questionFailure: distributionSummary(questionQuality.map((item) => item.failureRate)),
+    hourlyAccuracy: distributionSummary(hourlyBuckets.map((item) => item.accuracy)),
+  };
+  const drift = driftStats(trend);
+  const riskBudget = riskBudgetStats({ averageAccuracy, totalAttempts, recentSubmissions, questionDiagnostics, trendStability });
+  const efficiencyFrontier = efficiencyFrontierStats(modelBreakdown);
+  return {
+    accuracy,
+    latency,
+    regression,
+    power: powerStats(modelBreakdown, averageAccuracy),
+    modelComparisons,
+    pairwiseTests,
+    testCoverage,
+    trendStability,
+    timeOfDay,
+    forecast,
+    correlations,
+    questionDiagnostics,
+    modelRanking,
+    robustness,
+    distributionShape,
+    drift,
+    riskBudget,
+    efficiencyFrontier,
+  };
+}
+
+function statisticalAccuracy(meanValue: number, sampleSize: number, values: number[]): Record<string, number> {
+  const n = Math.max(sampleSize, values.length, 1);
+  const margin = 1.96 * Math.sqrt(Math.max(meanValue * (1 - meanValue), 0) / n);
+  return {
+    mean: round(meanValue, 3),
+    stdDev: round(stdDev(values), 3),
+    ci95Low: round(clampRatio(meanValue - margin), 3),
+    ci95High: round(clampRatio(meanValue + margin), 3),
+    marginOfError: round(margin, 3),
+    sampleSize: sampleSize,
+  };
+}
+
+function latencySummary(values: number[]): Record<string, number> {
+  return {
+    mean: round(mean(values), 1),
+    median: round(quantile(values, 0.5), 1),
+    p90: round(quantile(values, 0.9), 1),
+    p95: round(quantile(values, 0.95), 1),
+    stdDev: round(stdDev(values), 1),
+  };
+}
+
+function regressionSummary(trend: any[], observedAccuracy: number): Record<string, unknown> {
+  const midpoint = Math.max(1, Math.floor(trend.length / 2));
+  const baseline = trend.length > 1 ? mean(trend.slice(0, midpoint).map((item) => item.accuracy)) : observedAccuracy;
+  const delta = observedAccuracy - baseline;
+  const zScore = safeDivide(delta, Math.max(stdDev(trend.map((item) => item.accuracy)), 0.01));
+  return {
+    baselineAccuracy: round(baseline, 3),
+    observedAccuracy: round(observedAccuracy, 3),
+    delta: round(delta, 3),
+    zScore: round(zScore, 2),
+    pValue: pValueFromScore(zScore),
+    verdict: delta > 0.02 ? "improved" : delta < -0.02 ? "regression" : "stable",
+  };
+}
+
+function modelComparisonStats(models: any[]): any[] {
+  const best = Math.max(0, ...models.map((item) => item.accuracy));
+  return models.map((item) => {
+    const n = Math.max(int(item.attempts || item.submissions), 1);
+    const margin = 1.96 * Math.sqrt(Math.max(item.accuracy * (1 - item.accuracy), 0) / n);
+    const delta = item.accuracy - best;
+    return {
+      model: item.model,
+      sampleSize: n,
+      accuracy: round(item.accuracy, 3),
+      ci95Low: round(clampRatio(item.accuracy - margin), 3),
+      ci95High: round(clampRatio(item.accuracy + margin), 3),
+      marginOfError: round(margin, 3),
+      posteriorMean: round((item.accuracy * n + 1) / (n + 2), 3),
+      posteriorLow: round(clampRatio(item.accuracy - margin), 3),
+      posteriorHigh: round(clampRatio(item.accuracy + margin), 3),
+      deltaVsBest: round(delta, 3),
+      verdict: Math.abs(delta) < 0.005 ? "leader" : delta > -0.03 ? "competitive" : "lagging",
+    };
+  });
+}
+
+function pairwiseStats(models: any[]): any[] {
+  if (models.length === 0) return [];
+  const best = [...models].sort((a, b) => b.accuracy - a.accuracy)[0];
+  return models.map((item) => {
+    const delta = item.accuracy - best.accuracy;
+    const pooled = Math.sqrt(Math.max(best.accuracy * (1 - best.accuracy), 0.001) / Math.max(best.attempts || 1, 1)
+      + Math.max(item.accuracy * (1 - item.accuracy), 0.001) / Math.max(item.attempts || 1, 1));
+    const zScore = safeDivide(delta, pooled || 0.01);
+    const pValue = pValueFromScore(zScore);
+    return {
+      model: item.model,
+      comparedTo: best.model,
+      delta: round(delta, 3),
+      zScore: round(zScore, 2),
+      pValue,
+      adjustedPValue: round(Math.min(1, pValue * Math.max(models.length - 1, 1)), 4),
+      effectSize: round(delta, 3),
+      verdict: Math.abs(delta) < 0.01 ? "similar" : delta > 0 ? "better" : "significant",
+    };
+  });
+}
+
+function testCoverageStats(input: any): Record<string, unknown> {
+  const recent = input.recentSubmissions as any[];
+  const questions = input.questionQuality as any[];
+  const models = input.modelBreakdown as any[];
+  const hourly = input.hourlyBuckets as any[];
+  const passRate = safeDivide(recent.filter((item) => item.status === "healthy").length, Math.max(recent.length, 1));
+  return {
+    suites: [
+      { label: "提交样本", passed: recent.length, total: recent.length, status: recent.length > 0 ? "pass" : "empty" },
+      { label: "题目覆盖", passed: questions.filter((item) => item.attempts > 0).length, total: questions.length, status: questions.length > 0 ? "pass" : "empty" },
+      { label: "模型覆盖", passed: models.length, total: models.length, status: models.length > 0 ? "pass" : "empty" },
+      { label: "时段覆盖", passed: hourly.filter((item) => item.submissions > 0).length, total: 24, status: "measured" },
+    ],
+    totalAttempts: int(input.totalAttempts),
+    passRate: round(passRate, 3),
+    regressionCount: recent.filter((item) => item.status === "regression").length,
+    watchCount: recent.filter((item) => item.status === "watch").length,
+    flakyQuestions: questions.filter((item) => item.failureRate > 0.2 && item.failureRate < 0.8).length,
+  };
+}
+
+function trendStabilityStats(trend: any[]): Record<string, unknown> {
+  const submissions = trend.map((item) => item.submissions);
+  const accuracies = trend.map((item) => item.accuracy);
+  const accuracyMean = mean(accuracies);
+  const accuracyStdDev = stdDev(accuracies);
+  const lower = clampRatio(accuracyMean - 3 * accuracyStdDev);
+  const upper = clampRatio(accuracyMean + 3 * accuracyStdDev);
+  const latest = accuracies.length ? accuracies[accuracies.length - 1] : accuracyMean;
+  return {
+    submissionStdDev: round(stdDev(submissions), 1),
+    accuracyStdDev: round(accuracyStdDev, 3),
+    accuracyMean: round(accuracyMean, 3),
+    upperControlLimit: round(upper, 3),
+    lowerControlLimit: round(lower, 3),
+    latestZScore: round(safeDivide(latest - accuracyMean, accuracyStdDev || 0.01), 2),
+    anomalies: trend
+      .map((item) => ({ date: item.date, accuracy: item.accuracy, zScore: safeDivide(item.accuracy - accuracyMean, accuracyStdDev || 0.01) }))
+      .filter((item) => Math.abs(item.zScore) >= 3)
+      .map((item) => ({ date: item.date, accuracy: round(item.accuracy, 3), zScore: round(item.zScore, 2) })),
+  };
+}
+
+function timeOfDayStats(hourlyBuckets: any[], overallAccuracy: number): Record<string, unknown> {
+  const hourly = hourlyBuckets.map((item) => {
+    const margin = item.attempts > 0 ? 1.96 * Math.sqrt(Math.max(item.accuracy * (1 - item.accuracy), 0) / item.attempts) : 0;
+    const delta = item.accuracy - overallAccuracy;
+    const zScore = safeDivide(delta, margin || 0.01);
+    const pValue = pValueFromScore(zScore);
+    return {
+      hour: item.hour,
+      label: `${String(item.hour).padStart(2, "0")}:00`,
+      attempts: item.attempts,
+      submissions: item.submissions,
+      accuracy: round(item.accuracy, 3),
+      avgLatencySeconds: round(item.avgLatencySeconds, 1),
+      ci95Low: round(clampRatio(item.accuracy - margin), 3),
+      ci95High: round(clampRatio(item.accuracy + margin), 3),
+      posteriorLow: round(clampRatio(item.accuracy - margin), 3),
+      posteriorHigh: round(clampRatio(item.accuracy + margin), 3),
+      deltaVsDay: round(delta, 3),
+      zScore: round(zScore, 2),
+      pValue,
+      adjustedPValue: round(Math.min(1, pValue * 24), 4),
+      effectSize: round(delta, 3),
+      riskScore: round(Math.max(0, -delta) * Math.log10(item.attempts + 1), 3),
+      verdict: item.attempts === 0 ? "empty" : delta < -0.05 ? "degraded" : delta > 0.05 ? "strong" : "stable",
+    };
+  });
+  const segments = [
+    timeSegment("深夜", 0, 5, hourly, overallAccuracy),
+    timeSegment("上午", 6, 11, hourly, overallAccuracy),
+    timeSegment("下午", 12, 17, hourly, overallAccuracy),
+    timeSegment("夜间", 18, 23, hourly, overallAccuracy),
+  ];
+  const activeHours = hourly.filter((item) => item.attempts > 0);
+  const worstHour = activeHours.length ? [...activeHours].sort((a, b) => a.accuracy - b.accuracy)[0] : null;
+  const worstSegment = segments.filter((item) => item.attempts > 0).sort((a, b) => a.accuracy - b.accuracy)[0] || null;
+  return {
+    omnibus: {
+      statistic: round(stdDev(activeHours.map((item) => item.accuracy)) * 100, 2),
+      degreesOfFreedom: Math.max(activeHours.length - 1, 0),
+      pValue: activeHours.length > 1 ? pValueFromScore(stdDev(activeHours.map((item) => item.accuracy)) * 10) : 1,
+      verdict: activeHours.some((item) => item.verdict === "degraded") ? "time_effect_detected" : "stable",
+    },
+    hourly,
+    segments,
+    worstHours: activeHours.sort((a, b) => a.accuracy - b.accuracy).slice(0, 4),
+    degradationWindows: worstSegment && worstSegment.deltaVsDay < 0 ? [{
+      startHour: worstSegment.startHour,
+      endHour: worstSegment.endHour,
+      attempts: worstSegment.attempts,
+      riskScore: round(Math.max(0, -worstSegment.deltaVsDay) * Math.log10(worstSegment.attempts + 1), 3),
+      minDelta: worstSegment.deltaVsDay,
+      label: worstSegment.label,
+    }] : [],
+    summary: {
+      worstHour,
+      worstSegment,
+      affectedAttempts: activeHours.filter((item) => item.deltaVsDay < -0.03).reduce((acc, item) => acc + item.attempts, 0),
+      overallAccuracy: round(overallAccuracy, 3),
+    },
+  };
+}
+
+function timeSegment(label: string, startHour: number, endHour: number, hourly: any[], overallAccuracy: number): Record<string, unknown> {
+  const rows = hourly.filter((item) => item.hour >= startHour && item.hour <= endHour);
+  const attempts = rows.reduce((acc, item) => acc + item.attempts, 0);
+  const accuracy = safeDivide(rows.reduce((acc, item) => acc + item.accuracy * item.attempts, 0), Math.max(attempts, 1));
+  const latency = safeDivide(rows.reduce((acc, item) => acc + item.avgLatencySeconds * item.submissions, 0), Math.max(rows.reduce((acc, item) => acc + item.submissions, 0), 1));
+  const delta = accuracy - overallAccuracy;
+  const zScore = safeDivide(delta, Math.sqrt(Math.max(overallAccuracy * (1 - overallAccuracy), 0.001) / Math.max(attempts, 1)));
+  const pValue = pValueFromScore(zScore);
+  return {
+    label,
+    startHour,
+    endHour,
+    attempts,
+    accuracy: round(accuracy, 3),
+    avgLatencySeconds: round(latency, 1),
+    deltaVsDay: round(delta, 3),
+    zScore: round(zScore, 2),
+    pValue,
+    adjustedPValue: round(Math.min(1, pValue * 4), 4),
+    verdict: attempts === 0 ? "empty" : delta < -0.05 ? "degraded" : "stable",
+  };
+}
+
+function forecastSeries(values: number[], clampToRatio: boolean): Record<string, unknown> {
+  const n = values.length;
+  const xs = values.map((_, index) => index + 1);
+  const xMean = mean(xs);
+  const yMean = mean(values);
+  const denominator = xs.reduce((acc, x) => acc + (x - xMean) ** 2, 0);
+  const slope = denominator ? xs.reduce((acc, x, index) => acc + (x - xMean) * (values[index] - yMean), 0) / denominator : 0;
+  const intercept = yMean - slope * xMean;
+  const residuals = values.map((value, index) => value - (intercept + slope * xs[index]));
+  const residualStdDev = stdDev(residuals);
+  const totalVar = values.reduce((acc, value) => acc + (value - yMean) ** 2, 0);
+  const residualVar = residuals.reduce((acc, value) => acc + value ** 2, 0);
+  const rSquared = totalVar ? 1 - residualVar / totalVar : 0;
+  const forecast = Array.from({ length: 7 }, (_, index) => {
+    const raw = intercept + slope * (n + index + 1);
+    const value = clampToRatio ? clampRatio(raw) : Math.max(0, raw);
+    return {
+      step: index + 1,
+      value: round(value, 3),
+      low: round(clampToRatio ? clampRatio(value - residualStdDev) : Math.max(0, value - residualStdDev), 3),
+      high: round(clampToRatio ? clampRatio(value + residualStdDev) : Math.max(0, value + residualStdDev), 3),
+    };
+  });
+  return {
+    slope: round(slope, 4),
+    intercept: round(intercept, 4),
+    rSquared: round(clampRatio(rSquared), 3),
+    pValue: pValueFromScore(safeDivide(slope, residualStdDev || 0.01)),
+    residualStdDev: round(residualStdDev, 3),
+    verdict: Math.abs(slope) < 0.001 ? "stable" : slope > 0 ? "rising" : "falling",
+    forecast,
+  };
+}
+
+function correlationStats(trend: any[], recent: any[], questions: any[]): any[] {
+  const submissions = trend.map((item) => item.submissions);
+  const accuracies = trend.map((item) => item.accuracy);
+  const tps = trend.map((item) => item.avgTps);
+  const tokens = trend.map((item) => item.tokens);
+  const latency = recent.map((item) => item.avgTimeSeconds);
+  const recentAccuracy = recent.map((item) => item.accuracy);
+  return [
+    correlationRow("提交量 vs 准确率", "submissions", "accuracy", "positive", submissions, accuracies),
+    correlationRow("TPS vs 准确率", "avgTps", "accuracy", "positive", tps, accuracies),
+    correlationRow("Token vs 提交量", "tokens", "submissions", "positive", tokens, submissions),
+    correlationRow("耗时 vs 准确率", "latency", "accuracy", "negative", latency, recentAccuracy),
+  ].filter((item) => item.sampleSize > 0 || questions.length >= 0);
+}
+
+function correlationRow(metric: string, x: string, y: string, expectedDirection: string, xs: number[], ys: number[]): Record<string, unknown> {
+  const sampleSize = Math.min(xs.length, ys.length);
+  const r = pearson(xs.slice(0, sampleSize), ys.slice(0, sampleSize));
+  return {
+    metric,
+    x,
+    y,
+    expectedDirection,
+    r: round(r, 3),
+    pValue: pValueFromScore(r * Math.sqrt(Math.max(sampleSize - 2, 1))),
+    sampleSize,
+    strength: Math.abs(r) > 0.7 ? "strong" : Math.abs(r) > 0.35 ? "moderate" : "weak",
+    verdict: sampleSize < 3 ? "insufficient" : Math.sign(r) === (expectedDirection === "negative" ? -1 : 1) ? "aligned" : "review",
+  };
+}
+
+function questionDiagnosticStats(questions: any[], averageAccuracy: number): any[] {
+  return questions.map((item) => {
+    const margin = item.attempts > 0 ? 1.96 * Math.sqrt(Math.max(item.accuracy * (1 - item.accuracy), 0) / item.attempts) : 0;
+    const difficultyZ = safeDivide(averageAccuracy - item.accuracy, margin || 0.01);
+    const priority = Math.max(0, item.failureRate) * Math.log10(item.attempts + 1);
+    return {
+      questionId: item.questionId,
+      title: item.title,
+      attempts: item.attempts,
+      accuracy: round(item.accuracy, 3),
+      failureRate: round(item.failureRate, 3),
+      ci95Low: round(clampRatio(item.accuracy - margin), 3),
+      ci95High: round(clampRatio(item.accuracy + margin), 3),
+      difficultyZ: round(difficultyZ, 2),
+      priorityScore: round(priority, 2),
+      verdict: priority > 1.2 ? "review" : "healthy",
+    };
+  });
+}
+
+function modelRankingStats(models: any[]): any[] {
+  if (models.length === 0) return [];
+  const sorted = [...models].sort((a, b) => b.accuracy - a.accuracy);
+  return sorted.map((item, index) => {
+    const n = Math.max(item.attempts || item.submissions || 1, 1);
+    const posteriorMean = (item.accuracy * n + 1) / (n + 2);
+    return {
+      model: item.model,
+      posteriorMean: round(posteriorMean, 3),
+      posteriorStdDev: round(Math.sqrt(Math.max(posteriorMean * (1 - posteriorMean), 0) / (n + 3)), 3),
+      probabilityBest: round(index === 0 ? 1 / Math.max(sorted.filter((m) => Math.abs(m.accuracy - item.accuracy) < 0.005).length, 1) : 0, 3),
+      expectedLoss: round(Math.max(0, sorted[0].accuracy - item.accuracy), 3),
+      verdict: index === 0 ? "leader" : sorted[0].accuracy - item.accuracy < 0.03 ? "competitive" : "lagging",
+    };
+  });
+}
+
+function robustnessStats(recent: any[], questions: any[]): Record<string, unknown> {
+  const accMedian = quantile(recent.map((item) => item.accuracy), 0.5);
+  const latencyMedian = quantile(recent.map((item) => item.avgTimeSeconds), 0.5);
+  const failureMedian = quantile(questions.map((item) => item.failureRate), 0.5);
+  const accMad = medianAbsoluteDeviation(recent.map((item) => item.accuracy), accMedian) || 0.01;
+  const latencyMad = medianAbsoluteDeviation(recent.map((item) => item.avgTimeSeconds), latencyMedian) || 0.01;
+  const failureMad = medianAbsoluteDeviation(questions.map((item) => item.failureRate), failureMedian) || 0.01;
+  return {
+    recentOutliers: recent
+      .map((item) => ({
+        id: item.id,
+        model: item.model,
+        accuracy: item.accuracy,
+        latency: item.avgTimeSeconds,
+        accuracyRobustZ: round((item.accuracy - accMedian) / accMad, 2),
+        latencyRobustZ: round((item.avgTimeSeconds - latencyMedian) / latencyMad, 2),
+      }))
+      .filter((item) => Math.abs(item.accuracyRobustZ) > 2 || Math.abs(item.latencyRobustZ) > 2)
+      .slice(0, 8),
+    questionOutliers: questions
+      .map((item) => ({
+        questionId: item.questionId,
+        title: item.title,
+        failureRate: item.failureRate,
+        failureRobustZ: round((item.failureRate - failureMedian) / failureMad, 2),
+      }))
+      .filter((item) => Math.abs(item.failureRobustZ) > 2)
+      .slice(0, 8),
+    baselines: {
+      submissionAccuracyMedian: round(accMedian, 3),
+      submissionLatencyMedian: round(latencyMedian, 1),
+      questionFailureMedian: round(failureMedian, 3),
+    },
+  };
+}
+
+function distributionSummary(values: number[]): Record<string, number> {
+  const clean = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  const q1 = quantile(clean, 0.25);
+  const median = quantile(clean, 0.5);
+  const q3 = quantile(clean, 0.75);
+  const avg = mean(clean);
+  const sd = stdDev(clean);
+  return {
+    min: round(clean[0] ?? 0, 3),
+    q1: round(q1, 3),
+    median: round(median, 3),
+    q3: round(q3, 3),
+    max: round(clean[clean.length - 1] ?? 0, 3),
+    iqr: round(q3 - q1, 3),
+    mean: round(avg, 3),
+    stdDev: round(sd, 3),
+    coefficientOfVariation: round(safeDivide(sd, Math.abs(avg) || 1), 3),
+    skewness: round(moment(clean, 3, avg, sd), 3),
+    excessKurtosis: round(moment(clean, 4, avg, sd) - 3, 3),
+    tailRisk: round(clean.length ? clean.filter((value) => value < q1 - 1.5 * (q3 - q1) || value > q3 + 1.5 * (q3 - q1)).length / clean.length : 0, 3),
+  };
+}
+
+function driftStats(trend: any[]): Record<string, unknown> {
+  const values = trend.map((item) => item.accuracy);
+  const recentDays = Math.min(7, Math.max(1, Math.ceil(values.length / 3)));
+  const priorValues = values.slice(0, Math.max(values.length - recentDays, 0));
+  const recentValues = values.slice(-recentDays);
+  const priorAccuracy = mean(priorValues);
+  const recentAccuracy = mean(recentValues);
+  const delta = recentAccuracy - priorAccuracy;
+  const volumePrior = trend.slice(0, Math.max(trend.length - recentDays, 0)).map((item) => item.submissions);
+  const volumeRecent = trend.slice(-recentDays).map((item) => item.submissions);
+  const volumeDelta = mean(volumeRecent) - mean(volumePrior);
+  const ewmaSeries = ewma(values, 0.35);
+  const cusumSeries = cusum(values, mean(values));
+  return {
+    window: {
+      priorDays: priorValues.length,
+      recentDays: recentValues.length,
+      priorAccuracy: round(priorAccuracy, 3),
+      recentAccuracy: round(recentAccuracy, 3),
+      delta: round(delta, 3),
+      zScore: round(safeDivide(delta, stdDev(values) || 0.01), 2),
+      pValue: pValueFromScore(safeDivide(delta, stdDev(values) || 0.01)),
+      verdict: delta < -0.03 ? "regression" : delta > 0.03 ? "improved" : "stable",
+    },
+    volume: {
+      priorMean: round(mean(volumePrior), 1),
+      recentMean: round(mean(volumeRecent), 1),
+      delta: round(volumeDelta, 1),
+      tScore: round(safeDivide(volumeDelta, stdDev(trend.map((item) => item.submissions)) || 1), 2),
+      degreesOfFreedom: Math.max(trend.length - 2, 0),
+      pValue: pValueFromScore(safeDivide(volumeDelta, stdDev(trend.map((item) => item.submissions)) || 1)),
+      verdict: Math.abs(volumeDelta) > stdDev(trend.map((item) => item.submissions)) ? "watch" : "stable",
+    },
+    ewma: {
+      lambda: 0.35,
+      latest: round(ewmaSeries[ewmaSeries.length - 1] || 0, 3),
+      deltaVsMean: round((ewmaSeries[ewmaSeries.length - 1] || 0) - mean(values), 3),
+      min: round(Math.min(0, ...ewmaSeries), 3),
+      max: round(Math.max(0, ...ewmaSeries), 3),
+      verdict: ewmaSeries.length && ewmaSeries[ewmaSeries.length - 1] < mean(values) - 0.03 ? "cooling" : "stable",
+      series: trend.map((item, index) => ({ date: item.date, value: round(ewmaSeries[index] || 0, 3) })),
+    },
+    cusum: {
+      latest: round(cusumSeries[cusumSeries.length - 1] || 0, 3),
+      min: round(Math.min(0, ...cusumSeries), 3),
+      max: round(Math.max(0, ...cusumSeries), 3),
+      signalScore: round(Math.max(0, ...cusumSeries.map((value) => Math.abs(value))), 3),
+      verdict: Math.max(0, ...cusumSeries.map((value) => Math.abs(value))) > 0.25 ? "watch" : "stable",
+      series: trend.map((item, index) => ({ date: item.date, value: round(cusumSeries[index] || 0, 3) })),
+    },
+  };
+}
+
+function riskBudgetStats(input: any): Record<string, unknown> {
+  const targetAccuracy = 0.85;
+  const attempts = Math.max(int(input.totalAttempts), 0);
+  const failures = Math.max(0, Math.round(attempts * (1 - input.averageAccuracy)));
+  const allowedFailures = Math.max(1, Math.round(attempts * (1 - targetAccuracy)));
+  const excessFailures = Math.max(0, failures - allowedFailures);
+  const budgetRemaining = safeDivide(allowedFailures - failures, allowedFailures);
+  return {
+    targetAccuracy,
+    failureRate: round(1 - input.averageAccuracy, 3),
+    failures,
+    allowedFailures,
+    excessFailures,
+    budgetRemaining: round(budgetRemaining, 3),
+    burnRate: round(safeDivide(failures, allowedFailures), 2),
+    degradedAttemptShare: round(safeDivide((input.recentSubmissions || []).filter((item: any) => item.status === "regression").reduce((acc: number, item: any) => acc + item.attemptCount, 0), Math.max(attempts, 1)), 3),
+    auditQuestions: (input.questionDiagnostics || []).filter((item: any) => item.verdict !== "healthy").length,
+    outlierLoad: (input.trendStability?.anomalies || []).length,
+    anomalyDays: (input.trendStability?.anomalies || []).length,
+    verdict: excessFailures > 0 ? "over_budget" : budgetRemaining < 0.25 ? "watch" : "healthy",
+  };
+}
+
+function efficiencyFrontierStats(models: any[]): any[] {
+  return models.map((item) => {
+    const dominatedBy = models
+      .filter((other) => other.model !== item.model
+        && other.accuracy >= item.accuracy
+        && other.avgTps >= item.avgTps
+        && other.avgTimeSeconds <= item.avgTimeSeconds
+        && (other.accuracy > item.accuracy || other.avgTps > item.avgTps || other.avgTimeSeconds < item.avgTimeSeconds))
+      .map((other) => other.model);
+    const utilityScore = item.accuracy * 100 + safeDivide(item.avgTps, 10) - safeDivide(item.avgTimeSeconds, 10);
+    return {
+      model: item.model,
+      accuracy: round(item.accuracy, 3),
+      avgTps: round(item.avgTps, 1),
+      avgTimeSeconds: round(item.avgTimeSeconds, 1),
+      utilityScore: round(utilityScore, 2),
+      dominatedBy,
+      onFrontier: dominatedBy.length === 0,
+      verdict: dominatedBy.length === 0 ? "frontier" : dominatedBy.length <= 1 ? "shadowed" : "dominated",
+    };
+  });
+}
+
+function powerStats(models: any[], averageAccuracy: number): Record<string, unknown> {
+  const sampleSizes = models.map((item) => Math.max(int(item.attempts || item.submissions), 0));
+  const averageModelSampleSize = Math.round(mean(sampleSizes));
+  const variance = Math.max(averageAccuracy * (1 - averageAccuracy), 0.001);
+  const minimumDetectableEffect = averageModelSampleSize > 0 ? 1.96 * Math.sqrt((2 * variance) / averageModelSampleSize) : 0;
+  return {
+    baselineAccuracy: round(averageAccuracy, 3),
+    averageModelSampleSize,
+    minimumDetectableEffect: round(minimumDetectableEffect, 3),
+    requiredSamples: [0.01, 0.02, 0.05].map((delta) => ({
+      delta,
+      perGroup: Math.ceil((2 * variance * 1.96 ** 2) / Math.max(delta ** 2, 0.0001)),
+    })),
+  };
+}
+
+function ewma(values: number[], lambda: number): number[] {
+  const out: number[] = [];
+  for (const value of values) {
+    out.push(out.length ? lambda * value + (1 - lambda) * out[out.length - 1] : value);
+  }
+  return out;
+}
+
+function cusum(values: number[], center: number): number[] {
+  const out: number[] = [];
+  let current = 0;
+  for (const value of values) {
+    current += value - center;
+    out.push(current);
+  }
+  return out;
+}
+
+function dashboardStatus(accuracy: number): "healthy" | "watch" | "regression" {
+  if (accuracy >= 0.86) return "healthy";
+  if (accuracy >= 0.78) return "watch";
+  return "regression";
+}
+
+function ratio(v: unknown): number {
+  const n = num(v);
+  return round(clampRatio(n > 1 ? n / 100 : n), 3);
+}
+
+function clampRatio(v: unknown): number {
+  const n = num(v);
+  return Math.min(1, Math.max(0, n));
+}
+
+function round(v: unknown, digits = 3): number {
+  const n = num(v);
+  const factor = 10 ** digits;
+  return Math.round(n * factor) / factor;
+}
+
+function mean(values: number[]): number {
+  const clean = values.filter((value) => Number.isFinite(value));
+  return clean.length ? clean.reduce((acc, value) => acc + value, 0) / clean.length : 0;
+}
+
+function stdDev(values: number[]): number {
+  const clean = values.filter((value) => Number.isFinite(value));
+  if (clean.length < 2) return 0;
+  const avg = mean(clean);
+  return Math.sqrt(clean.reduce((acc, value) => acc + (value - avg) ** 2, 0) / (clean.length - 1));
+}
+
+function quantile(values: number[], q: number): number {
+  const clean = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!clean.length) return 0;
+  const pos = (clean.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  return clean[base] + (clean[base + 1] == null ? 0 : rest * (clean[base + 1] - clean[base]));
+}
+
+function medianAbsoluteDeviation(values: number[], median: number): number {
+  return quantile(values.map((value) => Math.abs(value - median)), 0.5);
+}
+
+function safeDivide(a: number, b: number): number {
+  return b ? a / b : 0;
+}
+
+function pValueFromScore(score: number): number {
+  return round(Math.min(1, Math.exp(-Math.abs(score))), 4);
+}
+
+function pearson(xs: number[], ys: number[]): number {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 2) return 0;
+  const x = xs.slice(0, n);
+  const y = ys.slice(0, n);
+  const xMean = mean(x);
+  const yMean = mean(y);
+  const numerator = x.reduce((acc, value, index) => acc + (value - xMean) * (y[index] - yMean), 0);
+  const denominator = Math.sqrt(x.reduce((acc, value) => acc + (value - xMean) ** 2, 0) * y.reduce((acc, value) => acc + (value - yMean) ** 2, 0));
+  return denominator ? numerator / denominator : 0;
+}
+
+function moment(values: number[], order: number, avg: number, sd: number): number {
+  if (!values.length || !sd) return 0;
+  return values.reduce((acc, value) => acc + ((value - avg) / sd) ** order, 0) / values.length;
 }
 
 function clampInt(v: string | null, min: number, max: number, fallback: number): number {

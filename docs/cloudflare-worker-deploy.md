@@ -75,9 +75,6 @@ LINUXDO_TOKEN_URL = "https://connect.linux.do/oauth2/token"
 LINUXDO_USERINFO_URL = "https://connect.linux.do/api/user"
 ALLOWED_ORIGINS = "https://YOUR_WORKER_DOMAIN"
 ADMIN_LINUXDO_IDS = "29368"
-# 可选：启用中转站自动识别的 OpenAI-compatible API。
-BRIDGE_AI_BASE_URL = "https://api.openai.com/v1"
-BRIDGE_AI_MODEL = "gpt-4.1-mini"
 
 [[d1_databases]]
 binding = "DB"
@@ -92,7 +89,6 @@ database_id = "YOUR_DATABASE_ID"
 - Linux.do OAuth URL 请以你的 Linux.do 开发者后台为准。
 - `ALLOWED_ORIGINS` 是可选 CORS 白名单，多个 origin 用英文逗号分隔；`BASE_URL` 的 origin 会自动允许。
 - `ADMIN_LINUXDO_IDS` 是允许进入 `/admin` 管理后台的 Linux.do 用户 UID，多个 UID 用英文逗号分隔。当前默认管理员 UID 是 `29368`。
-- `BRIDGE_AI_BASE_URL` 和 `BRIDGE_AI_MODEL` 是可选项。配置后再设置 `BRIDGE_AI_API_KEY` secret，管理员后台可用 AI 辅助识别中转站名称；未配置时仍会用网页 title、host 和 favicon 兜底。
 - `wrangler.toml` 可能包含环境差异，生产项目可不提交该文件，只提交 `wrangler.toml.example`。
 
 ## 4. 设置 secrets
@@ -104,8 +100,6 @@ cd worker
 wrangler secret put LINUXDO_CLIENT_ID
 wrangler secret put LINUXDO_CLIENT_SECRET
 wrangler secret put TOKEN_SECRET
-# 可选：启用中转站 AI 识别
-wrangler secret put BRIDGE_AI_API_KEY
 ```
 
 `TOKEN_SECRET` 用于 hash CLI token、web session 和 OAuth state。建议使用 32 字节以上随机值：
@@ -293,7 +287,7 @@ https://YOUR_WORKER_DOMAIN/api/v1/questions
 https://YOUR_WORKER_DOMAIN/admin/bridges
 ```
 
-页面会调用 `GET/POST /api/v1/admin/bridges` 和 `POST /api/v1/admin/bridges/identify`。保存后的映射写入 D1 表 `bridges` 和 `bridge_base_urls`。用户可在 `/account` 提交自己的中转站，上传遇到未知 `codex_provider_base_url` 时也会自动写入 `bridge_suggestions`。管理员后台会抓取网页 title/icon，并可用可选 AI 配置辅助识别中转站名称。
+页面会调用 `GET/POST /api/v1/admin/bridges`、`POST /api/v1/admin/bridges/identify` 和 `POST /api/v1/admin/bridge-suggestions/status`。保存后的映射写入 D1 表 `bridges` 和 `bridge_base_urls`。用户可在 `/account` 提交自己的中转站，上传遇到未知 `codex_provider_base_url` 时也会自动写入 `bridge_suggestions`。管理员后台可以采纳候选、归档候选，并从候选站点首页读取 title/icon 来补全表单。
 
 题库 JSON 示例：
 

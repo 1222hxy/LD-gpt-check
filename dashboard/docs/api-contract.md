@@ -6,7 +6,7 @@ The dashboard frontend calls one read-only endpoint:
 GET /api/dashboard/overview?range=30d&model=all
 ```
 
-For local development, `dashboard/vite.config.js` serves this endpoint with mock data. In production, the same response shape can be implemented in the Cloudflare Worker from D1 tables:
+For local development, `dashboard/vite.config.js` proxies this endpoint to a real Cloudflare Worker API. In production, the Worker builds the response from D1 tables:
 
 - `benchmark_submissions`
 - `benchmark_question_results`
@@ -509,10 +509,10 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
 - `timeOfDay.hourly` compares each hour against the rest of the day with two-proportion z-tests, Holm-adjusted p-values, Wilson intervals, beta-posterior ranges, and Cohen's h effect size.
 - `timeOfDay.degradationWindows` merges adjacent significantly degraded hours into human-readable risk windows such as `02:00-06:00`.
 
-The local mock implementation uses:
+The Worker implementation uses:
 
-- `jstat` for normal, Student t, and chi-square distribution CDFs.
-- `simple-statistics` for descriptive statistics and quantiles.
+- D1 aggregate queries for summary, trends, model breakdowns, question quality, recent submissions, channel segments, and hourly buckets.
+- Worker-side derived statistics for intervals, rankings, pairwise comparisons, drift, risk budgeting, and distribution summaries.
 
 ## Frontend Safeguards
 

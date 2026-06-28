@@ -23,10 +23,6 @@ ALLOWED_ORIGINS = "https://codexgo.yhklab.com"
 TURNSTILE_SITE_KEY = "0x4AAAAAADsUKm1bX7W6SgT8"
 # Comma-separated Linux.do user IDs allowed to edit the remote question bank.
 ADMIN_LINUXDO_IDS = "29368"
-# Optional OpenAI-compatible API for bridge name detection.
-# Set BRIDGE_AI_API_KEY as a secret when enabling this.
-BRIDGE_AI_BASE_URL = "https://api.openai.com/v1"
-BRIDGE_AI_MODEL = "gpt-4.1-mini"
 
 [[d1_databases]]
 binding = "DB"
@@ -38,4 +34,3 @@ database_id = "replace-with-your-d1-database-id"
 # wrangler secret put LINUXDO_CLIENT_SECRET
 # wrangler secret put TOKEN_SECRET
 # wrangler secret put TURNSTILE_SECRET_KEY
-# wrangler secret put BRIDGE_AI_API_KEY
