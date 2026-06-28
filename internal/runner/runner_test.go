@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,6 +92,28 @@ func TestCodexArgsMatchUpstreamInvocation(t *testing.T) {
 		if strings.Contains(arg, "ignore-user-config") || strings.Contains(arg, "ignore-rules") {
 			t.Fatalf("unexpected config-disabling arg %q in %#v", arg, withoutModel)
 		}
+	}
+
+	withDefaultModel := codexArgs("default", "medium")
+	for i, arg := range withDefaultModel {
+		if arg == "-m" {
+			t.Fatalf("unexpected -m for default model at index %d in %#v", i, withDefaultModel)
+		}
+	}
+}
+
+func TestDisplayModelNameUsesCodexConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`model = "gpt-5.4"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := displayModelName("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "gpt-5.4" {
+		t.Fatalf("display model = %q", got)
 	}
 }
 

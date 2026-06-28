@@ -20,6 +20,7 @@ import (
 
 const (
 	DefaultTimeout = 30 * time.Minute
+	DefaultTests   = 5
 	MaxTests       = 100
 )
 
@@ -125,7 +126,7 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		return Summary{}, fmt.Errorf("%s", l.S("runner_tests_positive"))
 	}
 	if opts.Tests == 0 {
-		opts.Tests = 1
+		opts.Tests = DefaultTests
 	}
 	if opts.Tests > MaxTests {
 		return Summary{}, fmt.Errorf("%s", l.S("runner_tests_max", MaxTests))
@@ -135,6 +136,10 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	}
 	if len(opts.Questions) == 0 {
 		opts.Questions = questions.Builtin()
+	}
+	displayModel, err := displayModelName(opts.Model)
+	if err != nil {
+		return Summary{}, err
 	}
 	codex, err := system.CodexPath()
 	if err != nil {
@@ -158,7 +163,7 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 			results = append(results, res)
 		}
 	}
-	return summarize(opts, results), nil
+	return summarize(opts, displayModel, results), nil
 }
 
 func emitProgress(fn func(ProgressEvent), ev ProgressEvent) {
@@ -253,7 +258,7 @@ func codexArgs(model, effort string) []string {
 		"--disable", "memories",
 		"-c", "model_reasoning_effort=" + effort,
 	}
-	if strings.TrimSpace(model) != "" {
+	if system.ConcreteCodexModel(model) {
 		args = append(args, "-m", strings.TrimSpace(model))
 	}
 	return args
@@ -295,7 +300,7 @@ func parseEvents(r io.Reader, lang i18n.Lang) (finalAnswer string, inputTokens, 
 	return finalAnswer, inputTokens, outputTokens, reasoningTokens, toolUsed, nil
 }
 
-func summarize(opts Options, cases []CaseResult) Summary {
+func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 	var correct, in, out, reason int
 	var secs, tps float64
 	for _, c := range cases {
@@ -310,7 +315,7 @@ func summarize(opts Options, cases []CaseResult) Summary {
 	}
 	n := float64(len(cases))
 	s := Summary{
-		Model:           opts.Model,
+		Model:           displayModel,
 		ReasoningEffort: opts.ReasoningEffort,
 		Tests:           len(cases),
 		Correct:         correct,
@@ -326,6 +331,21 @@ func summarize(opts Options, cases []CaseResult) Summary {
 		s.AvgTPS = tps / n
 	}
 	return s
+}
+
+func displayModelName(requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if system.ConcreteCodexModel(requested) {
+		return requested, nil
+	}
+	configured, err := system.CodexConfiguredModel()
+	if err != nil {
+		return "", err
+	}
+	if system.ConcreteCodexModel(configured) {
+		return configured, nil
+	}
+	return "", nil
 }
 
 func summarizeQuestions(qs []questions.Question, cases []CaseResult) []QuestionSummary {

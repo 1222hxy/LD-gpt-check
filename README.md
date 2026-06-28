@@ -78,7 +78,7 @@ bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite candy_2
 bin/ld-gpt-check run -m gpt-5.5 --question-url https://example.com/questions.json --suite custom_1
 ```
 
-The built-in candy prompt must remain unchanged. Its grader only requires an independent `21` in the final answer, so `21` passes but `121` does not. Prompts tell Codex not to use external tools; the runner also starts Codex with ignored user config/rules in a temporary read-only workspace and fails a run if Codex emits tool-call events.
+The built-in candy prompt must remain unchanged. Its grader only requires an independent `21` in the final answer, so `21` passes but `121` does not. Prompts tell Codex not to use external tools; the runner keeps Codex in read-only sandbox mode, preserves your local Codex config, and fails a run if Codex emits tool-call events.
 
 Print machine-readable output:
 
@@ -86,7 +86,7 @@ Print machine-readable output:
 bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --json
 ```
 
-Reasoning effort supports `low`, `medium`, `high`, and `xhigh`. The default effort is `medium`; the default test count is `1`. If `-m` is omitted, Codex uses its local default model from your existing Codex configuration. Each Codex run has a default timeout of `30m`; override it with `--timeout 10m` or `--timeout 90s`.
+Reasoning effort supports `low`, `medium`, `high`, and `xhigh`. The default effort is `medium`; the default test count is `5`. If `-m` is omitted, Codex uses its local model from your existing Codex configuration; the CLI tries to read that concrete model name for display and uploads. Each Codex run has a default timeout of `30m`; override it with `--timeout 10m` or `--timeout 90s`.
 
 ## Login and Upload
 

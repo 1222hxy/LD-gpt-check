@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,8 +32,11 @@ func TestRunWizardUsesProductionAPIWithoutAsking(t *testing.T) {
 	if strings.Contains(text, "Worker API 地址") || strings.Contains(text, "界面语言") {
 		t.Fatalf("wizard should not ask setup questions:\n%s", text)
 	}
-	if !strings.Contains(text, "正在使用 API："+config.DefaultAPIBase) {
+	if !strings.Contains(text, config.DefaultAPIBase) {
 		t.Fatalf("wizard did not show default API:\n%s", text)
+	}
+	if !strings.Contains(text, "检查配置") || !strings.Contains(text, "登录状态") || !strings.Contains(text, "运行测试") {
+		t.Fatalf("wizard did not show step sections:\n%s", text)
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -77,12 +81,50 @@ func TestPromptEffortRetriesInvalidValue(t *testing.T) {
 
 func TestPromptOptionalStringAllowsDefaultCodexConfig(t *testing.T) {
 	var out bytes.Buffer
-	got, err := promptOptionalString(bufio.NewReader(strings.NewReader("\n")), &out, "模型", "Codex 本地默认")
+	got, err := promptOptionalString(bufio.NewReader(strings.NewReader("\n")), &out, "模型", "Codex 本机配置")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "" {
 		t.Fatalf("optional model = %q", got)
+	}
+}
+
+func TestPromptModelUsesDetectedCodexConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`model = "gpt-5.5"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	got, err := promptModel(bufio.NewReader(strings.NewReader("\n")), &out, i18n.New(i18n.ZH), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("model = %q, want empty to keep Codex config", got)
+	}
+	if !strings.Contains(out.String(), "gpt-5.5") {
+		t.Fatalf("missing detected model:\n%s", out.String())
+	}
+}
+
+func TestPromptModelRequiresChoiceWhenCodexConfigIsDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`model = "default"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	got, err := promptModel(bufio.NewReader(strings.NewReader("2\n")), &out, i18n.New(i18n.ZH), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "gpt-5.4" {
+		t.Fatalf("model = %q", got)
+	}
+	if !strings.Contains(out.String(), "无法确认") {
+		t.Fatalf("missing choice prompt:\n%s", out.String())
 	}
 }
 

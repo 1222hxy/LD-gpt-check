@@ -24,7 +24,6 @@ func PrintTableWithLangColor(s runner.Summary, lang i18n.Lang, color bool) {
 }
 
 func PrintTableWithWriter(w io.Writer, s runner.Summary, lang i18n.Lang, color bool) {
-	l := i18n.New(lang)
 	headers := []string{"Run", "Codex", "In Tok", "Out Tok", "Reason Tok", "Time(s)", "TPS", "OK"}
 	widths := []int{3, 28, 6, 7, 10, 7, 4, 2}
 	printRow(w, colorizeHeaders(headers, color), widths)
@@ -45,13 +44,13 @@ func PrintTableWithWriter(w io.Writer, s runner.Summary, lang i18n.Lang, color b
 			Colorize(ok, statusColor(c.OK), color),
 		}, widths)
 	}
-	fmt.Fprintf(w, Colorize(l.S("report_summary"), colorSummary(s), color), s.Correct, s.Tests, s.Accuracy, s.AvgTimeSeconds, s.AvgTPS)
+	PrintSummaryPanel(w, s, lang, color)
 }
 
 func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool) func(runner.ProgressEvent) {
 	l := i18n.New(lang)
 	if strings.TrimSpace(model) == "" {
-		model = "codex-default"
+		model = l.S("model_local_config")
 	}
 	return func(ev runner.ProgressEvent) {
 		switch ev.Type {
@@ -69,6 +68,67 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_error", ev.Current, ev.Total, ev.Error), colorRed, color))
 		}
 	}
+}
+
+func PrintBanner(w io.Writer, title, subtitle string, color bool) {
+	line := strings.Repeat("=", max(44, DisplayWidth(title)+10))
+	fmt.Fprintln(w, Colorize(line, colorCyan, color))
+	fmt.Fprintln(w, Colorize(title, colorBold+";"+colorCyan, color))
+	if strings.TrimSpace(subtitle) != "" {
+		fmt.Fprintln(w, Colorize(subtitle, colorGray, color))
+	}
+	fmt.Fprintln(w, Colorize(line, colorCyan, color))
+}
+
+func PrintSection(w io.Writer, index int, title string, color bool) {
+	label := fmt.Sprintf("[%d] %s", index, title)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, Colorize(label, colorBold+";"+colorBlue, color))
+	fmt.Fprintln(w, Colorize(strings.Repeat("-", max(24, DisplayWidth(label))), colorBlue, color))
+}
+
+func PrintInfo(w io.Writer, label, value string, color bool) {
+	fmt.Fprintf(w, "%s: %s\n", Colorize(label, colorCyan, color), Colorize(value, colorBold, color))
+}
+
+func PrintSuccess(w io.Writer, msg string, color bool) {
+	fmt.Fprintln(w, Colorize(msg, colorGreen, color))
+}
+
+func PrintWarning(w io.Writer, msg string, color bool) {
+	fmt.Fprintln(w, Colorize(msg, colorYellow, color))
+}
+
+func Muted(s string, color bool) string {
+	return Colorize(s, colorGray, color)
+}
+
+func PrintSummaryPanel(w io.Writer, s runner.Summary, lang i18n.Lang, color bool) {
+	l := i18n.New(lang)
+	title := l.S("report_panel_title")
+	lineWidth := max(58, DisplayWidth(title)+8)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, Colorize("┌─ "+title+" "+strings.Repeat("─", max(1, lineWidth-DisplayWidth(title)-4))+"┐", colorCyan, color))
+	fmt.Fprintf(w, "│ %s  %s  %s  %s │\n",
+		PadRight(Colorize(l.S("report_metric_accuracy"), colorGray, color), 8),
+		PadRight(Colorize(fmt.Sprintf("%.1f%%", s.Accuracy), colorSummary(s), color), 10),
+		PadRight(Colorize(l.S("report_metric_correct"), colorGray, color), 8),
+		PadRight(Colorize(fmt.Sprintf("%d/%d", s.Correct, s.Tests), colorSummary(s), color), lineWidth-34),
+	)
+	fmt.Fprintf(w, "│ %s  %s  %s  %s │\n",
+		PadRight(Colorize(l.S("report_metric_time"), colorGray, color), 8),
+		PadRight(Colorize(fmt.Sprintf("%.1fs", s.AvgTimeSeconds), colorYellow, color), 10),
+		PadRight(Colorize(l.S("report_metric_tps"), colorGray, color), 8),
+		PadRight(Colorize(fmt.Sprintf("%.1f", s.AvgTPS), colorYellow, color), lineWidth-34),
+	)
+	fmt.Fprintf(w, "│ %s  %s  %s  %s │\n",
+		PadRight(Colorize(l.S("report_metric_input"), colorGray, color), 8),
+		PadRight(Colorize(fmt.Sprintf("%.0f", s.AvgInputTokens), colorBlue, color), 10),
+		PadRight(Colorize(l.S("report_metric_reason"), colorGray, color), 8),
+		PadRight(Colorize(fmt.Sprintf("%.0f", s.AvgReasoningTokens), colorMagenta, color), lineWidth-34),
+	)
+	fmt.Fprintln(w, Colorize("└"+strings.Repeat("─", lineWidth)+"┘", colorCyan, color))
+	fmt.Fprintf(w, Colorize(l.S("report_summary"), colorSummary(s), color), s.Correct, s.Tests, s.Accuracy, s.AvgTimeSeconds, s.AvgTPS)
 }
 
 func printRow(w io.Writer, cols []string, widths []int) {
@@ -201,13 +261,22 @@ func colorSummary(s runner.Summary) string {
 }
 
 const (
-	colorBold   = "1"
-	colorRed    = "31"
-	colorGreen  = "32"
-	colorYellow = "33"
-	colorBlue   = "34"
-	colorCyan   = "36"
+	colorBold    = "1"
+	colorRed     = "31"
+	colorGreen   = "32"
+	colorYellow  = "33"
+	colorBlue    = "34"
+	colorMagenta = "35"
+	colorCyan    = "36"
+	colorGray    = "90"
 )
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 func runeWidth(r rune) int {
 	if r == '\t' {

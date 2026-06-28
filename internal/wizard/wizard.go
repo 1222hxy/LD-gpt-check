@@ -44,14 +44,15 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	lang := i18n.Detect(firstNonEmpty(string(opts.Lang), cfg.Language))
 	l := i18n.New(lang)
+	color := report.ColorEnabled(out)
 	configPath, err := config.Path()
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, l.S("wizard_title"))
-	fmt.Fprintln(out, "----------------")
-	fmt.Fprintf(out, l.S("config_path")+"\n\n", configPath)
+	report.PrintBanner(out, l.S("wizard_title"), l.S("wizard_subtitle"), color)
+	report.PrintSection(out, 1, l.S("wizard_step_config"), color)
+	report.PrintInfo(out, l.S("wizard_config_file"), configPath, color)
 
 	oldAPIBase := cfg.APIBaseURL
 	cfg.Language = string(lang)
@@ -60,17 +61,18 @@ func Run(ctx context.Context, opts Options) error {
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, l.S("wizard_api_using")+"\n", apiBase)
+	report.PrintInfo(out, l.S("wizard_api_label"), apiBase, color)
 
+	report.PrintSection(out, 2, l.S("wizard_step_login"), color)
 	if cfg.AccessToken != "" {
 		name := cfg.User.Username
 		if name == "" {
 			name = cfg.User.ID
 		}
-		fmt.Fprintf(out, l.S("wizard_existing_credential")+"\n", fallback(name, l.S("wizard_unknown_user")))
+		report.PrintSuccess(out, l.S("wizard_existing_credential", fallback(name, l.S("wizard_unknown_user"))), color)
 		reloginDefault := strings.TrimRight(oldAPIBase, "/") != strings.TrimRight(apiBase, "/")
 		if reloginDefault {
-			fmt.Fprintln(out, l.S("wizard_api_changed"))
+			report.PrintWarning(out, l.S("wizard_api_changed"), color)
 		}
 		if yes, err := promptBool(reader, out, l, l.S("wizard_relogin"), reloginDefault); err != nil {
 			return err
@@ -79,8 +81,8 @@ func Run(ctx context.Context, opts Options) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, l.S("login_success")+"\n", user.Username, user.ID)
-			fmt.Fprintf(out, l.S("credential_saved")+"\n", configPath)
+			report.PrintSuccess(out, l.S("login_success", user.Username, user.ID), color)
+			report.PrintInfo(out, l.S("wizard_credentials_file"), configPath, color)
 			cfg, _ = config.Load()
 		}
 	} else {
@@ -91,20 +93,24 @@ func Run(ctx context.Context, opts Options) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, l.S("login_success")+"\n", user.Username, user.ID)
-			fmt.Fprintf(out, l.S("credential_saved")+"\n", configPath)
+			report.PrintSuccess(out, l.S("login_success", user.Username, user.ID), color)
+			report.PrintInfo(out, l.S("wizard_credentials_file"), configPath, color)
 			cfg, _ = config.Load()
+		} else {
+			report.PrintWarning(out, l.S("wizard_skip_login"), color)
 		}
 	}
 
+	report.PrintSection(out, 3, l.S("wizard_step_run"), color)
 	if ok, err := promptBool(reader, out, l, l.S("wizard_run_now"), true); err != nil {
 		return err
 	} else if !ok {
-		fmt.Fprintln(out, l.S("wizard_done_next"))
+		report.PrintSuccess(out, l.S("wizard_done_next"), color)
 		return nil
 	}
 
-	model, err := promptOptionalString(reader, out, l.S("wizard_model"), l.S("wizard_model_default"))
+	report.PrintSuccess(out, l.S("wizard_ready_run"), color)
+	model, err := promptModel(reader, out, l, color)
 	if err != nil {
 		return err
 	}
@@ -112,7 +118,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	tests, err := promptInt(reader, out, l, l.S("wizard_tests"), 1, 1, runner.MaxTests)
+	tests, err := promptInt(reader, out, l, l.S("wizard_tests"), runner.DefaultTests, 1, runner.MaxTests)
 	if err != nil {
 		return err
 	}
@@ -136,13 +142,14 @@ func Run(ctx context.Context, opts Options) error {
 		Tests:           tests,
 		Timeout:         timeout,
 		Lang:            lang,
-		Progress:        report.PrintProgress(out, lang, model, effort, report.ColorEnabled(out)),
+		Progress:        report.PrintProgress(out, lang, progressModel(model), effort, color),
 	})
 	if err != nil {
 		return err
 	}
-	report.PrintTableWithWriter(out, summary, lang, report.ColorEnabled(out))
+	report.PrintTableWithWriter(out, summary, lang, color)
 
+	report.PrintSection(out, 4, l.S("wizard_step_upload"), color)
 	if upload {
 		payload := api.PayloadFromSummary(opts.Version, summary, runtime.GOOS, runtime.GOARCH, system.CodexVersion())
 		resp, err := api.NewWithLang(cfg.APIBaseURL, cfg.AccessToken, lang).UploadRun(ctx, payload)
@@ -150,14 +157,61 @@ func Run(ctx context.Context, opts Options) error {
 			return err
 		}
 		if id, _ := resp["id"].(string); id != "" {
-			fmt.Fprintf(out, l.S("uploaded_run")+"\n", id)
+			report.PrintSuccess(out, l.S("uploaded_run", id), color)
 		} else {
-			fmt.Fprintln(out, l.S("uploaded_run_no_id"))
+			report.PrintSuccess(out, l.S("uploaded_run_no_id"), color)
 		}
+	} else {
+		report.PrintWarning(out, l.S("wizard_upload_skipped"), color)
 	}
 
-	fmt.Fprintln(out, l.S("wizard_done"))
+	report.PrintSuccess(out, l.S("wizard_done"), color)
 	return nil
+}
+
+func promptModel(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) (string, error) {
+	configured, err := system.CodexConfiguredModel()
+	if err == nil && system.ConcreteCodexModel(configured) {
+		report.PrintSuccess(out, l.S("model_detected", configured), color)
+		return promptOptionalString(r, out, l.S("wizard_model"), configured)
+	}
+	if err != nil {
+		report.PrintWarning(out, err.Error(), color)
+	}
+	report.PrintWarning(out, l.S("model_choose"), color)
+	fmt.Fprintln(out, report.Muted(l.S("model_choice_55"), color))
+	fmt.Fprintln(out, report.Muted(l.S("model_choice_54"), color))
+	fmt.Fprintln(out, report.Muted(l.S("model_choice_other"), color))
+	for {
+		choice, err := promptString(r, out, l, l.S("wizard_model"), "1")
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "1", "gpt-5.5", "gpt 5.5":
+			return "gpt-5.5", nil
+		case "2", "gpt-5.4", "gpt 5.4":
+			return "gpt-5.4", nil
+		case "3", "other", "custom", "其他", "自定义":
+			return promptString(r, out, l, l.S("model_custom"), "gpt-5.5")
+		default:
+			if system.ConcreteCodexModel(choice) {
+				return strings.TrimSpace(choice), nil
+			}
+			fmt.Fprintln(out, l.S("prompt_non_empty"))
+		}
+	}
+}
+
+func progressModel(model string) string {
+	if system.ConcreteCodexModel(model) {
+		return model
+	}
+	configured, err := system.CodexConfiguredModel()
+	if err == nil && system.ConcreteCodexModel(configured) {
+		return configured
+	}
+	return ""
 }
 
 func promptString(r *bufio.Reader, out io.Writer, l i18n.Localizer, label, def string) (string, error) {

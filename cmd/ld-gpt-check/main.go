@@ -90,7 +90,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	modelLong := fs.String("model", "", l.S("flag_model"))
 	effort := fs.String("r", "medium", l.S("flag_effort"))
 	effortLong := fs.String("reasoning-effort", "", l.S("flag_effort"))
-	tests := fs.Int("n", 1, l.S("flag_tests"))
+	tests := fs.Int("n", runner.DefaultTests, l.S("flag_tests"))
 	testsLong := fs.Int("tests", 0, l.S("flag_tests"))
 	timeout := fs.Duration("timeout", runner.DefaultTimeout, l.S("flag_timeout"))
 	suite := fs.String("suite", questions.DefaultSuite, "question suite ids, comma-separated")
@@ -139,12 +139,16 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if err != nil {
 		return err
 	}
+	resolvedProgressModel := progressModel(*model)
+	if *upload && resolvedProgressModel == "" {
+		return fmt.Errorf("%s", l.S("api_upload_model_required"))
+	}
 
 	progressOut := os.Stdout
 	if *jsonOut {
 		progressOut = os.Stderr
 	}
-	progress := report.PrintProgress(progressOut, lang, *model, *effort, report.ColorEnabled(progressOut))
+	progress := report.PrintProgress(progressOut, lang, resolvedProgressModel, *effort, report.ColorEnabled(progressOut))
 	summary, err := runner.Run(ctx, runner.Options{
 		Model:           *model,
 		ReasoningEffort: *effort,
@@ -190,6 +194,17 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		}
 	}
 	return nil
+}
+
+func progressModel(model string) string {
+	if system.ConcreteCodexModel(model) {
+		return model
+	}
+	configured, err := system.CodexConfiguredModel()
+	if err == nil && system.ConcreteCodexModel(configured) {
+		return configured
+	}
+	return ""
 }
 
 func loginCmd(ctx context.Context, args []string, lang i18n.Lang) error {

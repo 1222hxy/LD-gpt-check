@@ -207,7 +207,7 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 	return UploadPayload{
 		UploadID:        newUploadID(),
 		ClientVersion:   version,
-		Model:           firstNonEmpty(s.Model, "codex-default"),
+		Model:           strings.TrimSpace(s.Model),
 		ReasoningEffort: s.ReasoningEffort,
 		QuestionCount:   len(s.Questions),
 		AttemptCount:    len(s.Cases),
