@@ -17,6 +17,7 @@ tags:
   - name: OAuth
   - name: Users
   - name: Submissions
+  - name: Bridges
   - name: Sessions
 paths:
   /health:
@@ -323,6 +324,54 @@ paths:
               schema:
                 $ref: "#/components/schemas/OkResponse"
 
+  /api/v1/bridge-suggestions:
+    post:
+      tags: [Bridges]
+      summary: Submit a bridge candidate from the web session
+      operationId: createBridgeSuggestion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBridgeSuggestionRequest"
+      responses:
+        "200":
+          description: Bridge suggestion recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeSuggestionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/bridges/identify:
+    post:
+      tags: [Bridges]
+      summary: Detect bridge name, slug, homepage, and icon for a base URL
+      operationId: identifyBridge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeIdentifyRequest"
+      responses:
+        "200":
+          description: Detection result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeIdentifyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -416,6 +465,85 @@ components:
           type:
             - string
             - "null"
+
+    CreateBridgeSuggestionRequest:
+      type: object
+      required: [base_url]
+      properties:
+        base_url:
+          type: string
+          maxLength: 256
+          format: uri
+        name:
+          type: string
+          maxLength: 128
+
+    BridgeSuggestionResponse:
+      type: object
+      required: [ok, suggestion]
+      properties:
+        ok:
+          type: boolean
+        suggestion:
+          type: object
+          properties:
+            id:
+              type: string
+            base_url:
+              type: string
+            status:
+              type: string
+              enum: [pending, approved, rejected]
+            detected_name:
+              type: string
+            icon_url:
+              type: string
+
+    BridgeIdentifyRequest:
+      type: object
+      required: [base_url]
+      properties:
+        base_url:
+          type: string
+          maxLength: 256
+          format: uri
+        submitted_name:
+          type: string
+          maxLength: 128
+        suggestion_id:
+          type: string
+          maxLength: 128
+
+    BridgeIdentifyResponse:
+      type: object
+      required: [ok, base_url, host, detected_name, slug, confidence]
+      properties:
+        ok:
+          type: boolean
+        base_url:
+          type: string
+        host:
+          type: string
+        homepage_url:
+          type: string
+        page_title:
+          type: string
+        icon_url:
+          type: string
+        detected_name:
+          type: string
+        slug:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        reason:
+          type: string
+        ai_used:
+          type: boolean
+        ai_configured:
+          type: boolean
 
     User:
       type: object

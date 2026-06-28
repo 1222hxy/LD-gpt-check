@@ -150,6 +150,8 @@ grader 类型：
 - `POST /api/v1/admin/questions`：保存题库到 D1 表 `question_banks.questions_json`，要求管理员 Web session 和同源请求。
 - `GET /api/v1/admin/bridges`：读取全局中转站和 base URL 映射。
 - `POST /api/v1/admin/bridges`：保存一个中转站及其多个 base URL；服务端会规范化 URL 并阻止同一 base URL 归属多个中转站。
+- `POST /api/v1/admin/bridges/identify`：管理员提交 base URL，服务端抓取网页 title/icon，并在配置 `BRIDGE_AI_API_KEY` 时调用 OpenAI-compatible 模型辅助识别名称。
+- `POST /api/v1/bridge-suggestions`：已登录用户提交自己的中转站候选；同源请求，写入 `bridge_suggestions`。
 
 ## POST /api/device/start
 

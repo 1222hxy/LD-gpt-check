@@ -1966,7 +1966,7 @@ function attrValue(tag: string, name: string): string {
 }
 
 async function firstReachableIconURL(iconCandidate: string, pageURL: string): Promise<string> {
-  const candidates = [iconCandidate, resolveHTTPSURL("/favicon.ico", pageURL)].filter(Boolean);
+  const candidates = [iconCandidate, resolveHTTPSURL("/favicon.ico", pageURL)].filter((value): value is string => Boolean(value));
   for (const candidate of candidates) {
     if (await iconURLReachable(candidate)) return candidate;
   }
