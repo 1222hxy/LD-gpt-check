@@ -401,6 +401,36 @@
     @apply break-all;
   }
 
+  .download-grid {
+    @apply mt-6 grid gap-3;
+  }
+
+  .download-card {
+    @apply block rounded-xl border border-blue-100 bg-white p-4 text-left no-underline shadow-md shadow-blue-100/50 transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-lg hover:shadow-blue-100;
+  }
+
+  .download-card-primary {
+    @apply border-blue-500 bg-gradient-to-r from-blue-600 via-cyan-500 to-violet text-white shadow-xl shadow-blue-200/80;
+  }
+
+  .download-card span {
+    @apply block text-sm font-semibold text-blue-600;
+  }
+
+  .download-card strong {
+    @apply mt-1 block text-xl font-semibold text-slate-950;
+  }
+
+  .download-card small {
+    @apply mt-1 block text-sm leading-6 text-slate-500;
+  }
+
+  .download-card-primary span,
+  .download-card-primary strong,
+  .download-card-primary small {
+    @apply text-white;
+  }
+
   .check-done,
   .check-todo {
     @apply relative pl-8 text-slate-500;

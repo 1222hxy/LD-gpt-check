@@ -19,7 +19,13 @@ For daily use, the wizard is the recommended path.
 
 ## 🚀 Quick Start
 
-Make sure Codex CLI is installed and logged in, then download the right binary from GitHub Releases. Developers can also install it with Go:
+Make sure Codex CLI is installed and logged in, then download the right binary from [GitHub Releases](https://github.com/1222hxy/LD-gpt-check/releases/latest):
+
+- 🪟 Windows Intel / AMD: `ld-gpt-check_windows_amd64.zip`
+- 🐧 Most Linux servers / VPS: `ld-gpt-check_linux_amd64.tar.gz`
+- 🐧 Linux ARM64: `ld-gpt-check_linux_arm64.tar.gz`
+
+Developers can also install it with Go:
 
 ```bash
 go install github.com/1222hxy/LD-gpt-check/cmd/ld-gpt-check@latest

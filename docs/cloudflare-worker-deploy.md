@@ -120,6 +120,38 @@ openssl rand -base64 32
 - 不要在日志中打印 access token、device code、cookie 或 OAuth code。
 - 如果泄露了 `TOKEN_SECRET`，应轮换 secret，并让用户重新登录。
 
+## 4.1 可选：Release 二进制镜像到 Cloudflare R2
+
+GitHub Release 是默认下载源。若想把每次发布的二进制同步到 Cloudflare R2，给 GitHub Actions 配置这些 repository secrets：
+
+```text
+CLOUDFLARE_R2_ACCOUNT_ID
+CLOUDFLARE_R2_BUCKET
+CLOUDFLARE_R2_ACCESS_KEY_ID
+CLOUDFLARE_R2_SECRET_ACCESS_KEY
+```
+
+如果你给 R2 bucket 绑定了公开访问域名，还可以配置 repository variable：
+
+```text
+CLOUDFLARE_R2_PUBLIC_BASE_URL
+```
+
+例如：
+
+```text
+https://downloads.example.com
+```
+
+workflow 会把文件同步到：
+
+```text
+ld-gpt-check/<version>/
+ld-gpt-check/latest/
+```
+
+如果没有配置这些 secrets，R2 镜像步骤会自动跳过，不影响 GitHub Release。
+
 可选：启用 Cloudflare Turnstile 保护浏览器授权页。
 
 1. 在 Cloudflare Turnstile 创建站点，域名填写 Worker 域名。

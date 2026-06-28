@@ -4,7 +4,7 @@
 
 ## 📦 安装
 
-推荐普通用户从 GitHub Releases 下载对应系统的压缩包，解压后把 `ld-gpt-check` 放到 PATH，或直接在当前目录运行。
+推荐普通用户从 [GitHub Releases](https://github.com/1222hxy/LD-gpt-check/releases/latest) 下载对应系统的压缩包，解压后把 `ld-gpt-check` 放到 PATH，或直接在当前目录运行。
 
 二进制命名规则：
 
@@ -14,13 +14,13 @@ ld-gpt-check_VERSION_SYSTEM_ARCH
 
 常见选择：
 
-- Windows Intel/AMD：`windows_amd64.zip`
-- Windows ARM：`windows_arm64.zip`
-- macOS Apple Silicon：`darwin_arm64.tar.gz`
-- macOS Intel：`darwin_amd64.tar.gz`
-- Linux Intel/AMD：`linux_amd64.tar.gz`
-- Linux ARM64：`linux_arm64.tar.gz`
-- 树莓派 32 位：`linux_armv7.tar.gz` 或 `linux_armv6.tar.gz`
+- 🪟 Windows Intel/AMD：`ld-gpt-check_windows_amd64.zip`
+- 🪟 Windows ARM：`ld-gpt-check_windows_arm64.zip`
+- 🍎 macOS Apple Silicon：`ld-gpt-check_darwin_arm64.tar.gz`
+- 🍎 macOS Intel：`ld-gpt-check_darwin_amd64.tar.gz`
+- 🐧 Linux Intel/AMD：`ld-gpt-check_linux_amd64.tar.gz`
+- 🐧 Linux ARM64：`ld-gpt-check_linux_arm64.tar.gz`
+- 🧩 树莓派 32 位：`ld-gpt-check_linux_armv7.tar.gz` 或 `ld-gpt-check_linux_armv6.tar.gz`
 
 开发者可以用 Go 安装：
 

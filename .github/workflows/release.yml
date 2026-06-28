@@ -18,6 +18,12 @@ jobs:
   build:
     name: Build release binaries
     runs-on: ubuntu-latest
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      R2_PUBLIC_BASE_URL: ${{ vars.CLOUDFLARE_R2_PUBLIC_BASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,8 +69,10 @@ jobs:
           for target in "${targets[@]}"; do
             IFS=/ read -r goos goarch goarm <<< "${target}"
             name="ld-gpt-check_${version}_${goos}_${goarch}"
+            alias="ld-gpt-check_${goos}_${goarch}"
             if [[ -n "${goarm:-}" ]]; then
               name="${name}v${goarm}"
+              alias="${alias}v${goarm}"
             fi
 
             out_dir="dist/${name}"
@@ -86,14 +94,107 @@ jobs:
             cp README.md README.en.md ld-gpt-check.example.toml "${out_dir}/"
 
             if [[ "${goos}" == "windows" ]]; then
-              (cd dist && zip -qr "${name}.zip" "${name}")
+              (cd dist && python -m zipfile -c "${name}.zip" "${name}")
+              cp "dist/${name}.zip" "dist/${alias}.zip"
             else
               (cd dist && tar -czf "${name}.tar.gz" "${name}")
+              cp "dist/${name}.tar.gz" "dist/${alias}.tar.gz"
             fi
             rm -rf "${out_dir}"
           done
 
           (cd dist && sha256sum * > checksums.txt)
+
+      - name: Create release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          fi
+          if [[ -z "${version}" ]]; then
+            version="dev"
+          fi
+
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${version}"
+          cat > dist/RELEASE_BODY.md <<EOF
+          # 🍬 LD-gpt-check ${version}
+
+          ## 🚀 直接下载
+
+          > 不确定下载哪个？大多数用户看这里就够了。解压后运行 \`ld-gpt-check\`，进入向导。
+
+          ### 🪟 Windows Intel / AMD 用户
+
+          **👉 [下载 Windows AMD64 版](${release_url}/ld-gpt-check_windows_amd64.zip)**
+
+          适用于绝大多数 Windows 台式机、笔记本、游戏本和云服务器。
+
+          ### 🐧 Linux 常用版本
+
+          **👉 [下载 Linux AMD64 版](${release_url}/ld-gpt-check_linux_amd64.tar.gz)**
+
+          适用于绝大多数 x86_64 Linux 电脑、服务器和 VPS。
+
+          **👉 [下载 Linux ARM64 版](${release_url}/ld-gpt-check_linux_arm64.tar.gz)**
+
+          适用于 ARM64 Linux 服务器、部分 NAS、开发板和云主机。
+
+          ## 📦 其他系统
+
+          页面下方 Assets 里还有 macOS、Windows ARM64、Linux 32 位 ARM、FreeBSD 等版本。
+
+          ## ✅ 校验
+
+          下载后可用 \`checksums.txt\` 校验 SHA256。
+
+          ## 🪄 使用
+
+          运行 \`ld-gpt-check\` 后跟着向导操作即可。需要先安装并登录本机 Codex CLI。
+          EOF
+
+          if [[ -n "${R2_PUBLIC_BASE_URL}" ]]; then
+            mirror_base="${R2_PUBLIC_BASE_URL%/}/ld-gpt-check/latest"
+            cat >> dist/RELEASE_BODY.md <<EOF
+
+          ## ☁️ Cloudflare R2 镜像
+
+          如果 GitHub 下载慢，可以试试镜像：
+
+          - [Windows AMD64](${mirror_base}/ld-gpt-check_windows_amd64.zip)
+          - [Linux AMD64](${mirror_base}/ld-gpt-check_linux_amd64.tar.gz)
+          - [Linux ARM64](${mirror_base}/ld-gpt-check_linux_arm64.tar.gz)
+          EOF
+          fi
+
+      - name: Upload optional Cloudflare R2 mirror
+        if: ${{ env.R2_ACCOUNT_ID != '' && env.R2_BUCKET != '' && env.R2_ACCESS_KEY_ID != '' && env.R2_SECRET_ACCESS_KEY != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --user awscli
+          export PATH="$HOME/.local/bin:$PATH"
+          export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
+          export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
+          export AWS_DEFAULT_REGION="auto"
+
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          fi
+          if [[ -z "${version}" ]]; then
+            version="dev"
+          fi
+
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3 sync dist "s3://${R2_BUCKET}/ld-gpt-check/${version}/" \
+            --endpoint-url "${endpoint}" \
+            --exclude "RELEASE_BODY.md"
+          aws s3 sync dist "s3://${R2_BUCKET}/ld-gpt-check/latest/" \
+            --endpoint-url "${endpoint}" \
+            --exclude "RELEASE_BODY.md"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -105,5 +206,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/checksums.txt
+          body_path: dist/RELEASE_BODY.md
           generate_release_notes: true
