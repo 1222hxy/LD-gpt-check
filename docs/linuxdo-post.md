@@ -14,7 +14,7 @@
 
 项目地址：
 
-<https://github.com/haowang02/ld-gpt-check>
+<https://github.com/1222hxy/LD-gpt-check>
 
 产品前端：
 
@@ -76,7 +76,7 @@ LD-gpt-check 是一个开源 Go CLI。
 安装：
 
 ```bash
-go install github.com/haowang02/ld-gpt-check/cmd/ld-gpt-check@latest
+go install github.com/1222hxy/LD-gpt-check/cmd/ld-gpt-check@latest
 ```
 
 跑一次：
@@ -212,7 +212,7 @@ https://codexgo.yhklab.com
 
 项目地址：
 
-<https://github.com/haowang02/ld-gpt-check>
+<https://github.com/1222hxy/LD-gpt-check>
 
 一句话总结：
 

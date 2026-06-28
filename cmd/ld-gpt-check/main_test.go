@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/haowang02/ld-gpt-check/internal/i18n"
-	"github.com/haowang02/ld-gpt-check/internal/wizard"
+	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/wizard"
 )
 
 func TestNoArgsStartsWizard(t *testing.T) {

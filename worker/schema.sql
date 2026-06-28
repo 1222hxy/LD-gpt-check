@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS benchmark_submissions (
   codex_model_source TEXT,
   codex_model_provider TEXT,
   codex_provider_host TEXT,
+  codex_provider_base_url TEXT NOT NULL DEFAULT '',
+  codex_channel TEXT NOT NULL DEFAULT 'unknown_bridge',
+  codex_bridge_id TEXT,
   codex_sandbox TEXT,
   codex_ephemeral INTEGER,
   codex_skip_git_repo_check INTEGER,
@@ -78,7 +81,28 @@ CREATE TABLE IF NOT EXISTS benchmark_submissions (
   codex_invocation TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(user_id, upload_id),
-  FOREIGN KEY(user_id) REFERENCES users(id)
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(codex_bridge_id) REFERENCES bridges(id)
+);
+
+CREATE TABLE IF NOT EXISTS bridges (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bridge_base_urls (
+  id TEXT PRIMARY KEY,
+  bridge_id TEXT NOT NULL,
+  base_url TEXT NOT NULL UNIQUE,
+  host TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(bridge_id) REFERENCES bridges(id)
 );
 
 CREATE TABLE IF NOT EXISTS benchmark_question_results (
@@ -185,3 +209,5 @@ CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_hash ON web_sessions(session_hash);
 CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
 CREATE INDEX IF NOT EXISTS idx_question_banks_active ON question_banks(is_active, updated_at);
+CREATE INDEX IF NOT EXISTS idx_bridge_base_urls_host ON bridge_base_urls(host, is_active);
+CREATE INDEX IF NOT EXISTS idx_benchmark_submissions_channel ON benchmark_submissions(codex_channel, created_at);

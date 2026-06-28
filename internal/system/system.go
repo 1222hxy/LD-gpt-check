@@ -15,9 +15,10 @@ import (
 )
 
 type CodexConfig struct {
-	Model         string
-	ModelProvider string
-	ProviderHost  string
+	Model           string
+	ModelProvider   string
+	ProviderHost    string
+	ProviderBaseURL string
 }
 
 func CodexPath() (string, error) {
@@ -76,7 +77,7 @@ func CodexConfigInfo() (CodexConfig, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return CodexConfig{}, nil
+			return CodexConfig{ProviderHost: "api.openai.com", ProviderBaseURL: "https://api.openai.com/v1"}, nil
 		}
 		return CodexConfig{}, err
 	}
@@ -89,11 +90,14 @@ func CodexConfigInfo() (CodexConfig, error) {
 	if provider == "" {
 		provider = strings.TrimSpace(values["provider"])
 	}
-	host := ""
+	baseURL := ""
 	if provider != "" {
-		host = providerHost(values, provider)
+		baseURL = providerBaseURL(values, provider)
 	}
-	return CodexConfig{Model: model, ModelProvider: provider, ProviderHost: host}, nil
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	return CodexConfig{Model: model, ModelProvider: provider, ProviderHost: hostFromURL(baseURL), ProviderBaseURL: baseURL}, nil
 }
 
 func ConcreteCodexModel(model string) bool {
@@ -161,9 +165,13 @@ func parseTOMLStringValue(value string) (string, bool) {
 }
 
 func providerHost(values map[string]string, provider string) string {
+	return hostFromURL(providerBaseURL(values, provider))
+}
+
+func providerBaseURL(values map[string]string, provider string) string {
 	for _, key := range providerBaseURLKeys(provider) {
-		if host := hostFromURL(values[key]); host != "" {
-			return host
+		if baseURL := NormalizeProviderBaseURL(values[key]); baseURL != "" {
+			return baseURL
 		}
 	}
 	return ""
@@ -180,7 +188,7 @@ func providerBaseURLKeys(provider string) []string {
 }
 
 func hostFromURL(raw string) string {
-	raw = strings.TrimSpace(raw)
+	raw = NormalizeProviderBaseURL(raw)
 	if raw == "" {
 		return ""
 	}
@@ -189,6 +197,26 @@ func hostFromURL(raw string) string {
 		return ""
 	}
 	return u.Host
+}
+
+func NormalizeProviderBaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = strings.TrimRight(u.Path, "/")
+	if u.Path == "" {
+		u.Path = ""
+	}
+	return u.String()
 }
 
 func stripTOMLComment(line string) string {

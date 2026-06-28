@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/haowang02/ld-gpt-check/internal/config"
-	"github.com/haowang02/ld-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/config"
+	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 )
 
 func TestRunWizardUsesProductionAPIWithoutAsking(t *testing.T) {

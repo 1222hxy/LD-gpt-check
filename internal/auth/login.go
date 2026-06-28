@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/haowang02/ld-gpt-check/internal/api"
-	"github.com/haowang02/ld-gpt-check/internal/config"
-	"github.com/haowang02/ld-gpt-check/internal/i18n"
-	"github.com/haowang02/ld-gpt-check/internal/system"
+	"github.com/1222hxy/LD-gpt-check/internal/api"
+	"github.com/1222hxy/LD-gpt-check/internal/config"
+	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/system"
 )
 
 func Login(ctx context.Context, apiBaseURL string) (config.User, error) {

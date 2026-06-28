@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/haowang02/ld-gpt-check/internal/i18n"
-	"github.com/haowang02/ld-gpt-check/internal/questions"
-	"github.com/haowang02/ld-gpt-check/internal/system"
+	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
+	"github.com/1222hxy/LD-gpt-check/internal/system"
 )
 
 const (
@@ -111,6 +111,7 @@ type Summary struct {
 	CodexModelSource      string            `json:"codex_model_source"`
 	CodexModelProvider    string            `json:"codex_model_provider,omitempty"`
 	CodexProviderHost     string            `json:"codex_provider_host,omitempty"`
+	CodexProviderBaseURL  string            `json:"codex_provider_base_url,omitempty"`
 	CodexSandbox          string            `json:"codex_sandbox"`
 	CodexEphemeral        bool              `json:"codex_ephemeral"`
 	CodexSkipGitRepoCheck bool              `json:"codex_skip_git_repo_check"`
@@ -389,7 +390,7 @@ func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 		Correct:               correct,
 		QuestionSuite:         strings.TrimSpace(opts.QuestionSuite),
 		ClientTimezone:        time.Now().Format("-07:00"),
-		UploadSchemaVersion:   3,
+		UploadSchemaVersion:   4,
 		CodexSandbox:          "read-only",
 		CodexEphemeral:        true,
 		CodexSkipGitRepoCheck: true,
@@ -427,6 +428,7 @@ func applyCodexConfigMetadata(s *Summary, requestedModel string) {
 	if err == nil {
 		s.CodexModelProvider = info.ModelProvider
 		s.CodexProviderHost = info.ProviderHost
+		s.CodexProviderBaseURL = info.ProviderBaseURL
 	}
 	switch {
 	case system.ConcreteCodexModel(requestedModel):

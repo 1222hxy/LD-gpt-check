@@ -21,6 +21,7 @@ const ACCESS_TOKEN_EXPIRES_SECONDS = 180 * 86400;
 const MAX_QUESTIONS = 50;
 const MAX_ATTEMPTS = 500;
 const MAX_STRING_LENGTH = 128;
+const MAX_BASE_URL_LENGTH = 256;
 const MAX_PREVIEW_LENGTH = 300;
 const MAX_METADATA_LENGTH = 2048;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -71,6 +72,8 @@ export default {
       if (request.method === "GET" && matches(path, "/api/questions", "/api/v1/questions")) return withCommonHeaders(await publicQuestions(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/api/v1/admin/questions") return withCommonHeaders(await adminQuestionsGet(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/questions") return withCommonHeaders(await adminQuestionsPost(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesGet(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesPost(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/start", "/api/v1/device-authorizations")) return withCommonHeaders(await deviceStart(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/poll", "/api/v1/device-authorizations/token")) return withCommonHeaders(await devicePoll(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/device") return withCommonHeaders(await devicePage(request, env), request, env, requestID);
@@ -213,6 +216,104 @@ async function adminQuestionsPost(request: Request, env: Env): Promise<Response>
   return json({ ok: true, slug, updated_at: now });
 }
 
+async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
+  const user = await getWebUser(request, env);
+  if (!user) {
+    return json({ error: "login required", code: "unauthorized", login_url: `/auth/linuxdo/start?next=${encodeURIComponent("/admin/bridges")}` }, 401);
+  }
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const rows = await env.DB.prepare(
+    `SELECT bridges.id, bridges.name, bridges.slug, bridges.is_active, bridges.updated_at,
+            bridge_base_urls.id AS base_url_id, bridge_base_urls.base_url, bridge_base_urls.host,
+            bridge_base_urls.is_active AS base_url_active
+     FROM bridges
+     LEFT JOIN bridge_base_urls ON bridge_base_urls.bridge_id = bridges.id
+     ORDER BY bridges.updated_at DESC, bridge_base_urls.base_url ASC`
+  ).all();
+  const byID = new Map<string, any>();
+  for (const row of rows.results ?? []) {
+    const r = row as any;
+    if (!byID.has(r.id)) {
+      byID.set(r.id, {
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        is_active: !!r.is_active,
+        updated_at: r.updated_at,
+        base_urls: [],
+      });
+    }
+    if (r.base_url_id) {
+      byID.get(r.id).base_urls.push({
+        id: r.base_url_id,
+        base_url: r.base_url,
+        host: r.host,
+        is_active: !!r.base_url_active,
+      });
+    }
+  }
+  return json({ user: publicUser(user), bridges: [...byID.values()] });
+}
+
+async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+
+  const body = await readJson<any>(request);
+  const name = str(body.name, MAX_STRING_LENGTH).trim();
+  if (!name) return jsonError("name is required", 400, "bad_request");
+  const slug = slugify(str(body.slug, MAX_STRING_LENGTH).trim() || name);
+  if (!slug) return jsonError("slug is invalid", 400, "bad_request");
+  const isActive = body.is_active === false ? 0 : 1;
+  const baseURLs = normalizeBridgeBaseURLs(body.base_urls);
+  if (baseURLs.length < 1) return jsonError("at least one valid https base_url is required", 400, "bad_request");
+
+  const conflict = await env.DB.prepare(
+    `SELECT bridge_base_urls.base_url, bridges.name
+     FROM bridge_base_urls
+     JOIN bridges ON bridges.id = bridge_base_urls.bridge_id
+     WHERE bridge_base_urls.base_url IN (${baseURLs.map(() => "?").join(",")})
+       AND bridges.slug != ?`
+  )
+    .bind(...baseURLs.map((item) => item.baseURL), slug)
+    .first<any>();
+  if (conflict?.base_url) {
+    return jsonError(`base_url already belongs to ${conflict.name}`, 409, "conflict");
+  }
+
+  const now = iso(new Date());
+  const existing = await env.DB.prepare(`SELECT id FROM bridges WHERE slug = ?`).bind(slug).first<any>();
+  const bridgeID = existing?.id || crypto.randomUUID();
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO bridges (id, name, slug, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(slug) DO UPDATE SET
+         name = excluded.name,
+         is_active = excluded.is_active,
+         updated_at = excluded.updated_at`
+    ).bind(bridgeID, name, slug, isActive, now, now),
+    env.DB.prepare(`UPDATE bridge_base_urls SET is_active = 0, updated_at = ? WHERE bridge_id = ?`).bind(now, bridgeID),
+  ];
+  for (const item of baseURLs) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO bridge_base_urls (id, bridge_id, base_url, host, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, ?, ?)
+         ON CONFLICT(base_url) DO UPDATE SET
+           bridge_id = excluded.bridge_id,
+           host = excluded.host,
+           is_active = 1,
+           updated_at = excluded.updated_at`
+      ).bind(crypto.randomUUID(), bridgeID, item.baseURL, item.host, now, now)
+    );
+  }
+  await env.DB.batch(statements);
+  return json({ ok: true, id: bridgeID, slug, updated_at: now });
+}
+
 async function loadEditableQuestionBank(env: Env): Promise<any | null> {
   const defaultRow = await env.DB.prepare(
     `SELECT slug, title, schema_version, questions_json, is_active, updated_at
@@ -256,6 +357,7 @@ async function adminPage(request: Request, env: Env): Promise<Response> {
       <p>这里是管理入口。管理员功能集中放在同源 Worker 内，生产前端和后端共用同一个部署。</p>
       <div class="actions">
         <a class="button" href="/admin/questions">题目 JSON 管理</a>
+        <a class="button" href="/admin/bridges">中转站映射管理</a>
         <a class="button secondary" href="/account">返回账号</a>
       </div>
     </section>
@@ -270,6 +372,10 @@ async function adminPage(request: Request, env: Env): Promise<Response> {
         <a href="/admin/questions">
           <strong>题目 JSON 管理</strong>
           <span>编辑远程题库，CLI 默认从公开题库接口拉取。</span>
+        </a>
+        <a href="/admin/bridges">
+          <strong>中转站映射管理</strong>
+          <span>配置全局 base URL 到中转站名称的对应关系。</span>
         </a>
       </div>
     </section>
@@ -709,6 +815,7 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
   const submissionID = crypto.randomUUID();
   const questions = p.questions.slice(0, MAX_QUESTIONS);
   const attempts = p.attempts.slice(0, MAX_ATTEMPTS);
+  const provider = await classifyProviderBaseURL(env, String(p.codex_provider_base_url || ""));
   const statements = [
     env.DB.prepare(
       `INSERT INTO benchmark_submissions
@@ -717,8 +824,9 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
         avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps, is_anonymous,
         started_at, finished_at, duration_seconds, question_suite, client_timezone,
         os, arch, codex_version, codex_model_source, codex_model_provider, codex_provider_host,
+        codex_provider_base_url, codex_channel, codex_bridge_id,
         codex_sandbox, codex_ephemeral, codex_skip_git_repo_check, codex_disabled_features, codex_invocation, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       submissionID,
       auth.user.id,
@@ -747,7 +855,10 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       str(p.codex_version, MAX_STRING_LENGTH),
       str(p.codex_model_source, 32),
       str(p.codex_model_provider, MAX_STRING_LENGTH),
-      str(p.codex_provider_host, MAX_STRING_LENGTH),
+      provider.host || str(p.codex_provider_host, MAX_STRING_LENGTH),
+      provider.baseURL,
+      provider.channel,
+      provider.bridgeID,
       str(p.codex_sandbox, 32),
       p.codex_ephemeral ? 1 : 0,
       p.codex_skip_git_repo_check ? 1 : 0,
@@ -850,8 +961,12 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
   const limit = clampInt(url.searchParams.get("limit"), 1, 100, 50);
   const rows = await env.DB.prepare(
     `SELECT id, upload_id, model, reasoning_effort, question_count, attempt_count, correct_count,
-            accuracy, avg_time_seconds, avg_tps, is_anonymous, created_at
-     FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`
+            accuracy, avg_time_seconds, avg_tps, is_anonymous,
+            codex_provider_base_url, codex_channel, codex_bridge_id, bridges.name AS codex_bridge_name,
+            benchmark_submissions.created_at
+     FROM benchmark_submissions
+     LEFT JOIN bridges ON bridges.id = benchmark_submissions.codex_bridge_id
+     WHERE user_id = ? ORDER BY benchmark_submissions.created_at DESC LIMIT ?`
   )
     .bind(auth.user.id, limit)
     .all();
@@ -1215,9 +1330,12 @@ function knownPath(path: string): boolean {
     "/account",
     "/admin",
     "/admin/questions",
+    "/admin/bridges",
     "/health",
     "/api/questions",
     "/api/v1/questions",
+    "/api/v1/admin/questions",
+    "/api/v1/admin/bridges",
     "/api/device/start",
     "/api/v1/device-authorizations",
     "/api/device/poll",
@@ -1478,7 +1596,7 @@ function validateSubmissionPayload(p: any): string | null {
   if (!requiredString(p.client_version)) return "client_version is required";
   if (!requiredString(p.model)) return "model is required";
   if (!requiredString(p.reasoning_effort)) return "reasoning_effort is required";
-  if (p.upload_schema_version != null && !validInt(p.upload_schema_version, 1, 10)) return "upload_schema_version must be an integer between 1 and 10";
+  if (!validInt(p.upload_schema_version, 4, 10)) return "upload_schema_version must be an integer between 4 and 10";
   if (!validInt(p.question_count, 1, MAX_QUESTIONS)) return `question_count must be an integer between 1 and ${MAX_QUESTIONS}`;
   if (!validInt(p.attempt_count, 1, MAX_ATTEMPTS)) return `attempt_count must be an integer between 1 and ${MAX_ATTEMPTS}`;
   if (!validInt(p.correct, 0, int(p.attempt_count))) return "correct must be an integer between 0 and attempt_count";
@@ -1495,6 +1613,7 @@ function validateSubmissionPayload(p: any): string | null {
   if (!requiredString(p.arch)) return "arch is required";
   if (!requiredString(p.codex_version)) return "codex_version is required";
   if (p.codex_model_source != null && !["explicit", "codex_config", "unknown"].includes(String(p.codex_model_source))) return "codex_model_source is invalid";
+  if (!normalizeProviderBaseURL(p.codex_provider_base_url)) return "codex_provider_base_url must be a valid https URL";
   for (const key of ["codex_model_provider", "codex_provider_host", "codex_sandbox"]) {
     if (p[key] != null && (typeof p[key] !== "string" || p[key].length > MAX_STRING_LENGTH)) return `${key} must be a short string`;
   }
@@ -1557,6 +1676,84 @@ function validateSubmissionPayload(p: any): string | null {
     if (a.timeout_seconds != null && !validNumber(a.timeout_seconds, 0, Number.MAX_SAFE_INTEGER)) return "attempt timeout_seconds must be a non-negative number";
   }
   return null;
+}
+
+async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL: string; host: string; channel: string; bridgeID: string; bridgeName: string }> {
+  const baseURL = normalizeProviderBaseURL(raw);
+  const host = hostFromProviderBaseURL(baseURL);
+  if (officialProviderBaseURL(baseURL)) {
+    return { baseURL, host, channel: "official", bridgeID: "", bridgeName: "" };
+  }
+  const row = await env.DB.prepare(
+    `SELECT bridge_base_urls.bridge_id, bridges.name
+     FROM bridge_base_urls
+     JOIN bridges ON bridges.id = bridge_base_urls.bridge_id
+     WHERE bridge_base_urls.base_url = ?
+       AND bridge_base_urls.is_active = 1
+       AND bridges.is_active = 1
+     LIMIT 1`
+  )
+    .bind(baseURL)
+    .first<any>();
+  if (row?.bridge_id) {
+    return { baseURL, host, channel: "bridge", bridgeID: str(row.bridge_id, MAX_STRING_LENGTH), bridgeName: str(row.name, MAX_STRING_LENGTH) };
+  }
+  return { baseURL, host, channel: "unknown_bridge", bridgeID: "", bridgeName: "" };
+}
+
+function normalizeBridgeBaseURLs(value: unknown): Array<{ baseURL: string; host: string }> {
+  const rawItems = Array.isArray(value) ? value : typeof value === "string" ? value.split(/\n|,/) : [];
+  const seen = new Set<string>();
+  const result: Array<{ baseURL: string; host: string }> = [];
+  for (const item of rawItems) {
+    const raw = typeof item === "string" ? item : item && typeof item === "object" ? String((item as any).base_url || "") : "";
+    const baseURL = normalizeProviderBaseURL(raw);
+    if (!baseURL || seen.has(baseURL)) continue;
+    seen.add(baseURL);
+    result.push({ baseURL, host: hostFromProviderBaseURL(baseURL) });
+  }
+  return result;
+}
+
+function normalizeProviderBaseURL(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_BASE_URL_LENGTH) return "";
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" || !url.hostname) return "";
+    url.protocol = "https:";
+    url.hostname = url.hostname.toLowerCase();
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function hostFromProviderBaseURL(baseURL: string): string {
+  try {
+    return new URL(baseURL).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function officialProviderBaseURL(baseURL: string): boolean {
+  return baseURL === "https://api.openai.com" || baseURL === "https://api.openai.com/v1";
+}
+
+function slugify(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
 }
 
 function requiredString(v: unknown): boolean {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/haowang02/ld-gpt-check/internal/questions"
-	"github.com/haowang02/ld-gpt-check/internal/runner"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
+	"github.com/1222hxy/LD-gpt-check/internal/runner"
 )
 
 func TestDoSendsAuthAndDecodesError(t *testing.T) {
@@ -88,11 +88,12 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 			FinishedAt:        "2026-06-28T10:00:05Z",
 			TimeoutSeconds:    1800,
 		}},
-		StartedAt:       "2026-06-28T10:00:00Z",
-		FinishedAt:      "2026-06-28T10:00:05Z",
-		DurationSeconds: 5,
-		QuestionSuite:   questions.DefaultSuite,
-		ClientTimezone:  "+08:00",
+		StartedAt:            "2026-06-28T10:00:00Z",
+		FinishedAt:           "2026-06-28T10:00:05Z",
+		DurationSeconds:      5,
+		QuestionSuite:        questions.DefaultSuite,
+		ClientTimezone:       "+08:00",
+		CodexProviderBaseURL: "https://api.openai.com/v1",
 	}
 	p := PayloadFromSummary("0.1.0", s, "linux", "amd64", "codex 1")
 	p.Anonymous = true
@@ -113,14 +114,14 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 	if a.CachedInputTokens != 10 || a.TotalTokens != 303 || a.CodexThreadID != "thread_1" || a.EventCount != 3 || a.AnswerChars != 12 {
 		t.Fatalf("diagnostics not preserved: %#v", a)
 	}
-	if p.UploadSchemaVersion != 3 || p.QuestionSuite != questions.DefaultSuite || p.ClientTimezone != "+08:00" || p.DurationSeconds != 5 {
-		t.Fatalf("v3 summary fields not preserved: %#v", p)
+	if p.UploadSchemaVersion != 4 || p.CodexProviderBaseURL != "https://api.openai.com/v1" || p.QuestionSuite != questions.DefaultSuite || p.ClientTimezone != "+08:00" || p.DurationSeconds != 5 {
+		t.Fatalf("v4 summary fields not preserved: %#v", p)
 	}
 	if !p.Anonymous || !strings.Contains(string(b), `"anonymous":true`) {
 		t.Fatalf("anonymous flag not preserved: %s", string(b))
 	}
 	if a.AnswerHash == "" || a.AnswerHash == a.AnswerPreview || a.StartedAt == "" || a.TimeoutSeconds != 1800 {
-		t.Fatalf("v3 attempt fields not preserved: %#v", a)
+		t.Fatalf("v4 attempt fields not preserved: %#v", a)
 	}
 }
 
@@ -238,6 +239,11 @@ func TestUploadPayloadValidation(t *testing.T) {
 	if _, err := client.UploadRun(context.Background(), payload); err == nil {
 		t.Fatal("expected questions mismatch error")
 	}
+	payload = validUploadPayload()
+	payload.CodexProviderBaseURL = ""
+	if _, err := client.UploadRun(context.Background(), payload); err == nil {
+		t.Fatal("expected missing provider base url error")
+	}
 }
 
 func TestParseRetryAfter(t *testing.T) {
@@ -265,13 +271,14 @@ func response(status int, body string) *http.Response {
 
 func validUploadPayload() UploadPayload {
 	return UploadPayload{
-		UploadID:        "upl_test",
-		ClientVersion:   "0.1.0",
-		Model:           "m",
-		ReasoningEffort: "medium",
-		QuestionCount:   1,
-		AttemptCount:    1,
-		Correct:         1,
+		UploadID:             "upl_test",
+		ClientVersion:        "0.1.0",
+		Model:                "m",
+		ReasoningEffort:      "medium",
+		CodexProviderBaseURL: "https://api.openai.com/v1",
+		QuestionCount:        1,
+		AttemptCount:         1,
+		Correct:              1,
 		Questions: []UploadQuestionResult{{
 			QuestionID:      questions.DefaultSuite,
 			QuestionVersion: "1",

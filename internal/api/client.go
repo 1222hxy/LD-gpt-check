@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/haowang02/ld-gpt-check/internal/config"
-	"github.com/haowang02/ld-gpt-check/internal/i18n"
-	"github.com/haowang02/ld-gpt-check/internal/runner"
+	"github.com/1222hxy/LD-gpt-check/internal/config"
+	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/runner"
 )
 
 type Client struct {
@@ -152,6 +152,7 @@ type UploadPayload struct {
 	CodexModelSource      string                 `json:"codex_model_source"`
 	CodexModelProvider    string                 `json:"codex_model_provider,omitempty"`
 	CodexProviderHost     string                 `json:"codex_provider_host,omitempty"`
+	CodexProviderBaseURL  string                 `json:"codex_provider_base_url"`
 	CodexSandbox          string                 `json:"codex_sandbox"`
 	CodexEphemeral        bool                   `json:"codex_ephemeral"`
 	CodexSkipGitRepoCheck bool                   `json:"codex_skip_git_repo_check"`
@@ -247,7 +248,7 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 	}
 	return UploadPayload{
 		UploadID:              newUploadID(),
-		UploadSchemaVersion:   firstPositive(s.UploadSchemaVersion, 3),
+		UploadSchemaVersion:   firstPositive(s.UploadSchemaVersion, 4),
 		ClientVersion:         version,
 		Model:                 strings.TrimSpace(s.Model),
 		ReasoningEffort:       s.ReasoningEffort,
@@ -271,6 +272,7 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 		CodexModelSource:      firstNonEmpty(s.CodexModelSource, "unknown"),
 		CodexModelProvider:    s.CodexModelProvider,
 		CodexProviderHost:     s.CodexProviderHost,
+		CodexProviderBaseURL:  s.CodexProviderBaseURL,
 		CodexSandbox:          firstNonEmpty(s.CodexSandbox, "read-only"),
 		CodexEphemeral:        s.CodexEphemeral,
 		CodexSkipGitRepoCheck: s.CodexSkipGitRepoCheck,
@@ -569,6 +571,9 @@ func (c Client) validateUploadPayload(p UploadPayload) error {
 	}
 	if strings.TrimSpace(p.UploadID) == "" {
 		return fmt.Errorf("%s", l.S("api_upload_id_required"))
+	}
+	if strings.TrimSpace(p.CodexProviderBaseURL) == "" {
+		return fmt.Errorf("%s", l.S("api_upload_provider_base_url_required"))
 	}
 	if p.AttemptCount <= 0 {
 		return fmt.Errorf("%s", l.S("api_upload_tests_invalid"))

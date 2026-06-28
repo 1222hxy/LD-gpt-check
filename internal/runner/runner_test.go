@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/haowang02/ld-gpt-check/internal/i18n"
-	"github.com/haowang02/ld-gpt-check/internal/questions"
+	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
 )
 
 func TestParseEventsExtractsMessageAndUsage(t *testing.T) {
