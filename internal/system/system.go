@@ -209,7 +209,11 @@ func NormalizeProviderBaseURL(raw string) string {
 		return ""
 	}
 	u.Scheme = strings.ToLower(u.Scheme)
+	if u.Scheme != "https" {
+		return ""
+	}
 	u.Host = strings.ToLower(u.Host)
+	u.User = nil
 	u.RawQuery = ""
 	u.Fragment = ""
 	u.Path = strings.TrimRight(u.Path, "/")

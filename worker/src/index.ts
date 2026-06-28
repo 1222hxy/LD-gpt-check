@@ -13,6 +13,9 @@ export interface Env {
   TURNSTILE_SECRET_KEY?: string;
   ADMIN_LINUXDO_IDS?: string;
   ADMIN_USER_IDS?: string;
+  BRIDGE_AI_BASE_URL?: string;
+  BRIDGE_AI_API_KEY?: string;
+  BRIDGE_AI_MODEL?: string;
 }
 
 const DEVICE_EXPIRES_SECONDS = 600;
@@ -22,6 +25,7 @@ const MAX_QUESTIONS = 50;
 const MAX_ATTEMPTS = 500;
 const MAX_STRING_LENGTH = 128;
 const MAX_BASE_URL_LENGTH = 256;
+const MAX_URL_LENGTH = 512;
 const MAX_PREVIEW_LENGTH = 300;
 const MAX_METADATA_LENGTH = 2048;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -74,6 +78,8 @@ export default {
       if (request.method === "POST" && path === "/api/v1/admin/questions") return withCommonHeaders(await adminQuestionsPost(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesGet(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesPost(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/admin/bridges/identify") return withCommonHeaders(await adminBridgeIdentifyPost(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/bridge-suggestions") return withCommonHeaders(await bridgeSuggestionPost(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/start", "/api/v1/device-authorizations")) return withCommonHeaders(await deviceStart(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/poll", "/api/v1/device-authorizations/token")) return withCommonHeaders(await devicePoll(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/device") return withCommonHeaders(await devicePage(request, env), request, env, requestID);
@@ -90,6 +96,7 @@ export default {
       if (request.method === "POST" && path === "/logout") return withCommonHeaders(await webLogout(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/account/submissions/delete") return withCommonHeaders(await webDeleteSubmission(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/account/submissions/delete-all") return withCommonHeaders(await webDeleteAllSubmissions(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/account/bridge-suggestions") return withCommonHeaders(await webBridgeSuggestionPost(request, env), request, env, requestID);
 
       if (knownPath(path)) return withCommonHeaders(jsonError("method not allowed", 405, "method_not_allowed", requestID), request, env, requestID);
       return withCommonHeaders(jsonError("not found", 404, "not_found", requestID), request, env, requestID);
@@ -223,7 +230,7 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
   }
   if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
   const rows = await env.DB.prepare(
-    `SELECT bridges.id, bridges.name, bridges.slug, bridges.is_active, bridges.updated_at,
+    `SELECT bridges.id, bridges.name, bridges.slug, bridges.icon_url, bridges.homepage_url, bridges.is_active, bridges.updated_at,
             bridge_base_urls.id AS base_url_id, bridge_base_urls.base_url, bridge_base_urls.host,
             bridge_base_urls.is_active AS base_url_active
      FROM bridges
@@ -238,6 +245,8 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
         id: r.id,
         name: r.name,
         slug: r.slug,
+        icon_url: r.icon_url || "",
+        homepage_url: r.homepage_url || "",
         is_active: !!r.is_active,
         updated_at: r.updated_at,
         base_urls: [],
@@ -252,7 +261,20 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
       });
     }
   }
-  return json({ user: publicUser(user), bridges: [...byID.values()] });
+  const suggestions = await env.DB.prepare(
+    `SELECT bridge_suggestions.id, bridge_suggestions.base_url, bridge_suggestions.host, bridge_suggestions.source,
+            bridge_suggestions.submitted_name, bridge_suggestions.page_title, bridge_suggestions.icon_url,
+            bridge_suggestions.ai_name, bridge_suggestions.ai_slug, bridge_suggestions.ai_confidence,
+            bridge_suggestions.ai_reason, bridge_suggestions.status, bridge_suggestions.occurrence_count,
+            bridge_suggestions.created_at, bridge_suggestions.updated_at, bridge_suggestions.last_seen_at,
+            users.username, users.login
+     FROM bridge_suggestions
+     LEFT JOIN users ON users.id = bridge_suggestions.user_id
+     WHERE bridge_suggestions.status = 'pending'
+     ORDER BY bridge_suggestions.occurrence_count DESC, bridge_suggestions.updated_at DESC
+     LIMIT 50`
+  ).all();
+  return json({ user: publicUser(user), bridges: [...byID.values()], suggestions: suggestions.results ?? [] });
 }
 
 async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
@@ -264,11 +286,13 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
   const body = await readJson<any>(request);
   const name = str(body.name, MAX_STRING_LENGTH).trim();
   if (!name) return jsonError("name is required", 400, "bad_request");
-  const slug = slugify(str(body.slug, MAX_STRING_LENGTH).trim() || name);
-  if (!slug) return jsonError("slug is invalid", 400, "bad_request");
+  const slug = slugify(str(body.slug, MAX_STRING_LENGTH).trim() || name) || `bridge-${crypto.randomUUID().slice(0, 8)}`;
   const isActive = body.is_active === false ? 0 : 1;
   const baseURLs = normalizeBridgeBaseURLs(body.base_urls);
   if (baseURLs.length < 1) return jsonError("at least one valid https base_url is required", 400, "bad_request");
+  const iconURL = normalizePublicHTTPSURL(str(body.icon_url, MAX_URL_LENGTH));
+  const homepageURL = normalizePublicHTTPSURL(str(body.homepage_url, MAX_URL_LENGTH));
+  const suggestionID = str(body.suggestion_id, MAX_STRING_LENGTH);
 
   const conflict = await env.DB.prepare(
     `SELECT bridge_base_urls.base_url, bridges.name
@@ -288,13 +312,15 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
   const bridgeID = existing?.id || crypto.randomUUID();
   const statements = [
     env.DB.prepare(
-      `INSERT INTO bridges (id, name, slug, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO bridges (id, name, slug, icon_url, homepage_url, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(slug) DO UPDATE SET
          name = excluded.name,
+         icon_url = excluded.icon_url,
+         homepage_url = excluded.homepage_url,
          is_active = excluded.is_active,
          updated_at = excluded.updated_at`
-    ).bind(bridgeID, name, slug, isActive, now, now),
+    ).bind(bridgeID, name, slug, iconURL, homepageURL, isActive, now, now),
     env.DB.prepare(`UPDATE bridge_base_urls SET is_active = 0, updated_at = ? WHERE bridge_id = ?`).bind(now, bridgeID),
   ];
   for (const item of baseURLs) {
@@ -310,8 +336,51 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
       ).bind(crypto.randomUUID(), bridgeID, item.baseURL, item.host, now, now)
     );
   }
+  if (suggestionID) {
+    statements.push(
+      env.DB.prepare(`UPDATE bridge_suggestions SET status = 'approved', bridge_id = ?, updated_at = ? WHERE id = ?`).bind(bridgeID, now, suggestionID)
+    );
+  }
   await env.DB.batch(statements);
   return json({ ok: true, id: bridgeID, slug, updated_at: now });
+}
+
+async function adminBridgeIdentifyPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const body = await readJson<any>(request);
+  const detected = await identifyBridgeCandidate(env, body.base_url, str(body.name || body.submitted_name, MAX_STRING_LENGTH));
+  const suggestionID = str(body.suggestion_id, MAX_STRING_LENGTH);
+  if (suggestionID) {
+    await env.DB.prepare(
+      `UPDATE bridge_suggestions
+       SET page_title = ?, icon_url = ?, ai_name = ?, ai_slug = ?, ai_confidence = ?, ai_reason = ?, updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(detected.page_title, detected.icon_url, detected.detected_name, detected.slug, detected.confidence, detected.reason, iso(new Date()), suggestionID)
+      .run();
+  }
+  return json({ ok: true, ...detected });
+}
+
+async function bridgeSuggestionPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  await enforceUserRateLimit(env, user.id, "bridge_suggestion", 20, 3600);
+  const body = await readJson<any>(request);
+  const baseURL = normalizeProviderBaseURL(body.base_url);
+  if (!baseURL) return jsonError("base_url must be a valid https URL", 400, "bad_request");
+  const suggestion = await upsertBridgeSuggestion(env, {
+    userID: user.id,
+    baseURL,
+    host: hostFromProviderBaseURL(baseURL),
+    source: "user",
+    submittedName: str(body.name || body.submitted_name, MAX_STRING_LENGTH),
+  });
+  return json({ ok: true, suggestion });
 }
 
 async function loadEditableQuestionBank(env: Env): Promise<any | null> {
@@ -603,8 +672,11 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     .bind(user.id)
     .first<any>();
   const recent = await env.DB.prepare(
-    `SELECT id, model, reasoning_effort, attempt_count, correct_count, accuracy, is_anonymous, created_at
-     FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`
+    `SELECT benchmark_submissions.id, model, reasoning_effort, attempt_count, correct_count, accuracy, is_anonymous,
+            codex_channel, bridges.name AS codex_bridge_name, benchmark_submissions.created_at
+     FROM benchmark_submissions
+     LEFT JOIN bridges ON bridges.id = benchmark_submissions.codex_bridge_id
+     WHERE user_id = ? ORDER BY benchmark_submissions.created_at DESC LIMIT 10`
   )
     .bind(user.id)
     .all<any>();
@@ -616,6 +688,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
         <td>${escapeHTML(str(r.reasoning_effort || "-", 32))}</td>
         <td>${int(r.correct_count)}/${int(r.attempt_count)}</td>
         <td>${formatPercent(num(r.accuracy))}</td>
+        <td>${channelLabel(r.codex_channel, r.codex_bridge_name)}</td>
         <td>${r.is_anonymous ? "匿名" : "公开"}</td>
         <td>${escapeHTML(formatDate(r.created_at))}</td>
         <td>
@@ -653,9 +726,20 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
       <pre>LD_GPT_CHECK_API_BASE_URL=${escapeHTML(env.BASE_URL.replace(/\/$/, ""))} bin/ld-gpt-check login</pre>
     </section>
     <section class="panel">
+      <h2>提交中转站</h2>
+      <p>如果你的 Codex 使用了中转站，可以提交 provider base URL。管理员审核后，后续上传会显示对应中转站标签。</p>
+      <form method="post" action="/account/bridge-suggestions">
+        <div class="actions">
+          <input name="name" maxlength="128" placeholder="中转站名称，可选">
+          <input name="base_url" maxlength="256" placeholder="https://bridge.example.com/v1" required>
+          <button type="submit">提交候选</button>
+        </div>
+      </form>
+    </section>
+    <section class="panel">
       <h2>最近上传</h2>
       <p>这里只展示最后 10 条记录。删除操作只会删除你的测试数据，不会删除账号、网页会话或 CLI token。</p>
-      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>展示</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
+      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>渠道</th><th>展示</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
       ${rows ? `<form class="delete-all" method="post" action="/account/submissions/delete-all">
         <label>清空全部测试数据：输入 <strong>DELETE</strong> 确认</label>
         <div class="actions"><input name="confirm" autocomplete="off" placeholder="DELETE"><button class="danger" type="submit">清空我的测试数据</button></div>
@@ -816,6 +900,9 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
   const questions = p.questions.slice(0, MAX_QUESTIONS);
   const attempts = p.attempts.slice(0, MAX_ATTEMPTS);
   const provider = await classifyProviderBaseURL(env, String(p.codex_provider_base_url || ""));
+  if (provider.channel === "unknown_bridge") {
+    await upsertUnknownProviderSuggestion(env, auth.user.id, provider);
+  }
   const statements = [
     env.DB.prepare(
       `INSERT INTO benchmark_submissions
@@ -1037,6 +1124,25 @@ async function webDeleteAllSubmissions(request: Request, env: Env): Promise<Resp
   }
   await deleteOwnSubmissions(env, user.id);
   return redirect("/account");
+}
+
+async function webBridgeSuggestionPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return html(resultPage("需要登录", "请先登录后再提交中转站。"), 401);
+  await enforceUserRateLimit(env, user.id, "bridge_suggestion", 20, 3600);
+  enforceBodySize(request);
+  const form = await request.formData();
+  const baseURL = normalizeProviderBaseURL(String(form.get("base_url") || ""));
+  if (!baseURL) return html(resultPage("中转站地址无效", "请提交 HTTPS base URL，例如 https://bridge.example.com/v1。"), 400);
+  await upsertBridgeSuggestion(env, {
+    userID: user.id,
+    baseURL,
+    host: hostFromProviderBaseURL(baseURL),
+    source: "user",
+    submittedName: str(String(form.get("name") || ""), MAX_STRING_LENGTH),
+  });
+  return html(resultPage("已提交中转站", "候选中转站已进入管理员审核队列。"), 200);
 }
 
 async function deleteOwnSubmission(env: Env, userID: string, submissionID: string): Promise<number> {
@@ -1336,6 +1442,8 @@ function knownPath(path: string): boolean {
     "/api/v1/questions",
     "/api/v1/admin/questions",
     "/api/v1/admin/bridges",
+    "/api/v1/admin/bridges/identify",
+    "/api/v1/bridge-suggestions",
     "/api/device/start",
     "/api/v1/device-authorizations",
     "/api/device/poll",
@@ -1350,6 +1458,7 @@ function knownPath(path: string): boolean {
     "/api/v1/submissions",
     "/account/submissions/delete",
     "/account/submissions/delete-all",
+    "/account/bridge-suggestions",
     "/api/runs",
     "/api/v1/runs",
     "/api/logout",
@@ -1392,7 +1501,7 @@ function layoutPage(title: string, content: string): string {
 :root{color-scheme:light;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--brand2:#06b6d4;--bg:#f7fbff}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.1),transparent 34%),linear-gradient(225deg,rgba(6,182,212,.14),transparent 38%),var(--bg);padding:24px;line-height:1.5}
 main{width:min(100%,920px);margin:0 auto}.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.86);border-radius:14px;padding:12px 14px;box-shadow:0 16px 50px rgba(37,99,235,.12)}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav a{color:#334155;text-decoration:none;font-size:14px}
-.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.user-head{display:flex;align-items:center;gap:14px}.user-avatar{display:block;width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid #bfdbfe;background:#eff6ff;box-shadow:0 12px 30px rgba(37,99,235,.14)}.user-avatar-fallback{display:grid;place-items:center;font-size:24px;font-weight:800;color:#1d4ed8}.user-name{color:var(--text);text-decoration:none}.user-name:hover{color:#1d4ed8}.user-meta{margin-top:4px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.inline-link{color:#1d4ed8;text-decoration:none}.inline-link:hover{text-decoration:underline}.admin-list{display:grid;gap:10px;margin-top:12px}.admin-list a{display:block;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;padding:14px;text-decoration:none;color:var(--text)}.admin-list a:hover{border-color:#93c5fd;background:#eff6ff}.admin-list strong{display:block}.admin-list span{display:block;margin-top:4px;color:#64748b;font-size:13px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.danger{border-color:#dc2626;background:#dc2626;color:#fff}.small{min-height:32px;padding:6px 10px;font-size:12px}.delete-all{margin-top:16px;border-top:1px solid #e2e8f0;padding-top:16px}.delete-all label{display:block;color:#64748b;font-size:14px}.delete-all input{min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font:600 14px system-ui,sans-serif}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}td form{margin:0}
+.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.user-head{display:flex;align-items:center;gap:14px}.user-avatar{display:block;width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid #bfdbfe;background:#eff6ff;box-shadow:0 12px 30px rgba(37,99,235,.14)}.user-avatar-fallback{display:grid;place-items:center;font-size:24px;font-weight:800;color:#1d4ed8}.user-name{color:var(--text);text-decoration:none}.user-name:hover{color:#1d4ed8}.user-meta{margin-top:4px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.inline-link{color:#1d4ed8;text-decoration:none}.inline-link:hover{text-decoration:underline}.admin-list{display:grid;gap:10px;margin-top:12px}.admin-list a{display:block;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;padding:14px;text-decoration:none;color:var(--text)}.admin-list a:hover{border-color:#93c5fd;background:#eff6ff}.admin-list strong{display:block}.admin-list span{display:block;margin-top:4px;color:#64748b;font-size:13px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}.panel input{min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font:600 14px system-ui,sans-serif}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.danger{border-color:#dc2626;background:#dc2626;color:#fff}.small{min-height:32px;padding:6px 10px;font-size:12px}.delete-all{margin-top:16px;border-top:1px solid #e2e8f0;padding-top:16px}.delete-all label{display:block;color:#64748b;font-size:14px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}td form{margin:0}
 .login-actions{margin-top:22px}.linuxdo-button{display:inline-flex;align-items:center;gap:12px;min-height:58px;border:1px solid #1d4ed8;border-radius:14px;background:linear-gradient(135deg,#1d4ed8,#06b6d4);box-shadow:0 18px 45px rgba(37,99,235,.24);color:#fff;padding:10px 16px;text-decoration:none;transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}.linuxdo-button:hover{transform:translateY(-1px);box-shadow:0 22px 56px rgba(37,99,235,.3);filter:saturate(1.08)}.linuxdo-button span{display:grid;gap:2px;text-align:left}.linuxdo-button strong{color:#fff;font-size:15px;line-height:1.2}.linuxdo-button small{color:rgba(255,255,255,.78);font-size:12px;line-height:1.3}.linuxdo-icon{width:38px;height:38px;flex:0 0 auto;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22)}
 @media(max-width:680px){body{padding:12px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button,.linuxdo-button{width:100%}.actions form{width:100%}.linuxdo-button{justify-content:flex-start}}
 </style></head>
@@ -1544,6 +1653,13 @@ function formatPercent(v: number): string {
   return `${v.toFixed(1)}%`;
 }
 
+function channelLabel(channel: unknown, bridgeName: unknown): string {
+  if (channel === "official") return "官方";
+  if (channel === "bridge") return escapeHTML(str(bridgeName || "中转站", MAX_STRING_LENGTH));
+  if (channel === "unknown_bridge") return "未知中转站";
+  return "-";
+}
+
 function formatDate(v: unknown): string {
   if (typeof v !== "string" || !v) return "-";
   const d = new Date(v);
@@ -1678,11 +1794,271 @@ function validateSubmissionPayload(p: any): string | null {
   return null;
 }
 
-async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL: string; host: string; channel: string; bridgeID: string; bridgeName: string }> {
+async function upsertUnknownProviderSuggestion(env: Env, userID: string, provider: { baseURL: string; host: string }): Promise<void> {
+  try {
+    await upsertBridgeSuggestion(env, {
+      userID,
+      baseURL: provider.baseURL,
+      host: provider.host,
+      source: "upload",
+      submittedName: "",
+    });
+  } catch (err) {
+    console.warn("failed to record bridge suggestion", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function upsertBridgeSuggestion(
+  env: Env,
+  input: { userID: string; baseURL: string; host: string; source: string; submittedName: string }
+): Promise<Record<string, unknown>> {
+  const now = iso(new Date());
+  const existing = await env.DB.prepare(`SELECT id, occurrence_count, status FROM bridge_suggestions WHERE base_url = ?`)
+    .bind(input.baseURL)
+    .first<any>();
+  if (existing?.id) {
+    await env.DB.prepare(
+      `UPDATE bridge_suggestions
+       SET user_id = COALESCE(user_id, ?),
+           source = CASE WHEN source = 'upload' AND ? = 'user' THEN 'user' ELSE source END,
+           submitted_name = CASE WHEN ? != '' THEN ? ELSE submitted_name END,
+           status = CASE WHEN status = 'rejected' THEN 'pending' ELSE status END,
+           occurrence_count = occurrence_count + 1,
+           last_seen_at = ?,
+           updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(input.userID, input.source, input.submittedName, input.submittedName, now, now, existing.id)
+      .run();
+    return { id: existing.id, base_url: input.baseURL, status: existing.status || "pending" };
+  }
+  const detected = await identifyBridgeCandidate(env, input.baseURL, input.submittedName);
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO bridge_suggestions
+       (id, user_id, base_url, host, source, submitted_name, page_title, icon_url,
+        ai_name, ai_slug, ai_confidence, ai_reason, status, occurrence_count, created_at, updated_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?, ?)`
+  )
+    .bind(
+      id,
+      input.userID,
+      input.baseURL,
+      input.host,
+      input.source,
+      input.submittedName,
+      detected.page_title,
+      detected.icon_url,
+      detected.detected_name,
+      detected.slug,
+      detected.confidence,
+      detected.reason,
+      now,
+      now,
+      now
+    )
+    .run();
+  return { id, base_url: input.baseURL, status: "pending", detected_name: detected.detected_name, icon_url: detected.icon_url };
+}
+
+async function identifyBridgeCandidate(env: Env, rawBaseURL: unknown, submittedName = ""): Promise<Record<string, unknown>> {
+  const baseURL = normalizeProviderBaseURL(rawBaseURL);
+  if (!baseURL) throw new APIError(400, "bad_request", "base_url must be a valid https URL");
+  const host = hostFromProviderBaseURL(baseURL);
+  const homepageURL = providerHomepageURL(baseURL);
+  const page = await fetchBridgePageInfo(homepageURL);
+  const fallbackName = str(submittedName || page.title || host.replace(/^api\./, ""), MAX_STRING_LENGTH);
+  const ai = await identifyBridgeWithAI(env, {
+    baseURL,
+    host,
+    homepageURL,
+    submittedName,
+    pageTitle: page.title,
+  });
+  const detectedName = str(ai?.name || fallbackName, MAX_STRING_LENGTH);
+  const slug = slugify(str(ai?.slug || detectedName, MAX_STRING_LENGTH)) || slugify(host) || `bridge-${crypto.randomUUID().slice(0, 8)}`;
+  const confidence = typeof ai?.confidence === "number" && Number.isFinite(ai.confidence) ? Math.max(0, Math.min(1, ai.confidence)) : page.title ? 0.55 : 0.35;
+  const reason = str(ai?.reason || (page.title ? "matched from page title and host" : "matched from host"), MAX_METADATA_LENGTH);
+  return {
+    base_url: baseURL,
+    host,
+    homepage_url: homepageURL,
+    page_title: page.title,
+    icon_url: page.iconURL,
+    detected_name: detectedName,
+    slug,
+    confidence,
+    reason,
+    ai_used: !!ai,
+    ai_configured: !!(env.BRIDGE_AI_BASE_URL && env.BRIDGE_AI_API_KEY),
+  };
+}
+
+async function fetchBridgePageInfo(homepageURL: string): Promise<{ title: string; iconURL: string }> {
+  let title = "";
+  let iconURL = "";
+  try {
+    const resp = await fetch(homepageURL, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(6000),
+    });
+    const finalURL = resp.url || homepageURL;
+    if (resp.ok) {
+      const text = await responseTextLimit(resp, 64 * 1024);
+      title = str(decodeHTMLEntities(extractTitle(text)), MAX_STRING_LENGTH);
+      const iconCandidate = extractIconURL(text, finalURL);
+      iconURL = (await firstReachableIconURL(iconCandidate, finalURL)) || "";
+    }
+    if (!iconURL) iconURL = (await firstReachableIconURL("", finalURL)) || "";
+  } catch {
+    iconURL = "";
+  }
+  return { title, iconURL };
+}
+
+async function responseTextLimit(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (total < maxBytes) {
+    const { value, done } = await reader.read();
+    if (done || !value) break;
+    const slice = value.byteLength > maxBytes - total ? value.slice(0, maxBytes - total) : value;
+    chunks.push(slice);
+    total += slice.byteLength;
+  }
+  try {
+    await reader.cancel();
+  } catch {
+    // Ignore cancellation failures; the bounded read already has the data needed.
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+function extractTitle(htmlText: string): string {
+  return /<title[^>]*>([\s\S]*?)<\/title>/i.exec(htmlText)?.[1]?.replace(/\s+/g, " ").trim() || "";
+}
+
+function extractIconURL(htmlText: string, baseURL: string): string {
+  const links = htmlText.match(/<link\b[^>]*>/gi) || [];
+  for (const link of links) {
+    const rel = attrValue(link, "rel").toLowerCase();
+    if (!rel.split(/\s+/).some((part) => ["icon", "shortcut", "apple-touch-icon", "mask-icon"].includes(part))) continue;
+    const href = attrValue(link, "href");
+    const resolved = resolveHTTPSURL(href, baseURL);
+    if (resolved) return resolved;
+  }
+  return "";
+}
+
+function attrValue(tag: string, name: string): string {
+  const re = new RegExp(`${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+  const match = re.exec(tag);
+  return match ? str(match[2] || match[3] || match[4] || "", MAX_URL_LENGTH) : "";
+}
+
+async function firstReachableIconURL(iconCandidate: string, pageURL: string): Promise<string> {
+  const candidates = [iconCandidate, resolveHTTPSURL("/favicon.ico", pageURL)].filter(Boolean);
+  for (const candidate of candidates) {
+    if (await iconURLReachable(candidate)) return candidate;
+  }
+  return "";
+}
+
+async function iconURLReachable(url: string): Promise<boolean> {
+  if (!normalizePublicHTTPSURL(url)) return false;
+  for (const method of ["HEAD", "GET"]) {
+    try {
+      const resp = await fetch(url, { method, redirect: "follow", signal: AbortSignal.timeout(5000) });
+      if (resp.ok) {
+        const contentType = resp.headers.get("content-type") || "";
+        return !contentType || /^image\//i.test(contentType) || /icon/i.test(contentType);
+      }
+    } catch {
+      // Try the next method or candidate.
+    }
+  }
+  return false;
+}
+
+async function identifyBridgeWithAI(
+  env: Env,
+  input: { baseURL: string; host: string; homepageURL: string; submittedName: string; pageTitle: string }
+): Promise<{ name?: string; slug?: string; confidence?: number; reason?: string } | null> {
+  if (!env.BRIDGE_AI_BASE_URL || !env.BRIDGE_AI_API_KEY) return null;
+  const endpoint = `${env.BRIDGE_AI_BASE_URL.replace(/\/+$/, "")}/chat/completions`;
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.BRIDGE_AI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: env.BRIDGE_AI_MODEL || "gpt-4.1-mini",
+        temperature: 0,
+        max_tokens: 180,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Return compact JSON only. Identify the likely AI API bridge/provider name from URL and page metadata." },
+          {
+            role: "user",
+            content: JSON.stringify({
+              base_url: input.baseURL,
+              host: input.host,
+              homepage_url: input.homepageURL,
+              submitted_name: input.submittedName,
+              page_title: input.pageTitle,
+              expected_schema: { name: "string", slug: "kebab-case string", confidence: "0..1 number", reason: "short string" },
+            }),
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+    const content = String(data?.choices?.[0]?.message?.content || "");
+    const parsed = parseJSONFromText(content);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      name: str((parsed as any).name, MAX_STRING_LENGTH),
+      slug: slugify(str((parsed as any).slug, MAX_STRING_LENGTH)),
+      confidence: Number((parsed as any).confidence),
+      reason: str((parsed as any).reason, MAX_METADATA_LENGTH),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseJSONFromText(text: string): any | null {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = /\{[\s\S]*\}/.exec(text);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL: string; host: string; channel: string; bridgeID: string | null; bridgeName: string }> {
   const baseURL = normalizeProviderBaseURL(raw);
   const host = hostFromProviderBaseURL(baseURL);
   if (officialProviderBaseURL(baseURL)) {
-    return { baseURL, host, channel: "official", bridgeID: "", bridgeName: "" };
+    return { baseURL, host, channel: "official", bridgeID: null, bridgeName: "" };
   }
   const row = await env.DB.prepare(
     `SELECT bridge_base_urls.bridge_id, bridges.name
@@ -1698,7 +2074,23 @@ async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL
   if (row?.bridge_id) {
     return { baseURL, host, channel: "bridge", bridgeID: str(row.bridge_id, MAX_STRING_LENGTH), bridgeName: str(row.name, MAX_STRING_LENGTH) };
   }
-  return { baseURL, host, channel: "unknown_bridge", bridgeID: "", bridgeName: "" };
+  const hostRows = await env.DB.prepare(
+    `SELECT bridge_base_urls.bridge_id, bridges.name
+     FROM bridge_base_urls
+     JOIN bridges ON bridges.id = bridge_base_urls.bridge_id
+     WHERE bridge_base_urls.host = ?
+       AND bridge_base_urls.is_active = 1
+       AND bridges.is_active = 1
+     GROUP BY bridge_base_urls.bridge_id, bridges.name
+     LIMIT 2`
+  )
+    .bind(host)
+    .all<any>();
+  const matches = hostRows.results ?? [];
+  if (matches.length === 1 && matches[0]?.bridge_id) {
+    return { baseURL, host, channel: "bridge", bridgeID: str(matches[0].bridge_id, MAX_STRING_LENGTH), bridgeName: str(matches[0].name, MAX_STRING_LENGTH) };
+  }
+  return { baseURL, host, channel: "unknown_bridge", bridgeID: null, bridgeName: "" };
 }
 
 function normalizeBridgeBaseURLs(value: unknown): Array<{ baseURL: string; host: string }> {
@@ -1735,6 +2127,51 @@ function normalizeProviderBaseURL(raw: unknown): string {
   }
 }
 
+function normalizePublicHTTPSURL(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_URL_LENGTH) return "";
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" || !url.hostname || privateHostname(url.hostname)) return "";
+    url.username = "";
+    url.password = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function providerHomepageURL(baseURL: string): string {
+  try {
+    const url = new URL(baseURL);
+    return `${url.protocol}//${url.host}/`;
+  } catch {
+    return "";
+  }
+}
+
+function resolveHTTPSURL(value: string, baseURL: string): string {
+  if (!value) return "";
+  try {
+    return normalizePublicHTTPSURL(new URL(value, baseURL).toString());
+  } catch {
+    return "";
+  }
+}
+
+function privateHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) {
+    const [a, b] = h.split(".").map((part) => Number(part));
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 0 || a >= 224;
+  }
+  if (h === "::1" || h.startsWith("[::1]")) return true;
+  return false;
+}
+
 function hostFromProviderBaseURL(baseURL: string): string {
   try {
     return new URL(baseURL).host.toLowerCase();
@@ -1754,6 +2191,19 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9_.-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
+}
+
+function decodeHTMLEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
+    });
 }
 
 function requiredString(v: unknown): boolean {

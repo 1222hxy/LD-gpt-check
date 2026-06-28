@@ -518,6 +518,7 @@ components:
         - os
         - arch
         - codex_version
+        - codex_provider_base_url
         - questions
         - attempts
       properties:
@@ -527,9 +528,9 @@ components:
           examples: [upl_0123456789abcdef0123456789abcdef]
         upload_schema_version:
           type: integer
-          minimum: 1
+          minimum: 4
           maximum: 10
-          default: 2
+          default: 4
         client_version:
           type: string
           maxLength: 128
@@ -592,6 +593,11 @@ components:
         codex_provider_host:
           type: string
           maxLength: 128
+        codex_provider_base_url:
+          type: string
+          maxLength: 256
+          format: uri
+          description: Normalized HTTPS Codex provider base URL with query and fragment removed.
         codex_sandbox:
           type: string
           maxLength: 128
@@ -809,6 +815,17 @@ components:
           type: number
         avg_tps:
           type: number
+        codex_provider_base_url:
+          type: string
+        codex_channel:
+          type: string
+          enum: [official, bridge, unknown_bridge]
+        codex_bridge_id:
+          type:
+            - string
+            - "null"
+        codex_bridge_name:
+          type: string
         anonymous:
           type: boolean
           description: True when the uploader requested anonymous identity display.

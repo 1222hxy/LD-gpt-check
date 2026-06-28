@@ -1,331 +1,108 @@
-# LD-gpt-check
+# 🍬 LD-gpt-check
 
-LD-gpt-check is a minimal Go CLI for checking whether the local Codex CLI can solve benchmark questions. The built-in default suite is the original candy math prompt, `candy_21`, whose expected answer is `21`. It reports token usage, reasoning tokens, elapsed time, TPS, and accuracy. It can also log in through a Cloudflare Worker using Linux.do OAuth and upload privacy-scoped summary results to Cloudflare D1.
+> 🧪 一个面向 Linux.do 社区的 Codex / GPT Bench。  
+> 打开终端运行 `ld-gpt-check`，跟着向导走，就能完成测试、登录和上传。
 
-## Prerequisites
+🌐 [English](README.en.md) · 🏠 [在线页面](https://codexgo.yhklab.com) · 📘 [命令参考](docs/commands.md) · ☁️ [部署指南](docs/cloudflare-worker-deploy.md)
 
-- Go 1.22+ for local builds.
-- Codex CLI installed and available as `codex` on macOS/Linux or `codex.cmd` on Windows.
-- Upload/login uses the hosted backend at `https://codexgo.yhklab.com` by default.
-- For self-hosting only: a Cloudflare account with Workers/D1 and a Linux.do OAuth application. Set its callback URL to:
+## ✨ 这是什么
+
+LD-gpt-check 是一个轻量但完整的社区 Bench，用本机 Codex CLI 跑固定题集，记录模型是否答对、token 消耗、耗时和 TPS，并可选择上传到社区 Dashboard 做统计观察。
+
+它不是复杂平台，也不是只能开发者使用的脚本。核心体验是：
+
+1. 📦 安装 CLI。
+2. 🪄 运行 `ld-gpt-check`。
+3. ✅ 按向导选择模型、测试次数、是否登录上传。
+
+除了第一次安装，日常使用基本只需要记住一个命令。
+
+## 🚀 最简单的开始
+
+先确保已经安装并登录 Codex CLI，然后从 GitHub Releases 下载适合你系统的二进制文件。开发者也可以用 Go 直接安装：
+
+```bash
+go install github.com/1222hxy/LD-gpt-check/cmd/ld-gpt-check@latest
+```
+
+之后直接运行：
+
+```bash
+ld-gpt-check
+```
+
+CLI 会进入向导，自动带你完成常见操作：
+
+- 🤖 选择或识别 Codex 使用的模型。
+- 🧠 选择 reasoning effort。
+- 🔢 设置测试次数，默认 5 次。
+- 🔐 通过 Linux.do 设备码登录。
+- ☁️ 选择是否上传结果。
+- 📊 查看彩色终端结果和统计摘要。
+
+需要二进制下载说明、手动参数、JSON 输出、本地题库、自托管后端等高级用法时，再看 [命令参考](docs/commands.md)。
+
+## 🍬 默认测试题
+
+默认题是原始糖果题 `candy_21`，正确答案为 `21`。判定规则非常直接：最终回答中只要出现独立的 `21` 就算通过，`121` 这种连在其他数字里的内容不算。
+
+CLI 也支持远程题库和本地题库。普通用户可以完全不用管这些，向导会自动使用可用题目；想自己创建题目的用户可以查看 [命令参考](docs/commands.md#本地题库)。
+
+## 📊 你会看到什么
+
+每次测试会记录：
+
+- ✅ 正确 / 错误
+- 🔢 input tokens、output tokens、reasoning tokens
+- ⏱️ 耗时和 TPS
+- 🤖 模型、reasoning effort、Codex 版本
+- 🧬 provider base URL 的规范化识别结果
+
+上传后可以在 Dashboard 查看最近结果、趋势、模型对比和统计检查。
+
+## 🔐 登录与上传
+
+登录走设备码流程，CLI 不会接触 Linux.do OAuth client secret：
 
 ```text
-https://YOUR_WORKER_DOMAIN/auth/linuxdo/callback
+CLI -> Cloudflare Worker -> Linux.do OAuth -> Worker 生成平台 token -> CLI 保存 token
 ```
 
-## Build and Run Locally
+凭证会持久化到当前目录的 `ld-gpt-check.toml`。仓库保留 `ld-gpt-check.example.toml` 作为模板，方便自托管或迁移配置。
 
-Build the CLI:
+## 🛡️ 隐私边界
 
-```bash
-go build -o bin/ld-gpt-check ./cmd/ld-gpt-check
-```
+上传是可选的。默认只上传 benchmark 需要的摘要数据和短 answer preview。
 
-For first-time use, run the guided setup:
+不会上传：
 
-```bash
-bin/ld-gpt-check
-```
+- 🚫 本地 Codex 数据库
+- 🚫 完整 prompt 历史
+- 🚫 完整模型回答
+- 🚫 原始 Codex JSONL event
+- 🚫 OpenAI key 或 Linux.do OAuth secret
 
-This is equivalent to:
+用户可以在账号页面删除自己的 benchmark 数据。
 
-```bash
-bin/ld-gpt-check setup
-```
+## ☁️ 自托管
 
-The wizard uses the hosted API by default, helps complete Linux.do login, stores the returned platform token in `ld-gpt-check.toml`, and can run/upload a test result.
+后端使用 Cloudflare Workers + D1，前端与后端代码分离：
 
-The CLI uses Chinese by default. To use English for the current process:
+- `worker/`：Worker API、OAuth、D1 schema、migrations
+- `frontend/`：静态首页和管理页
+- `dashboard/`：统计 Dashboard
+- `cmd/`、`internal/`：Go CLI
 
-```bash
-LD_GPT_CHECK_LANG=en bin/ld-gpt-check help
-```
+如果只是使用工具，不需要部署后端；直接运行向导即可。想自己部署时，按 [Cloudflare Worker 部署指南](docs/cloudflare-worker-deploy.md) 操作。
 
-You can also choose and persist the UI language during setup:
+## 📚 文档
 
-```bash
-bin/ld-gpt-check setup --lang en
-```
+- 📘 [命令参考](docs/commands.md)
+- 📖 [API Reference](docs/api-reference.md)
+- 🧩 [API 设计](docs/api-design.md)
+- ☁️ [Cloudflare Worker 部署](docs/cloudflare-worker-deploy.md)
+- 📝 [Linux.do 发帖草稿](docs/linuxdo-post.md)
 
-Run the benchmark:
+## 🤝 开源
 
-```bash
-bin/ld-gpt-check run -r xhigh -n 5
-```
-
-Pass `-m` only when you want to override the model from your local Codex config:
-
-```bash
-bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5
-```
-
-List available question suites:
-
-```bash
-bin/ld-gpt-check run --list-suites
-```
-
-By default the CLI tries to fetch the hosted question bank from:
-
-```text
-https://codexgo.yhklab.com/api/v1/questions
-```
-
-If the network is unavailable, it falls back to the built-in `candy_21` prompt. To run only built-in or local questions without remote fetch:
-
-```bash
-bin/ld-gpt-check run --no-remote-questions --list-suites
-```
-
-Run selected suites:
-
-```bash
-bin/ld-gpt-check run -m gpt-5.5 --suite candy_21 -n 5
-```
-
-Load additional questions from a JSON bank:
-
-```bash
-bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite candy_21,custom_1
-bin/ld-gpt-check run -m gpt-5.5 --question-url https://example.com/questions.json --suite custom_1
-```
-
-### Create Questions
-
-Questions can come from the hosted backend, a local JSON file, or an explicit HTTPS URL. A question bank uses this shape:
-
-```json
-{
-  "schema_version": "1",
-  "questions": [
-    {
-      "id": "custom_1",
-      "version": "1",
-      "title": "简单数字题",
-      "prompt": "不使用任何外部工具回答：10 + 11 等于多少？",
-      "tags": ["math"],
-      "grader": {
-        "type": "number",
-        "expected": "21",
-        "independent_match": true
-      }
-    }
-  ]
-}
-```
-
-Supported graders:
-
-- `number`: extracts a number and compares it to `expected`. Set `independent_match: true` when the answer only needs to contain an independent value such as `21`.
-- `exact`: compares the full answer to `expected`. Optional `trim_space` and `case_sensitive` control strictness.
-- `regex`: passes when `pattern` matches. If the regex has a capture group, the first group is recorded as the extracted answer.
-
-Local file workflow:
-
-```bash
-bin/ld-gpt-check run --question-file ./questions.json --list-suites
-bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite custom_1 -n 5
-```
-
-Remote admin workflow:
-
-1. Log in at `https://codexgo.yhklab.com/account` with Linux.do.
-2. Open `https://codexgo.yhklab.com/admin`.
-3. Paste the question bank JSON and save it.
-4. Users run `bin/ld-gpt-check run --list-suites` or `bin/ld-gpt-check run --suite custom_1`.
-
-Only Linux.do admins configured on the Worker can edit the remote question bank. The default admin Linux.do UID is `29368`.
-
-The built-in candy prompt must remain unchanged. Its grader only requires an independent `21` in the final answer, so `21` passes but `121` does not. Prompts tell Codex not to use external tools; the runner keeps Codex in read-only sandbox mode, preserves your local Codex config, and fails a run if Codex emits tool-call events.
-
-Print machine-readable output:
-
-```bash
-bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --json
-```
-
-Reasoning effort supports `low`, `medium`, `high`, and `xhigh`. The default effort is `medium`; the default test count is `5`. If `-m` is omitted, Codex uses its local model from your existing Codex configuration; the CLI tries to read that concrete model name for display and uploads. Each Codex run has a default timeout of `30m`; override it with `--timeout 10m` or `--timeout 90s`.
-
-## Login and Upload
-
-Log in with the hosted API:
-
-```bash
-bin/ld-gpt-check login
-```
-
-For a self-hosted backend, override the API URL:
-
-```bash
-LD_GPT_CHECK_API_BASE_URL="https://YOUR_WORKER_DOMAIN" bin/ld-gpt-check login
-```
-
-The CLI opens a browser for Linux.do login. On SSH, WSL, or remote servers, copy the printed URL and 9-digit code manually.
-
-Check the logged-in user:
-
-```bash
-bin/ld-gpt-check whoami
-```
-
-Show the local config path and login status:
-
-```bash
-bin/ld-gpt-check config
-```
-
-Upload a run:
-
-```bash
-bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload
-```
-
-Upload without showing your Linux.do identity in community views:
-
-```bash
-bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload --anonymous
-```
-
-Log out:
-
-```bash
-bin/ld-gpt-check logout
-```
-
-Local config is stored as TOML in the same directory as the executable:
-
-```text
-ld-gpt-check.toml
-```
-
-Override the path when needed:
-
-```bash
-LD_GPT_CHECK_CONFIG=/path/to/ld-gpt-check.toml bin/ld-gpt-check config
-```
-
-Use `ld-gpt-check.example.toml` as the template. The real config stores the API URL, selected language, access token, and basic user profile:
-
-```toml
-api_base_url = "https://codexgo.yhklab.com"
-access_token = "..."
-language = "zh-CN"
-
-[user]
-id = "..."
-username = "..."
-```
-
-## Cloudflare Worker Deployment
-
-This is the backend API deployment. It is separate from the static frontend in `frontend/`.
-
-- `worker/` contains the Cloudflare Worker API, D1 schema, OAuth flow, and backend secrets.
-- `frontend/` contains the Vite static site and deploys to Cloudflare Pages.
-- Do not put D1 bindings or OAuth client secrets in `frontend/`.
-
-Run backend commands from `worker/`:
-
-```bash
-cd worker
-wrangler deploy
-```
-
-Run frontend commands from `frontend/`:
-
-```bash
-cd frontend
-npm run build
-npm run deploy
-```
-
-For a detailed backend deployment and troubleshooting guide, see [`docs/cloudflare-worker-deploy.md`](docs/cloudflare-worker-deploy.md).
-
-Install Wrangler:
-
-```bash
-npm install -g wrangler
-wrangler login
-```
-
-Create a D1 database:
-
-```bash
-wrangler d1 create ld-gpt-check
-```
-
-Copy the returned `database_id` into `worker/wrangler.toml`:
-
-```bash
-cp worker/wrangler.toml.example worker/wrangler.toml
-```
-
-Apply the schema:
-
-```bash
-cd worker
-wrangler d1 execute ld-gpt-check --file=./schema.sql --remote
-```
-
-Configure Worker variables in `worker/wrangler.toml`:
-
-```toml
-[vars]
-BASE_URL = "https://YOUR_WORKER_DOMAIN"
-LINUXDO_AUTH_URL = "https://connect.linux.do/oauth2/authorize"
-LINUXDO_TOKEN_URL = "https://connect.linux.do/oauth2/token"
-LINUXDO_USERINFO_URL = "https://connect.linux.do/api/user"
-```
-
-The Linux.do URLs above are placeholders; confirm the exact OAuth endpoints in your Linux.do developer settings.
-
-Set secrets:
-
-```bash
-wrangler secret put LINUXDO_CLIENT_ID
-wrangler secret put LINUXDO_CLIENT_SECRET
-wrangler secret put TOKEN_SECRET
-```
-
-Deploy:
-
-```bash
-wrangler deploy
-```
-
-After deployment, test:
-
-```bash
-curl https://YOUR_WORKER_DOMAIN/health
-LD_GPT_CHECK_API_BASE_URL=https://YOUR_WORKER_DOMAIN bin/ld-gpt-check login
-```
-
-## API Documentation
-
-The Worker API is documented in:
-
-- [`docs/api-design.md`](docs/api-design.md) for design principles, versioning, error handling, privacy boundaries, and extension rules.
-- [`docs/api-reference.md`](docs/api-reference.md) for endpoint-level request and response details.
-- [`docs/openapi.yaml`](docs/openapi.yaml) for the target OpenAPI 3.1 contract.
-
-The current Worker keeps legacy login paths such as `/api/device/start`, while uploads use `POST /api/v1/submissions`. Legacy `/api/runs` now returns `410 Gone`.
-
-## Project Layout
-
-```text
-cmd/ld-gpt-check/     CLI entrypoint
-internal/api/         Worker API client and upload payloads
-internal/auth/        Device login flow
-internal/config/      Local config path and persistence
-internal/questions/   Built-in and external benchmark question banks
-internal/runner/      Codex execution and JSON event parsing
-internal/report/      Terminal table rendering
-internal/system/      OS helpers
-frontend/             Vite static frontend source
-worker/src/           Cloudflare Worker TypeScript source
-worker/schema.sql     D1 database schema
-```
-
-## Privacy Notes
-
-Uploads include summary metrics, short answer previews, token/time/TPS fields, and bounded Codex diagnostics such as cached input tokens, event type names, and thread id. The CLI does not upload raw Codex JSONL events, local Codex databases, full prompt history, or full model responses. Users can delete their own uploaded benchmark data from the account page; account sessions and CLI tokens are kept unless they log out.
+项目完整开源，包括 CLI、Worker 后端、D1 schema、题库管理、静态前端和 Dashboard。生产环境 secrets 不进入仓库。

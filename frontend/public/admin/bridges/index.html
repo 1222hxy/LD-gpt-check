@@ -7,12 +7,14 @@
     <style>
       :root {
         color-scheme: light;
-        --bg: #f8fbff;
-        --text: #111827;
+        --bg: #f7fbff;
+        --text: #0f172a;
         --muted: #64748b;
         --line: #dbeafe;
         --brand: #2563eb;
         --cyan: #0891b2;
+        --green: #047857;
+        --amber: #b45309;
       }
       * { box-sizing: border-box; }
       body {
@@ -22,53 +24,60 @@
         color: var(--text);
         background:
           linear-gradient(135deg, rgba(37, 99, 235, .08), transparent 34%),
-          linear-gradient(225deg, rgba(8, 145, 178, .13), transparent 38%),
+          linear-gradient(225deg, rgba(8, 145, 178, .12), transparent 38%),
           var(--bg);
         line-height: 1.5;
         padding: 24px;
       }
-      main { width: min(100%, 1120px); margin: 0 auto; }
+      main { width: min(100%, 1180px); margin: 0 auto; }
       nav, .hero, .panel {
         border: 1px solid rgba(191, 219, 254, .9);
         background: rgba(255, 255, 255, .92);
-        box-shadow: 0 20px 70px rgba(37, 99, 235, .13);
+        box-shadow: 0 20px 70px rgba(37, 99, 235, .12);
         backdrop-filter: blur(18px);
-        border-radius: 16px;
+        border-radius: 14px;
       }
       nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding: 12px 14px; }
       nav a { color: #334155; text-decoration: none; font-size: 14px; }
       .brand { font-weight: 800; color: #1d4ed8; }
       .nav-links { display: flex; flex-wrap: wrap; gap: 14px; }
-      .hero, .panel { padding: 24px; margin-bottom: 16px; }
+      .hero, .panel { padding: 22px; margin-bottom: 16px; }
       .badge { display: inline-flex; margin-bottom: 12px; border: 1px solid #bfdbfe; border-radius: 999px; padding: 5px 10px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; background: #eff6ff; }
       h1 { margin: 0; font-size: 34px; line-height: 1.12; letter-spacing: 0; }
       h2 { margin: 0 0 12px; font-size: 20px; }
-      p { margin: 10px 0 0; color: var(--muted); }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; }
-      .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+      h3 { margin: 0; font-size: 16px; }
+      p { margin: 8px 0 0; color: var(--muted); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; overflow-wrap: anywhere; }
+      .layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); gap: 16px; align-items: start; }
+      .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
       label { display: grid; gap: 6px; font-weight: 650; }
       label span { font-size: 12px; color: #64748b; font-weight: 650; text-transform: uppercase; letter-spacing: .02em; }
-      input, textarea { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; font: 600 14px system-ui, sans-serif; }
+      input, textarea { border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 12px; font: 600 14px system-ui, sans-serif; background: #fff; }
       input { min-height: 42px; }
-      textarea { width: 100%; min-height: 150px; margin-top: 8px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
+      textarea { width: 100%; min-height: 132px; margin-top: 8px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
       textarea:focus, input:focus { outline: 3px solid rgba(37, 99, 235, .16); border-color: var(--brand); }
-      .check { min-height: 42px; display: flex; align-items: center; gap: 8px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; background: #f8fafc; color: #334155; }
+      .check { min-height: 42px; display: flex; align-items: center; gap: 8px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 12px; background: #f8fafc; color: #334155; }
       .check input { min-height: auto; }
       .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
-      button, .button { appearance: none; border: 1px solid var(--brand); border-radius: 10px; background: linear-gradient(135deg, var(--brand), var(--cyan)); color: #fff; min-height: 42px; padding: 10px 14px; font: 700 14px system-ui, sans-serif; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+      button, .button { appearance: none; border: 1px solid var(--brand); border-radius: 8px; background: linear-gradient(135deg, var(--brand), var(--cyan)); color: #fff; min-height: 40px; padding: 9px 13px; font: 700 14px system-ui, sans-serif; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
       .secondary { border-color: #cbd5e1; background: #fff; color: #334155; }
+      .ghost { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
       .status { border-top: 1px solid #e2e8f0; margin-top: 16px; padding-top: 14px; font-size: 14px; color: #64748b; }
       .error { color: #be123c; }
-      .success { color: #047857; }
-      .bridge-list { display: grid; gap: 10px; margin-top: 12px; }
-      .bridge-card { border: 1px solid #dbeafe; border-radius: 12px; background: #f8fafc; padding: 14px; }
-      .bridge-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-      .bridge-card strong { font-size: 16px; }
-      .bridge-card code { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+      .success { color: var(--green); }
+      .list { display: grid; gap: 10px; margin-top: 12px; }
+      .item { border: 1px solid #dbeafe; border-radius: 10px; background: #f8fafc; padding: 14px; }
+      .item header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .icon { width: 34px; height: 34px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; object-fit: contain; flex: 0 0 auto; }
+      .icon-fallback { display: grid; place-items: center; color: #1d4ed8; font-weight: 800; background: #eff6ff; }
+      .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; color: #64748b; font-size: 13px; }
       .pill { display: inline-flex; border-radius: 999px; padding: 4px 8px; background: #eff6ff; color: #1d4ed8; font-size: 12px; font-weight: 700; }
-      @media (max-width: 760px) {
+      .pill.green { background: #ecfdf5; color: var(--green); }
+      .pill.amber { background: #fffbeb; color: var(--amber); }
+      @media (max-width: 900px) {
         body { padding: 12px; }
-        .form-grid { grid-template-columns: 1fr; }
+        .layout, .form-grid { grid-template-columns: 1fr; }
         .hero, .panel { padding: 18px; }
         h1 { font-size: 28px; }
         button, .button { width: 100%; }
@@ -88,14 +97,15 @@
       <section class="hero">
         <span class="badge">Admin</span>
         <h1>中转站映射管理</h1>
-        <p>配置全局 base URL 到中转站名称的对应关系。上传时 Worker 会自动把官方渠道、中转站和未知中转站区分开。</p>
+        <p>审核用户提交和上传自动发现的中转站，识别网页标题与 icon，并把 base URL 映射到正式中转站。</p>
       </section>
-      <section class="panel" id="app">
+      <section id="app" class="panel">
         <p>正在检查登录状态...</p>
       </section>
     </main>
     <script>
       const app = document.querySelector("#app");
+      let latestPayload = null;
 
       function escapeHTML(value) {
         return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -112,56 +122,163 @@
           app.innerHTML = `<p class="error">${escapeHTML(payload.error || "加载失败")}</p>`;
           return;
         }
+        latestPayload = payload;
         render(payload);
       }
 
       function render(payload) {
         app.innerHTML = `
-          <form id="bridge-form">
-            <div class="form-grid">
-              <label><span>名称</span><input name="name" maxlength="128" placeholder="例如 Linux.do Bridge" required /></label>
-              <label><span>Slug</span><input name="slug" maxlength="64" placeholder="留空则自动生成" /></label>
-              <label class="check"><input type="checkbox" name="is_active" checked /> 启用</label>
-            </div>
-            <label style="margin-top: 14px"><span>Base URLs（每行一个）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1" required></textarea></label>
-            <div class="actions">
-              <button type="submit">保存中转站</button>
-              <a class="button secondary" href="/admin">返回管理首页</a>
-            </div>
-          </form>
-          <p class="status" id="status">当前管理员：${escapeHTML(payload.user.username || payload.user.login || payload.user.id)}。</p>
-          <section style="margin-top: 18px">
+          <div class="layout">
+            <section>
+              <h2>保存中转站</h2>
+              <form id="bridge-form">
+                <input type="hidden" name="suggestion_id" />
+                <div class="form-grid">
+                  <label><span>名称</span><input name="name" maxlength="128" placeholder="例如 Linux.do Bridge" required /></label>
+                  <label><span>Slug</span><input name="slug" maxlength="64" placeholder="留空则自动生成" /></label>
+                  <label><span>Icon URL</span><input name="icon_url" maxlength="512" placeholder="自动识别或手动填写" /></label>
+                  <label><span>主页 URL</span><input name="homepage_url" maxlength="512" placeholder="https://example.com/" /></label>
+                </div>
+                <label style="margin-top: 14px"><span>Base URLs（每行一个）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1" required></textarea></label>
+                <label class="check" style="margin-top: 12px"><input type="checkbox" name="is_active" checked /> 启用</label>
+                <div class="actions">
+                  <button type="button" id="identify-current">识别当前 URL</button>
+                  <button type="submit">保存中转站</button>
+                  <button class="secondary" type="button" id="clear-form">清空</button>
+                </div>
+              </form>
+              <p class="status" id="status">当前管理员：${escapeHTML(payload.user.username || payload.user.login || payload.user.id)}。</p>
+            </section>
+            <section>
+              <h2>候选中转站</h2>
+              <div class="list">
+                ${(payload.suggestions || []).length ? payload.suggestions.map(renderSuggestion).join("") : `<p>暂无待审核候选。</p>`}
+              </div>
+            </section>
+          </div>
+          <section style="margin-top: 22px">
             <h2>已配置中转站</h2>
-            <div class="bridge-list">
+            <div class="list">
               ${(payload.bridges || []).length ? payload.bridges.map(renderBridge).join("") : `<p>暂无配置。</p>`}
             </div>
           </section>
         `;
         document.querySelector("#bridge-form").addEventListener("submit", save);
+        document.querySelector("#identify-current").addEventListener("click", identifyCurrent);
+        document.querySelector("#clear-form").addEventListener("click", resetForm);
+        document.querySelectorAll("[data-identify]").forEach((button) => button.addEventListener("click", identifySuggestion));
+        document.querySelectorAll("[data-use-bridge]").forEach((button) => button.addEventListener("click", useBridge));
+      }
+
+      function renderIcon(url, label) {
+        return url
+          ? `<img class="icon" src="${escapeHTML(url)}" alt="${escapeHTML(label)} icon" loading="lazy" />`
+          : `<span class="icon icon-fallback">${escapeHTML((label || "?").slice(0, 1).toUpperCase())}</span>`;
+      }
+
+      function renderSuggestion(item) {
+        const name = item.ai_name || item.submitted_name || item.page_title || item.host;
+        const submitter = item.username || item.login || "unknown";
+        return `
+          <article class="item">
+            <header>
+              <div class="title">${renderIcon(item.icon_url, name)}<div><h3>${escapeHTML(name)}</h3><code>${escapeHTML(item.base_url)}</code></div></div>
+              <span class="pill amber">${escapeHTML(item.source || "pending")}</span>
+            </header>
+            <div class="meta">
+              <span>host: ${escapeHTML(item.host)}</span>
+              <span>提交人: ${escapeHTML(submitter)}</span>
+              <span>出现: ${Number(item.occurrence_count || 0)}</span>
+              ${item.ai_confidence ? `<span>置信度: ${Math.round(Number(item.ai_confidence) * 100)}%</span>` : ""}
+            </div>
+            ${item.ai_reason ? `<p>${escapeHTML(item.ai_reason)}</p>` : ""}
+            <div class="actions">
+              <button class="ghost" type="button" data-identify="${escapeHTML(item.id)}">自动识别</button>
+              <button type="button" data-use-bridge="${escapeHTML(item.id)}">填入并采纳</button>
+            </div>
+          </article>
+        `;
       }
 
       function renderBridge(bridge) {
         return `
-          <article class="bridge-card">
+          <article class="item">
             <header>
-              <strong>${escapeHTML(bridge.name)}</strong>
-              <span class="pill">${bridge.is_active ? "启用" : "停用"}</span>
+              <div class="title">${renderIcon(bridge.icon_url, bridge.name)}<div><h3>${escapeHTML(bridge.name)}</h3><code>${escapeHTML(bridge.slug)}</code></div></div>
+              <span class="pill ${bridge.is_active ? "green" : ""}">${bridge.is_active ? "启用" : "停用"}</span>
             </header>
-            <p><code>${escapeHTML(bridge.slug)}</code></p>
+            ${bridge.homepage_url ? `<p><a href="${escapeHTML(bridge.homepage_url)}" target="_blank" rel="noreferrer">${escapeHTML(bridge.homepage_url)}</a></p>` : ""}
             ${(bridge.base_urls || []).map((item) => `<code>${escapeHTML(item.base_url)} ${item.is_active ? "" : "(inactive)"}</code>`).join("")}
           </article>
         `;
       }
 
+      function suggestionByID(id) {
+        return (latestPayload?.suggestions || []).find((item) => item.id === id);
+      }
+
+      async function identifySuggestion(event) {
+        const item = suggestionByID(event.currentTarget.dataset.identify);
+        if (!item) return;
+        await identifyAndFill(item);
+      }
+
+      async function identifyCurrent() {
+        const form = document.querySelector("#bridge-form");
+        const baseURL = form.base_urls.value.split(/\n/).map((value) => value.trim()).filter(Boolean)[0];
+        if (!baseURL) return setStatus("请先填写至少一个 base URL。", "error");
+        await identifyAndFill({ base_url: baseURL, submitted_name: form.name.value, id: form.suggestion_id.value });
+      }
+
+      async function identifyAndFill(item) {
+        setStatus("正在识别网页信息和 icon...");
+        const response = await fetch("/api/v1/admin/bridges/identify", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ base_url: item.base_url, submitted_name: item.submitted_name || "", suggestion_id: item.id || "" }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return setStatus(payload.error || "识别失败", "error");
+        fillForm({ ...item, ...payload });
+        setStatus(`已识别：${payload.detected_name || payload.host}${payload.ai_used ? "（AI）" : ""}`, "success");
+      }
+
+      function useBridge(event) {
+        const item = suggestionByID(event.currentTarget.dataset.useBridge);
+        if (!item) return;
+        fillForm(item);
+        setStatus("候选已填入表单，确认后保存。", "success");
+      }
+
+      function fillForm(item) {
+        const form = document.querySelector("#bridge-form");
+        form.suggestion_id.value = item.id || item.suggestion_id || "";
+        form.name.value = item.detected_name || item.ai_name || item.submitted_name || item.page_title || item.host || "";
+        form.slug.value = item.slug || item.ai_slug || "";
+        form.icon_url.value = item.icon_url || "";
+        form.homepage_url.value = item.homepage_url || "";
+        form.base_urls.value = item.base_url || "";
+        form.is_active.checked = true;
+      }
+
+      function resetForm() {
+        const form = document.querySelector("#bridge-form");
+        form.reset();
+        form.is_active.checked = true;
+        setStatus("表单已清空。");
+      }
+
       async function save(event) {
         event.preventDefault();
         const form = event.currentTarget;
-        const status = document.querySelector("#status");
-        status.className = "status";
-        status.textContent = "正在保存...";
+        setStatus("正在保存...");
         const body = {
+          suggestion_id: form.suggestion_id.value,
           name: form.name.value,
           slug: form.slug.value,
+          icon_url: form.icon_url.value,
+          homepage_url: form.homepage_url.value,
           is_active: form.is_active.checked,
           base_urls: form.base_urls.value.split(/\n/).map((value) => value.trim()).filter(Boolean),
         };
@@ -172,16 +289,16 @@
           body: JSON.stringify(body),
         });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          status.className = "status error";
-          status.textContent = payload.error || "保存失败";
-          return;
-        }
-        status.className = "status success";
-        status.textContent = `已保存：${payload.slug}，更新时间 ${payload.updated_at}`;
-        form.reset();
-        form.is_active.checked = true;
+        if (!response.ok) return setStatus(payload.error || "保存失败", "error");
+        setStatus(`已保存：${payload.slug}，更新时间 ${payload.updated_at}`, "success");
         await load();
+      }
+
+      function setStatus(message, type = "") {
+        const status = document.querySelector("#status");
+        if (!status) return;
+        status.className = `status ${type}`.trim();
+        status.textContent = message;
       }
 
       load().catch((error) => {

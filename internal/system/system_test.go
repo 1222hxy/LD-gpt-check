@@ -66,7 +66,9 @@ func TestNormalizeProviderBaseURL(t *testing.T) {
 	tests := map[string]string{
 		" https://API.EXAMPLE.com/v1/ ":                     "https://api.example.com/v1",
 		"https://api.example.com/tenant/path/?token=secret": "https://api.example.com/tenant/path",
+		"https://user:pass@api.example.com/v1":              "https://api.example.com/v1",
 		"https://api.example.com":                           "https://api.example.com",
+		"http://api.example.com/v1":                         "",
 		"not a url":                                         "",
 	}
 	for input, want := range tests {

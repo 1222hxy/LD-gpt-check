@@ -22,7 +22,7 @@ import (
 	"github.com/1222hxy/LD-gpt-check/internal/wizard"
 )
 
-const version = "0.1.0"
+var version = "0.1.0"
 
 var runWizard = wizard.Run
 

@@ -578,7 +578,7 @@ Query 参数：
       "avg_tps": 5,
       "codex_provider_base_url": "https://api.openai.com/v1",
       "codex_channel": "official",
-      "codex_bridge_id": "",
+      "codex_bridge_id": null,
       "codex_bridge_name": "",
       "anonymous": true,
       "user": {

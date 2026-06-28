@@ -153,7 +153,7 @@ wrangler d1 execute ld-gpt-check --file=./migrations/0003_add_question_banks.sql
 wrangler d1 execute ld-gpt-check --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
 ```
 
-应看到 `users`、`device_sessions`、`access_tokens`、`benchmark_submissions`、`benchmark_question_results`、`benchmark_attempts`、`oauth_states`、`web_sessions`、`question_banks` 等表。
+应看到 `users`、`device_sessions`、`access_tokens`、`benchmark_submissions`、`benchmark_question_results`、`benchmark_attempts`、`oauth_states`、`web_sessions`、`question_banks`、`bridges`、`bridge_base_urls` 等表。
 
 如果是从旧版 `runs/run_cases` schema 升级到当前 MVP，建议新建 D1 数据库或手动迁移数据后再执行 schema。当前 schema 使用新的 submission 表，不再依赖旧表。
 
@@ -244,6 +244,16 @@ https://YOUR_WORKER_DOMAIN/admin
 https://YOUR_WORKER_DOMAIN/api/v1/questions
 ```
 
+### 中转站映射管理
+
+管理员可以打开：
+
+```text
+https://YOUR_WORKER_DOMAIN/admin/bridges
+```
+
+页面会调用 `GET/POST /api/v1/admin/bridges`。保存后的映射写入 D1 表 `bridges` 和 `bridge_base_urls`。上传时 Worker 会把 `codex_provider_base_url` 自动分类为 `official`、`bridge` 或 `unknown_bridge`。
+
 题库 JSON 示例：
 
 ```json
@@ -291,7 +301,7 @@ bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite custom_
 - `/device` 页面能正常打开。
 - `/account` 页面能正常打开，Linux.do 登录后能显示当前用户信息和退出登录按钮。
 - CLI 能完成 `login`、`whoami`、`logout`。
-- 上传后，D1 的 `benchmark_submissions`、`benchmark_question_results` 和 `benchmark_attempts` 表有数据。
+- 上传后，D1 的 `benchmark_submissions`、`benchmark_question_results` 和 `benchmark_attempts` 表有数据，且新上传的 `benchmark_submissions.codex_provider_base_url` 和 `codex_channel` 非空。
 - `/account` 默认只展示最近 10 条上传记录，用户可以删除单条记录或清空自己的测试数据。
 - 浏览器响应包含 `x-request-id`、`x-content-type-options`、`content-security-policy` 等安全响应头。
 
