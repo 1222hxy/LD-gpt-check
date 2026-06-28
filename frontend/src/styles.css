@@ -92,6 +92,126 @@
     background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(34, 211, 238, 0.18), transparent 70%);
   }
 
+  .terminal-real {
+    @apply border-slate-800 bg-slate-950 shadow-2xl shadow-slate-900/25;
+  }
+
+  .terminal-screen {
+    @apply overflow-hidden bg-[#07111f] p-4 font-mono text-[12px] leading-6 text-slate-200 sm:p-5 sm:text-[13px];
+  }
+
+  .terminal-command {
+    @apply flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100;
+  }
+
+  .terminal-command code {
+    @apply break-all text-slate-100;
+  }
+
+  .terminal-user {
+    @apply text-emerald-300;
+  }
+
+  .terminal-path {
+    @apply text-sky;
+  }
+
+  .terminal-dollar {
+    @apply text-slate-500;
+  }
+
+  .terminal-cursor {
+    @apply inline-block h-4 w-2 bg-cyan-300 align-middle;
+  }
+
+  .terminal-output {
+    @apply mt-4 grid gap-1 text-slate-300;
+  }
+
+  .terminal-output p {
+    @apply m-0 min-w-0 truncate;
+  }
+
+  .term-info {
+    @apply text-cyan-300;
+  }
+
+  .term-muted {
+    @apply text-slate-500;
+  }
+
+  .term-pass {
+    @apply font-semibold text-emerald-300;
+  }
+
+  .term-fail {
+    @apply font-semibold text-rose-300;
+  }
+
+  .terminal-table-wrap {
+    @apply mt-4 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/80;
+  }
+
+  .terminal-table {
+    @apply w-full table-fixed border-collapse text-left text-[10px] sm:text-[11px];
+  }
+
+  .terminal-table th,
+  .terminal-table td {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap border-b border-slate-800 px-1.5 py-2;
+  }
+
+  .terminal-table th {
+    @apply font-semibold text-slate-500;
+  }
+
+  .terminal-table td {
+    @apply text-slate-300;
+  }
+
+  .terminal-table th:nth-child(1),
+  .terminal-table td:nth-child(1) {
+    @apply w-8;
+  }
+
+  .terminal-table th:nth-child(2),
+  .terminal-table td:nth-child(2) {
+    @apply w-32;
+  }
+
+  .terminal-table th:nth-child(3),
+  .terminal-table td:nth-child(3),
+  .terminal-table th:nth-child(4),
+  .terminal-table td:nth-child(4) {
+    @apply w-10;
+  }
+
+  .terminal-table th:nth-child(5),
+  .terminal-table td:nth-child(5),
+  .terminal-table th:nth-child(6),
+  .terminal-table td:nth-child(6),
+  .terminal-table th:nth-child(7),
+  .terminal-table td:nth-child(7) {
+    @apply w-12;
+  }
+
+  .terminal-table th:nth-child(8),
+  .terminal-table td:nth-child(8) {
+    @apply w-10;
+  }
+
+  .terminal-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .terminal-summary {
+    @apply mt-4 flex flex-wrap gap-2 border-t border-slate-800 pt-4 text-[11px] text-slate-400 sm:text-[12px];
+  }
+
+  .terminal-summary span {
+    @apply rounded-md border border-slate-800 bg-slate-950 px-2.5 py-1;
+  }
+
   .result-tile {
     @apply min-w-0 rounded-xl border border-blue-100 bg-white/85 p-3 shadow-sm shadow-blue-100/50;
   }

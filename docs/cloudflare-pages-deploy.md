@@ -1,6 +1,19 @@
 # Deploy the LD-gpt-check homepage to Cloudflare Pages
 
-This guide deploys the `frontend/` Vite + TailwindCSS site to Cloudflare Pages.
+This guide is kept only for historical/static-preview reference. Production does not use Cloudflare Pages.
+
+Production deployment is a single Cloudflare Worker:
+
+```bash
+cd frontend
+npm run build
+cd ../worker
+../frontend/node_modules/.bin/wrangler deploy
+```
+
+The Worker serves `frontend/dist/` through Worker Static Assets and also handles `/account`, `/device`, `/auth/*`, `/api/*`, `/logout`, and `/health`. For production, follow [`cloudflare-worker-deploy.md`](./cloudflare-worker-deploy.md).
+
+The old Pages flow below should not be used for production.
 
 Official references:
 

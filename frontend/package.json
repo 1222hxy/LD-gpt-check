@@ -9,7 +9,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "cf:login": "wrangler login",
     "cf:whoami": "wrangler whoami",
-    "deploy": "npm run build && wrangler pages deploy dist --project-name ld-gpt-check",
+    "deploy": "npm run build && cd ../worker && ../frontend/node_modules/.bin/wrangler deploy",
     "shot:install": "PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright playwright install chromium",
     "shot": "PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright LD_LIBRARY_PATH=.cache/browser-libs/root/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH node scripts/screenshot.js"
   },

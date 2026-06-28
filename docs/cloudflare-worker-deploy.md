@@ -1,9 +1,18 @@
-# Deploy the LD-gpt-check backend to Cloudflare Workers
+# Deploy LD-gpt-check to Cloudflare Workers
 
-本文档部署 LD-gpt-check 的 Cloudflare Worker 后端。后端负责 Linux.do OAuth、CLI 设备登录、D1 存储和 benchmark submission 上传接口。
+本文档部署 LD-gpt-check 到同一个 Cloudflare Worker。产品前端不是 Cloudflare Pages 项目；前端先由 Vite 构建到 `frontend/dist/`，再通过 Worker Static Assets 随 `worker/` 一起部署。后端负责 Linux.do OAuth、CLI 设备登录、D1 存储和 benchmark submission 上传接口。
+
+必须遵守：
+
+- 生产环境只部署 `worker/`。
+- 不要把 `frontend/` 单独部署到 Cloudflare Pages。
+- 每次改前端后，先运行 `cd frontend && npm run build`，再运行 `cd ../worker && ../frontend/node_modules/.bin/wrangler deploy`。
+- `worker/wrangler.toml` 必须包含 `[assets] directory = "../frontend/dist"`。
 
 相关文件：
 
+- `frontend/`：Vite 静态首页源码
+- `frontend/dist/`：构建后的 Worker Static Assets 输入目录
 - `worker/src/index.ts`：Worker API 实现
 - `worker/schema.sql`：D1 数据库 schema
 - `worker/wrangler.toml.example`：Wrangler 配置模板
@@ -53,6 +62,12 @@ name = "ld-gpt-check"
 main = "src/index.ts"
 compatibility_date = "2026-06-28"
 
+[assets]
+directory = "../frontend/dist"
+binding = "ASSETS"
+not_found_handling = "none"
+run_worker_first = ["/account", "/health", "/api/*", "/device", "/auth/*", "/logout"]
+
 [vars]
 BASE_URL = "https://YOUR_WORKER_DOMAIN"
 LINUXDO_AUTH_URL = "https://connect.linux.do/oauth2/authorize"
@@ -69,6 +84,7 @@ database_id = "YOUR_DATABASE_ID"
 说明：
 
 - `BASE_URL` 必须和实际 Worker 公网地址一致，不能带结尾 `/`。
+- `[assets]` 让 Worker 同时服务产品首页；`run_worker_first` 中的路径继续交给后端逻辑处理。
 - Linux.do OAuth URL 请以你的 Linux.do 开发者后台为准。
 - `ALLOWED_ORIGINS` 是可选 CORS 白名单，多个 origin 用英文逗号分隔；`BASE_URL` 的 origin 会自动允许。
 - `wrangler.toml` 可能包含环境差异，生产项目可不提交该文件，只提交 `wrangler.toml.example`。
@@ -161,15 +177,24 @@ curl -X POST http://localhost:8787/api/device/start
 
 ## 7. 部署到 Cloudflare
 
-在 `worker/` 目录执行：
+先构建前端静态资源：
 
 ```bash
-wrangler deploy
+cd frontend
+npm run build
+```
+
+再部署同一个 Worker：
+
+```bash
+cd ../worker
+../frontend/node_modules/.bin/wrangler deploy
 ```
 
 部署完成后验证：
 
 ```bash
+curl https://YOUR_WORKER_DOMAIN/
 curl https://YOUR_WORKER_DOMAIN/health
 curl -X POST https://YOUR_WORKER_DOMAIN/api/device/start
 ```
@@ -185,16 +210,19 @@ bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 1 --upload
 浏览器验证：
 
 ```text
+https://YOUR_WORKER_DOMAIN/
 https://YOUR_WORKER_DOMAIN/account
 ```
 
-未登录时会显示 Linux.do 登录入口。登录成功后会回到账号页，展示当前用户、CLI 配置命令、最近上传记录，并提供网页退出登录按钮。
+首页应显示产品前端；`/account` 未登录时会显示 Linux.do 登录入口。登录成功后会回到账号页，展示当前用户、CLI 配置命令、最近上传记录，并提供网页退出登录按钮。
 
 ## 8. 生产检查清单
 
 部署前确认：
 
 - `BASE_URL` 是 HTTPS 公网地址。
+- `frontend/dist/` 已由最新前端源码构建。
+- `worker/wrangler.toml` 的 `[assets]` 指向 `../frontend/dist`。
 - Linux.do callback URL 完全匹配 `/auth/linuxdo/callback`。
 - D1 binding 名称是 `DB`。
 - D1 schema 已在 remote 数据库执行。
