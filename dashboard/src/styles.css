@@ -276,25 +276,32 @@
     @apply min-w-[820px];
   }
 
+  .distribution-table {
+    @apply min-w-[900px];
+  }
+
   .correlation-row {
     @apply grid min-h-14 grid-cols-[minmax(0,1fr)_52px_86px_64px] items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm;
   }
 
   .correlation-row strong,
   .ranking-row strong,
-  .outlier-row strong {
+  .outlier-row strong,
+  .frontier-row strong {
     @apply block truncate font-semibold text-stone-900;
   }
 
   .correlation-row span,
   .ranking-row em,
-  .outlier-row span {
+  .outlier-row span,
+  .frontier-row span {
     @apply mt-1 block truncate text-xs not-italic text-stone-400;
   }
 
   .correlation-row b,
   .ranking-row b,
   .outlier-row b,
+  .frontier-row b,
   .correlation-row em,
   .outlier-row em {
     @apply truncate text-right font-semibold not-italic tabular-nums text-stone-900;
@@ -317,6 +324,47 @@
     @apply grid min-h-12 grid-cols-[minmax(0,1fr)_58px_58px] items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm;
   }
 
+  .risk-gauge {
+    @apply rounded-md border border-stone-200 bg-stone-50 p-4;
+  }
+
+  .risk-gauge span,
+  .risk-gauge em {
+    @apply block truncate text-xs text-stone-500;
+  }
+
+  .risk-gauge strong {
+    @apply mt-1 block truncate text-3xl font-semibold tabular-nums text-stone-950;
+  }
+
+  .risk-gauge em {
+    @apply mt-1 not-italic;
+  }
+
+  .risk-gauge div {
+    @apply mt-4 h-2 overflow-hidden rounded-full bg-stone-200;
+  }
+
+  .risk-gauge i {
+    @apply block h-full rounded-full bg-sea;
+  }
+
+  .budget-row {
+    @apply grid min-h-10 grid-cols-[minmax(0,1fr)_142px] items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 text-sm;
+  }
+
+  .budget-row span {
+    @apply truncate text-stone-500;
+  }
+
+  .budget-row strong {
+    @apply truncate text-right font-semibold tabular-nums text-stone-950;
+  }
+
+  .frontier-row {
+    @apply grid min-h-14 grid-cols-[minmax(0,1fr)_58px_70px] items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm;
+  }
+
   .data-table th {
     @apply border-b border-stone-200 px-3 py-2 text-xs font-semibold uppercase tracking-normal text-stone-400;
   }
@@ -335,6 +383,31 @@
 
   .data-table span {
     @apply mt-1 block truncate text-xs text-stone-400;
+  }
+
+  .submission-user {
+    @apply flex min-w-0 items-center gap-2;
+  }
+
+  .submission-user > div {
+    @apply grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-md bg-stone-100 text-[10px] font-semibold text-stone-500;
+  }
+
+  .submission-user img {
+    @apply h-full w-full object-cover;
+  }
+
+  .submission-user a,
+  .submission-user strong {
+    @apply block min-w-0 truncate text-sm font-semibold text-stone-900;
+  }
+
+  .submission-user a {
+    @apply underline-offset-2 hover:underline;
+  }
+
+  .submission-user.is-anonymous > div {
+    @apply bg-stone-200 text-stone-600;
   }
 
   .progress-cell {

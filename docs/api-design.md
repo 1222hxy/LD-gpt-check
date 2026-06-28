@@ -13,7 +13,8 @@ API 服务承担三类职责：
 
 1. 为 CLI 提供设备授权登录。
 2. 接收 CLI 上传的测试结果。
-3. 为已登录用户查询自己的账号和历史结果。
+3. 为 CLI 分发当前题库，并允许管理员维护题库 JSON。
+4. 为已登录用户查询自己的账号和历史结果。
 
 设计原则：
 
@@ -34,6 +35,8 @@ API 服务承担三类职责：
 | 创建设备登录 | `POST /api/device/start` | `POST /api/v1/device-authorizations` |
 | 轮询设备登录 | `POST /api/device/poll` | `POST /api/v1/device-authorizations/token` |
 | 授权页面 | `GET /device` | `GET /device` |
+| 获取当前题库 | `GET /api/questions` | `GET /api/v1/questions` |
+| 题目管理后台 | `GET/POST /admin/questions` | 浏览器 HTML 路由 |
 | 提交页面授权 | `POST /api/device/approve` | `POST /api/v1/device-authorizations/approve` 或保留 HTML 表单路由 |
 | Linux.do OAuth 开始 | `GET /auth/linuxdo/start` | `GET /auth/linuxdo/start` |
 | Linux.do OAuth 回调 | `GET /auth/linuxdo/callback` | `GET /auth/linuxdo/callback` |
@@ -70,6 +73,8 @@ Authorization: Bearer ldgc_...
 - `DELETE /api/v1/submissions`
 - `POST /api/v1/sessions/logout`
 
+公开题库端点 `GET /api/v1/questions` 不要求 Bearer token。CLI 默认尝试拉取该端点，失败时回退到本地内置题库，避免网络问题阻断最小测试。
+
 ### Web Session Cookie
 
 浏览器授权页面使用 `ldgc_session` HttpOnly cookie。该 cookie 仅用于网页授权流程，不作为公共 JSON API 的认证方式。
@@ -80,6 +85,8 @@ Cookie 要求：
 - `SameSite=Lax`
 - HTTPS 环境启用 `Secure`
 - 设置明确过期时间
+
+题目管理后台 `/admin/questions` 也使用该 Web session。用户必须已通过 Linux.do 登录，且 Linux.do UID 命中 Worker 的管理员列表 `ADMIN_LINUXDO_IDS`。当前默认管理员 UID 是 `29368`。
 
 ### OAuth State
 
@@ -243,6 +250,22 @@ GET /api/v1/submissions?limit=50&cursor=opaque_cursor
 - `cursor` 必须是不透明字符串，客户端不解析。
 - 默认排序为 `created_at DESC`。
 - 未来过滤条件使用 query 参数，例如 `model`、`reasoning_effort`、`from`、`to`。
+
+## 匿名展示
+
+`POST /api/v1/submissions` 可接收 `anonymous: true`。该字段只隐藏 Linux.do 身份展示，不隐藏测试数据。服务端仍保存并返回模型、准确率、题目数量、耗时、token、question results 和 attempts 等 benchmark 数据，且这些数据继续参与统计。
+
+匿名提交的展示用户对象固定为：
+
+```json
+{
+  "anonymous": true,
+  "display_name": "匿名",
+  "username": "",
+  "avatar_url": "",
+  "linuxdo_url": ""
+}
+```
 
 ## 幂等性
 

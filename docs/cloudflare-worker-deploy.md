@@ -74,6 +74,7 @@ LINUXDO_AUTH_URL = "https://connect.linux.do/oauth2/authorize"
 LINUXDO_TOKEN_URL = "https://connect.linux.do/oauth2/token"
 LINUXDO_USERINFO_URL = "https://connect.linux.do/api/user"
 ALLOWED_ORIGINS = "https://YOUR_WORKER_DOMAIN"
+ADMIN_LINUXDO_IDS = "29368"
 
 [[d1_databases]]
 binding = "DB"
@@ -87,6 +88,7 @@ database_id = "YOUR_DATABASE_ID"
 - `[assets]` 让 Worker 同时服务产品首页；`run_worker_first` 中的路径继续交给后端逻辑处理。
 - Linux.do OAuth URL 请以你的 Linux.do 开发者后台为准。
 - `ALLOWED_ORIGINS` 是可选 CORS 白名单，多个 origin 用英文逗号分隔；`BASE_URL` 的 origin 会自动允许。
+- `ADMIN_LINUXDO_IDS` 是允许进入题目管理后台的 Linux.do 用户 UID，多个 UID 用英文逗号分隔。当前默认管理员 UID 是 `29368`。
 - `wrangler.toml` 可能包含环境差异，生产项目可不提交该文件，只提交 `wrangler.toml.example`。
 
 ## 4. 设置 secrets
@@ -137,10 +139,12 @@ wrangler secret put TURNSTILE_SECRET_KEY
 wrangler d1 execute ld-gpt-check --file=./schema.sql --remote
 ```
 
-如果是在已有 submission 表的远程 D1 上升级，额外执行一次诊断字段迁移：
+如果是在已有 submission 表的远程 D1 上升级，按顺序执行迁移：
 
 ```bash
 wrangler d1 execute ld-gpt-check --file=./migrations/0001_add_submission_diagnostics.sql --remote
+wrangler d1 execute ld-gpt-check --file=./migrations/0002_add_upload_v3_and_linuxdo_profile.sql --remote
+wrangler d1 execute ld-gpt-check --file=./migrations/0003_add_question_banks.sql --remote
 ```
 
 验证表是否创建成功：
@@ -149,7 +153,7 @@ wrangler d1 execute ld-gpt-check --file=./migrations/0001_add_submission_diagnos
 wrangler d1 execute ld-gpt-check --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
 ```
 
-应看到 `users`、`device_sessions`、`access_tokens`、`benchmark_submissions`、`benchmark_question_results`、`benchmark_attempts`、`oauth_states`、`web_sessions` 等表。
+应看到 `users`、`device_sessions`、`access_tokens`、`benchmark_submissions`、`benchmark_question_results`、`benchmark_attempts`、`oauth_states`、`web_sessions`、`question_banks` 等表。
 
 如果是从旧版 `runs/run_cases` schema 升级到当前 MVP，建议新建 D1 数据库或手动迁移数据后再执行 schema。当前 schema 使用新的 submission 表，不再依赖旧表。
 
@@ -218,6 +222,55 @@ bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 1 --upload
 ```text
 https://YOUR_WORKER_DOMAIN/
 https://YOUR_WORKER_DOMAIN/account
+https://YOUR_WORKER_DOMAIN/admin/questions
+```
+
+## 8. 远程题目管理
+
+题目管理后台是静态前端页面，后端只提供 JSON API。访问：
+
+```text
+https://YOUR_WORKER_DOMAIN/admin/questions
+```
+
+要求：
+
+- 浏览器已通过 Linux.do 登录。
+- 当前 Linux.do 用户 UID 在 `ADMIN_LINUXDO_IDS` 中，例如 `29368`。
+
+页面会调用 `GET/POST /api/v1/admin/questions`。保存后的题库写入 D1 表 `question_banks.questions_json`。CLI 默认拉取：
+
+```text
+https://YOUR_WORKER_DOMAIN/api/v1/questions
+```
+
+题库 JSON 示例：
+
+```json
+{
+  "schema_version": "1",
+  "questions": [
+    {
+      "id": "custom_1",
+      "version": "1",
+      "title": "简单数字题",
+      "prompt": "不使用任何外部工具回答：10 + 11 等于多少？",
+      "tags": ["math"],
+      "grader": {
+        "type": "number",
+        "expected": "21",
+        "independent_match": true
+      }
+    }
+  ]
+}
+```
+
+用户也可以完全不使用远程题库，直接在本地运行：
+
+```bash
+bin/ld-gpt-check run --question-file ./questions.json --list-suites
+bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite custom_1 -n 5
 ```
 
 首页应显示产品前端；`/account` 未登录时会显示 Linux.do 登录入口。登录成功后会回到账号页，展示当前用户、CLI 配置命令、最近上传记录，并提供网页退出登录按钮。

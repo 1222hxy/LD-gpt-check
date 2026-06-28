@@ -11,6 +11,8 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
+  ADMIN_LINUXDO_IDS?: string;
+  ADMIN_USER_IDS?: string;
 }
 
 const DEVICE_EXPIRES_SECONDS = 600;
@@ -22,6 +24,27 @@ const MAX_STRING_LENGTH = 128;
 const MAX_PREVIEW_LENGTH = 300;
 const MAX_METADATA_LENGTH = 2048;
 const MAX_JSON_BYTES = 256 * 1024;
+const DEFAULT_ADMIN_LINUXDO_IDS = "29368";
+const DEFAULT_QUESTION_BANK_SLUG = "default";
+
+const DEFAULT_QUESTION_BANK = {
+  schema_version: "1",
+  questions: [
+    {
+      id: "candy_21",
+      version: "1",
+      title: "糖果形状口味保证题",
+      prompt:
+        "不使用任何外部工具回答以下问题：\n\n在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）\n\n          苹果味 桃子味 西瓜味\n圆形        7      9      8\n五角星形    7      6      4",
+      tags: ["math", "pigeonhole"],
+      grader: {
+        type: "number",
+        expected: "21",
+        independent_match: true,
+      },
+    },
+  ],
+};
 
 class APIError extends Error {
   constructor(
@@ -44,6 +67,9 @@ export default {
 
       if (request.method === "GET" && matches(path, "/", "/account")) return withCommonHeaders(await accountPage(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/health") return withCommonHeaders(json({ ok: true }), request, env, requestID);
+      if (request.method === "GET" && matches(path, "/api/questions", "/api/v1/questions")) return withCommonHeaders(await publicQuestions(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/api/v1/admin/questions") return withCommonHeaders(await adminQuestionsGet(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/admin/questions") return withCommonHeaders(await adminQuestionsPost(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/start", "/api/v1/device-authorizations")) return withCommonHeaders(await deviceStart(request, env), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/device/poll", "/api/v1/device-authorizations/token")) return withCommonHeaders(await devicePoll(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/device") return withCommonHeaders(await devicePage(request, env), request, env, requestID);
@@ -72,6 +98,133 @@ export default {
     }
   },
 };
+
+async function publicQuestions(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const requestedSlug = str(url.searchParams.get("slug") || "", MAX_STRING_LENGTH).trim();
+  const row = requestedSlug
+    ? await env.DB.prepare(
+        `SELECT slug, title, schema_version, questions_json, updated_at
+         FROM question_banks
+         WHERE slug = ? AND is_active = 1`
+      )
+        .bind(requestedSlug)
+        .first<any>()
+    : await env.DB.prepare(
+        `SELECT slug, title, schema_version, questions_json, updated_at
+         FROM question_banks
+         WHERE is_active = 1
+         ORDER BY CASE WHEN slug = ? THEN 0 ELSE 1 END, updated_at DESC
+         LIMIT 1`
+      )
+        .bind(DEFAULT_QUESTION_BANK_SLUG)
+        .first<any>();
+  if (!row && requestedSlug) {
+    return jsonError("question bank not found", 404, "not_found");
+  }
+  if (!row) {
+    return json(DEFAULT_QUESTION_BANK);
+  }
+  try {
+    const parsed = JSON.parse(row.questions_json);
+    const validation = validateQuestionBank(parsed);
+    if (validation) throw new Error(validation);
+    return json(parsed);
+  } catch (err) {
+    console.error("stored question bank is invalid; falling back to default", {
+      slug: row.slug,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return json(DEFAULT_QUESTION_BANK);
+  }
+}
+
+async function adminQuestionsGet(request: Request, env: Env): Promise<Response> {
+  const user = await getWebUser(request, env);
+  if (!user) {
+    return json({ error: "login required", code: "unauthorized", login_url: `/auth/linuxdo/start?next=${encodeURIComponent("/admin/questions")}` }, 401);
+  }
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const row = await loadEditableQuestionBank(env);
+  return json({
+    user: publicUser(user),
+    bank: {
+      slug: row?.slug || DEFAULT_QUESTION_BANK_SLUG,
+      title: row?.title || "Default question bank",
+      schema_version: row?.schema_version || "1",
+      questions_json: row?.questions_json || JSON.stringify(DEFAULT_QUESTION_BANK, null, 2),
+      is_active: row?.is_active == null ? true : !!row.is_active,
+      updated_at: row?.updated_at || "",
+    },
+    public_url: "/api/v1/questions",
+  });
+}
+
+async function adminQuestionsPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+
+  const body = await readJson<any>(request);
+  const slug = str(body.slug || DEFAULT_QUESTION_BANK_SLUG, 64).trim() || DEFAULT_QUESTION_BANK_SLUG;
+  if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(slug)) return jsonError("slug is invalid", 400, "bad_request");
+  const title = str(body.title || "Default question bank", MAX_STRING_LENGTH).trim() || "Default question bank";
+  const isActive = body.is_active === false ? 0 : 1;
+  const jsonText = typeof body.questions_json === "string" ? body.questions_json : JSON.stringify(body.questions_json ?? "");
+  if (new TextEncoder().encode(jsonText).length > MAX_JSON_BYTES) return jsonError("question bank is too large", 413, "payload_too_large");
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return jsonError("questions_json is invalid JSON", 400, "bad_request");
+  }
+  const validation = validateQuestionBank(parsed);
+  if (validation) return jsonError(validation, 422, "validation_failed");
+
+  const normalizedJSON = JSON.stringify(parsed, null, 2);
+  const now = iso(new Date());
+  await env.DB.prepare(
+    `INSERT INTO question_banks
+       (id, slug, title, schema_version, questions_json, is_active, created_by, updated_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(slug) DO UPDATE SET
+       title = excluded.title,
+       schema_version = excluded.schema_version,
+       questions_json = excluded.questions_json,
+       is_active = excluded.is_active,
+       updated_by = excluded.updated_by,
+       updated_at = excluded.updated_at`
+  )
+    .bind(
+      crypto.randomUUID(),
+      slug,
+      title,
+      str(parsed.schema_version || "1", 16),
+      normalizedJSON,
+      isActive,
+      user.id,
+      user.id,
+      now,
+      now
+    )
+    .run();
+  return json({ ok: true, slug, updated_at: now });
+}
+
+async function loadEditableQuestionBank(env: Env): Promise<any | null> {
+  const defaultRow = await env.DB.prepare(
+    `SELECT slug, title, schema_version, questions_json, is_active, updated_at
+     FROM question_banks WHERE slug = ?`
+  )
+    .bind(DEFAULT_QUESTION_BANK_SLUG)
+    .first<any>();
+  if (defaultRow) return defaultRow;
+  return env.DB.prepare(
+    `SELECT slug, title, schema_version, questions_json, is_active, updated_at
+     FROM question_banks WHERE is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+  ).first<any>();
+}
 
 async function deviceStart(request: Request, env: Env): Promise<Response> {
   await enforceRateLimit(request, env, "device_start", 20, 600);
@@ -294,7 +447,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     .bind(user.id)
     .first<any>();
   const recent = await env.DB.prepare(
-    `SELECT id, model, reasoning_effort, attempt_count, correct_count, accuracy, created_at
+    `SELECT id, model, reasoning_effort, attempt_count, correct_count, accuracy, is_anonymous, created_at
      FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`
   )
     .bind(user.id)
@@ -307,6 +460,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
         <td>${escapeHTML(str(r.reasoning_effort || "-", 32))}</td>
         <td>${int(r.correct_count)}/${int(r.attempt_count)}</td>
         <td>${formatPercent(num(r.accuracy))}</td>
+        <td>${r.is_anonymous ? "匿名" : "公开"}</td>
         <td>${escapeHTML(formatDate(r.created_at))}</td>
         <td>
           <form method="post" action="/account/submissions/delete">
@@ -321,7 +475,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
   return html(layoutPage("LD-gpt-check 账号", `
     <section class="hero">
       <span class="badge">已登录</span>
-      <h1>${escapeHTML(user.username || user.id)}</h1>
+      ${userIdentityBlock(user)}
       <p>当前网页会话已通过 Linux.do 登录。你可以继续授权 CLI，或退出当前浏览器登录。</p>
       <div class="actions">
         <a class="button" href="/device">授权 CLI 设备</a>
@@ -341,7 +495,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     <section class="panel">
       <h2>最近上传</h2>
       <p>这里只展示最后 10 条记录。删除操作只会删除你的测试数据，不会删除账号、网页会话或 CLI token。</p>
-      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
+      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>展示</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
       ${rows ? `<form class="delete-all" method="post" action="/account/submissions/delete-all">
         <label>清空全部测试数据：输入 <strong>DELETE</strong> 确认</label>
         <div class="actions"><input name="confirm" autocomplete="off" placeholder="DELETE"><button class="danger" type="submit">清空我的测试数据</button></div>
@@ -506,11 +660,11 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       `INSERT INTO benchmark_submissions
        (id, user_id, upload_id, upload_schema_version, client_version, model, reasoning_effort, question_count,
         attempt_count, correct_count, accuracy,
-        avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps,
+        avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps, is_anonymous,
         started_at, finished_at, duration_seconds, question_suite, client_timezone,
         os, arch, codex_version, codex_model_source, codex_model_provider, codex_provider_host,
         codex_sandbox, codex_ephemeral, codex_skip_git_repo_check, codex_disabled_features, codex_invocation, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       submissionID,
       auth.user.id,
@@ -528,6 +682,7 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       num(p.avg_reason_tokens),
       num(p.avg_time_seconds),
       num(p.avg_tps),
+      p.anonymous ? 1 : 0,
       str(p.started_at, MAX_STRING_LENGTH),
       str(p.finished_at, MAX_STRING_LENGTH),
       num(p.duration_seconds),
@@ -641,12 +796,18 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
   const limit = clampInt(url.searchParams.get("limit"), 1, 100, 50);
   const rows = await env.DB.prepare(
     `SELECT id, upload_id, model, reasoning_effort, question_count, attempt_count, correct_count,
-            accuracy, avg_time_seconds, avg_tps, created_at
+            accuracy, avg_time_seconds, avg_tps, is_anonymous, created_at
      FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`
   )
     .bind(auth.user.id, limit)
     .all();
-  return json({ submissions: rows.results ?? [] });
+  return json({
+    submissions: (rows.results ?? []).map((row: any) => ({
+      ...row,
+      anonymous: !!row.is_anonymous,
+      user: submissionDisplayUser(auth.user, !!row.is_anonymous),
+    })),
+  });
 }
 
 async function deleteSubmission(request: Request, env: Env): Promise<Response> {
@@ -757,7 +918,7 @@ async function getWebUser(request: Request, env: Env): Promise<any | null> {
   const token = parseCookies(request.headers.get("cookie")).ldgc_session;
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT users.id, users.username, users.login, users.name, users.email,
+    `SELECT users.id, users.provider, users.provider_user_id, users.username, users.login, users.name, users.email,
             users.avatar_url, users.avatar_template, users.active, users.trust_level, users.silenced
      FROM web_sessions JOIN users ON users.id = web_sessions.user_id
      WHERE web_sessions.session_hash = ? AND web_sessions.revoked_at IS NULL AND web_sessions.expires_at > ?`
@@ -765,6 +926,23 @@ async function getWebUser(request: Request, env: Env): Promise<any | null> {
     .bind(await hashSecret(token, env), iso(new Date()))
     .first<any>();
   return row || null;
+}
+
+function isAdminUser(user: any, env: Env): boolean {
+  const linuxdoIDs = splitList(`${DEFAULT_ADMIN_LINUXDO_IDS},${env.ADMIN_LINUXDO_IDS || ""}`);
+  const localIDs = splitList(env.ADMIN_USER_IDS || "");
+  const providerUserID = String(user?.provider_user_id || "");
+  const localUserID = String(user?.id || "");
+  return linuxdoIDs.has(providerUserID) || localIDs.has(localUserID);
+}
+
+function splitList(value: string): Set<string> {
+  const out = new Set<string>();
+  for (const item of value.split(",")) {
+    const trimmed = item.trim();
+    if (trimmed) out.add(trimmed);
+  }
+  return out;
 }
 
 async function upsertLinuxDoUser(profile: any, env: Env): Promise<{ id: string; username: string }> {
@@ -807,18 +985,45 @@ async function upsertLinuxDoUser(profile: any, env: Env): Promise<{ id: string; 
 }
 
 function publicUser(row: any): Record<string, unknown> {
+  const username = row.username || row.login || "";
   return {
     id: row.id,
-    username: row.username || "",
+    username,
     login: row.login || "",
     name: row.name || "",
     email: row.email || "",
     avatar_url: row.avatar_url || "",
     avatar_template: row.avatar_template || "",
+    linuxdo_url: linuxdoProfileURL(username),
     active: row.active == null ? null : !!row.active,
     trust_level: row.trust_level == null ? null : int(row.trust_level),
     silenced: row.silenced == null ? null : !!row.silenced,
   };
+}
+
+function submissionDisplayUser(user: any, anonymous: boolean): Record<string, unknown> {
+  if (anonymous) {
+    return {
+      anonymous: true,
+      display_name: "匿名",
+      username: "",
+      avatar_url: "",
+      linuxdo_url: "",
+    };
+  }
+  const username = str(user?.username || user?.login || "", MAX_STRING_LENGTH);
+  return {
+    anonymous: false,
+    display_name: str(user?.name || username || "Linux.do 用户", MAX_STRING_LENGTH),
+    username,
+    avatar_url: str(user?.avatar_url || user?.avatar_template || "", MAX_STRING_LENGTH),
+    linuxdo_url: linuxdoProfileURL(username),
+  };
+}
+
+function linuxdoProfileURL(username: string): string {
+  const clean = str(username, MAX_STRING_LENGTH).trim();
+  return clean ? `https://linux.do/u/${encodeURIComponent(clean)}/summary` : "";
 }
 
 function safeLinuxDoProfileJSON(profile: any): string {
@@ -918,7 +1123,7 @@ function withCommonHeaders(response: Response, request: Request, env: Env, reque
       : "script-src https://challenges.cloudflare.com";
     headers.set(
       "content-security-policy",
-      `default-src 'none'; ${scriptSrc}; style-src 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
+      `default-src 'none'; ${scriptSrc}; style-src 'unsafe-inline'; img-src 'self' data: https://cdn.ldstatic.com; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
     );
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
@@ -954,7 +1159,10 @@ function knownPath(path: string): boolean {
     path,
     "/",
     "/account",
+    "/admin/questions",
     "/health",
+    "/api/questions",
+    "/api/v1/questions",
     "/api/device/start",
     "/api/v1/device-authorizations",
     "/api/device/poll",
@@ -989,6 +1197,20 @@ function linuxdoIcon(): string {
   </svg>`;
 }
 
+function userIdentityBlock(user: any): string {
+  const username = str(user.username || user.login || "", MAX_STRING_LENGTH);
+  const display = str(user.name || username || user.id, MAX_STRING_LENGTH);
+  const avatar = str(user.avatar_url || user.avatar_template || "", MAX_STRING_LENGTH);
+  const profile = linuxdoProfileURL(username);
+  const avatarHTML = avatar
+    ? `<img class="user-avatar" src="${escapeHTML(avatar)}" alt="${escapeHTML(display)}">`
+    : `<span class="user-avatar user-avatar-fallback">${escapeHTML(display.slice(0, 1).toUpperCase() || "U")}</span>`;
+  const nameHTML = profile
+    ? `<a class="user-name" href="${escapeHTML(profile)}" target="_blank" rel="noreferrer">${escapeHTML(display)}</a>`
+    : `<span class="user-name">${escapeHTML(display)}</span>`;
+  return `<div class="user-head">${profile ? `<a href="${escapeHTML(profile)}" target="_blank" rel="noreferrer">${avatarHTML}</a>` : avatarHTML}<div><h1>${nameHTML}</h1><p class="user-meta">${username ? "@" + escapeHTML(username) : escapeHTML(user.id)}</p></div></div>`;
+}
+
 function layoutPage(title: string, content: string): string {
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -997,7 +1219,7 @@ function layoutPage(title: string, content: string): string {
 :root{color-scheme:light;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--brand2:#06b6d4;--bg:#f7fbff}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.1),transparent 34%),linear-gradient(225deg,rgba(6,182,212,.14),transparent 38%),var(--bg);padding:24px;line-height:1.5}
 main{width:min(100%,920px);margin:0 auto}.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.86);border-radius:14px;padding:12px 14px;box-shadow:0 16px 50px rgba(37,99,235,.12)}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav a{color:#334155;text-decoration:none;font-size:14px}
-.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.danger{border-color:#dc2626;background:#dc2626;color:#fff}.small{min-height:32px;padding:6px 10px;font-size:12px}.delete-all{margin-top:16px;border-top:1px solid #e2e8f0;padding-top:16px}.delete-all label{display:block;color:#64748b;font-size:14px}.delete-all input{min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font:600 14px system-ui,sans-serif}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}td form{margin:0}
+.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.user-head{display:flex;align-items:center;gap:14px}.user-avatar{display:block;width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid #bfdbfe;background:#eff6ff;box-shadow:0 12px 30px rgba(37,99,235,.14)}.user-avatar-fallback{display:grid;place-items:center;font-size:24px;font-weight:800;color:#1d4ed8}.user-name{color:var(--text);text-decoration:none}.user-name:hover{color:#1d4ed8}.user-meta{margin-top:4px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.danger{border-color:#dc2626;background:#dc2626;color:#fff}.small{min-height:32px;padding:6px 10px;font-size:12px}.delete-all{margin-top:16px;border-top:1px solid #e2e8f0;padding-top:16px}.delete-all label{display:block;color:#64748b;font-size:14px}.delete-all input{min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font:600 14px system-ui,sans-serif}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}td form{margin:0}
 .login-actions{margin-top:22px}.linuxdo-button{display:inline-flex;align-items:center;gap:12px;min-height:58px;border:1px solid #1d4ed8;border-radius:14px;background:linear-gradient(135deg,#1d4ed8,#06b6d4);box-shadow:0 18px 45px rgba(37,99,235,.24);color:#fff;padding:10px 16px;text-decoration:none;transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}.linuxdo-button:hover{transform:translateY(-1px);box-shadow:0 22px 56px rgba(37,99,235,.3);filter:saturate(1.08)}.linuxdo-button span{display:grid;gap:2px;text-align:left}.linuxdo-button strong{color:#fff;font-size:15px;line-height:1.2}.linuxdo-button small{color:rgba(255,255,255,.78);font-size:12px;line-height:1.3}.linuxdo-icon{width:38px;height:38px;flex:0 0 auto;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22)}
 @media(max-width:680px){body{padding:12px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button,.linuxdo-button{width:100%}.actions form{width:100%}.linuxdo-button{justify-content:flex-start}}
 </style></head>
@@ -1156,6 +1378,45 @@ function formatDate(v: unknown): string {
   return d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
+function validateQuestionBank(bank: any): string | null {
+  if (!bank || typeof bank !== "object" || Array.isArray(bank)) return "题库必须是 JSON object。";
+  if (bank.schema_version != null && String(bank.schema_version) !== "1") return "schema_version 目前只支持 1。";
+  if (!Array.isArray(bank.questions)) return "questions 必须是数组。";
+  if (bank.questions.length < 1 || bank.questions.length > MAX_QUESTIONS) return `questions 数量必须在 1 到 ${MAX_QUESTIONS} 之间。`;
+  const seen = new Set<string>();
+  for (const q of bank.questions) {
+    if (!q || typeof q !== "object" || Array.isArray(q)) return "每道题必须是 object。";
+    if (!requiredString(q.id)) return "每道题必须有短 id。";
+    if (seen.has(q.id)) return `题目 id 重复：${q.id}`;
+    seen.add(q.id);
+    if (!requiredString(q.version)) return `题目 ${q.id} 必须有 version。`;
+    if (!requiredString(q.title)) return `题目 ${q.id} 必须有 title。`;
+    if (typeof q.prompt !== "string" || q.prompt.trim() === "" || q.prompt.length > 12000) return `题目 ${q.id} prompt 必须是非空字符串且不能过长。`;
+    if (q.tags != null && !stringArray(q.tags, 20, 64)) return `题目 ${q.id} tags 必须是短字符串数组。`;
+    const grader = q.grader;
+    if (!grader || typeof grader !== "object" || Array.isArray(grader)) return `题目 ${q.id} 必须有 grader。`;
+    const typ = String(grader.type || "");
+    if (!["number", "exact", "regex"].includes(typ)) return `题目 ${q.id} grader.type 只能是 number、exact 或 regex。`;
+    if ((typ === "number" || typ === "exact") && typeof grader.expected !== "string") return `题目 ${q.id} grader.expected 必须是字符串。`;
+    if (typ === "number" && grader.expected.trim() === "") return `题目 ${q.id} number expected 不能为空。`;
+    if (typ === "number" && !Number.isFinite(Number(grader.expected))) return `题目 ${q.id} number expected 必须是数字。`;
+    if (typ === "exact" && grader.expected === "") return `题目 ${q.id} exact expected 不能为空。`;
+    if (typ === "regex") {
+      if (typeof grader.pattern !== "string" || grader.pattern === "") return `题目 ${q.id} regex pattern 不能为空。`;
+      try {
+        new RegExp(grader.pattern);
+      } catch {
+        return `题目 ${q.id} regex pattern 无效。`;
+      }
+    }
+    for (const key of ["independent_match", "case_sensitive", "trim_space"]) {
+      if (grader[key] != null && typeof grader[key] !== "boolean") return `题目 ${q.id} grader.${key} 必须是 boolean。`;
+    }
+    if (grader.tolerance != null && !validNumber(Number(grader.tolerance), 0, Number.MAX_SAFE_INTEGER)) return `题目 ${q.id} grader.tolerance 必须是非负数字。`;
+  }
+  return null;
+}
+
 function validateSubmissionPayload(p: any): string | null {
   if (!p || typeof p !== "object" || Array.isArray(p)) return "request body must be a JSON object";
   if (!requiredString(p.upload_id)) return "upload_id is required";
@@ -1170,6 +1431,7 @@ function validateSubmissionPayload(p: any): string | null {
   for (const key of ["avg_input_tokens", "avg_output_tokens", "avg_reason_tokens", "avg_time_seconds", "avg_tps"]) {
     if (!validNumber(p[key], 0, Number.MAX_SAFE_INTEGER)) return `${key} must be a non-negative number`;
   }
+  if (p.anonymous != null && typeof p.anonymous !== "boolean") return "anonymous must be a boolean";
   for (const key of ["started_at", "finished_at", "question_suite", "client_timezone"]) {
     if (p[key] != null && (typeof p[key] !== "string" || p[key].length > MAX_STRING_LENGTH)) return `${key} must be a short string`;
   }

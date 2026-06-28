@@ -1,6 +1,7 @@
 package questions
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,20 @@ func TestParseQuestionBank(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(qs) != 1 || qs[0].ID != "custom_1" {
+		t.Fatalf("questions = %#v", qs)
+	}
+}
+
+func TestLoadFallsBackWhenDefaultRemoteFails(t *testing.T) {
+	qs, err := Load(context.Background(), LoadOptions{
+		URL:                   "https://127.0.0.1:1/questions.json",
+		CacheDir:              t.TempDir(),
+		FallbackOnRemoteError: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qs) != 1 || qs[0].ID != DefaultSuite {
 		t.Fatalf("questions = %#v", qs)
 	}
 }

@@ -95,6 +95,7 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 		ClientTimezone:  "+08:00",
 	}
 	p := PayloadFromSummary("0.1.0", s, "linux", "amd64", "codex 1")
+	p.Anonymous = true
 	b, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +115,9 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 	}
 	if p.UploadSchemaVersion != 3 || p.QuestionSuite != questions.DefaultSuite || p.ClientTimezone != "+08:00" || p.DurationSeconds != 5 {
 		t.Fatalf("v3 summary fields not preserved: %#v", p)
+	}
+	if !p.Anonymous || !strings.Contains(string(b), `"anonymous":true`) {
+		t.Fatalf("anonymous flag not preserved: %s", string(b))
 	}
 	if a.AnswerHash == "" || a.AnswerHash == a.AnswerPreview || a.StartedAt == "" || a.TimeoutSeconds != 1800 {
 		t.Fatalf("v3 attempt fields not preserved: %#v", a)

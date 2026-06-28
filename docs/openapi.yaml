@@ -570,6 +570,10 @@ components:
         avg_tps:
           type: number
           minimum: 0
+        anonymous:
+          type: boolean
+          default: false
+          description: Hide Linux.do identity in community/public views. Benchmark data remains visible and included in statistics.
         os:
           type: string
           maxLength: 128
@@ -805,9 +809,33 @@ components:
           type: number
         avg_tps:
           type: number
+        anonymous:
+          type: boolean
+          description: True when the uploader requested anonymous identity display.
+        user:
+          $ref: "#/components/schemas/SubmissionDisplayUser"
         created_at:
           type: string
           format: date-time
+
+    SubmissionDisplayUser:
+      type: object
+      required: [anonymous, display_name, username, avatar_url, linuxdo_url]
+      properties:
+        anonymous:
+          type: boolean
+        display_name:
+          type: string
+          description: Display label. Anonymous submissions use the fixed placeholder "匿名".
+        username:
+          type: string
+          description: Linux.do username, empty for anonymous submissions.
+        avatar_url:
+          type: string
+          description: Linux.do avatar URL, empty for anonymous submissions.
+        linuxdo_url:
+          type: string
+          description: Linux.do profile summary URL, empty for anonymous submissions.
 
     ListSubmissionsResponse:
       type: object

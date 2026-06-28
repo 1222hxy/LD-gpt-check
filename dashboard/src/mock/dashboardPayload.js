@@ -105,9 +105,19 @@ function buildRecentSubmissions(models) {
     const currentModel = models[index % models.length];
     const profile = MODEL_PROFILES[currentModel];
     const accuracy = clamp(profile.accuracy + Math.sin(index * 1.7) * 0.04, 0.65, 0.96);
+    const username = USERS[index % USERS.length];
+    const anonymous = index % 5 === 3;
     return {
       id: `sub_${String(index + 1).padStart(3, "0")}`,
-      user: USERS[index % USERS.length],
+      user: anonymous
+        ? { anonymous: true, display_name: "匿名", username: "", avatar_url: "", linuxdo_url: "" }
+        : {
+            anonymous: false,
+            display_name: username,
+            username,
+            avatar_url: `https://cdn.ldstatic.com/user_avatar/linux.do/${username}/288/170339_2.png`,
+            linuxdo_url: `https://linux.do/u/${username}/summary`,
+          },
       model: currentModel,
       accuracy: round(accuracy, 3),
       questionCount: 50,

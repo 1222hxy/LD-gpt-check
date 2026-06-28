@@ -11,6 +11,8 @@ describe("dashboard schema", () => {
     expect(parsed.hourlyBuckets).toHaveLength(24);
     expect(parsed.statistics.forecast.accuracy.forecast).toHaveLength(7);
     expect(parsed.statistics.modelRanking.length).toBe(parsed.modelBreakdown.length);
+    expect(parsed.statistics.drift.cusum.series).toHaveLength(parsed.trend.length);
+    expect(parsed.statistics.efficiencyFrontier.length).toBe(parsed.modelBreakdown.length);
   });
 
   it("rejects payloads missing required statistical sections", () => {

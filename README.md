@@ -65,6 +65,18 @@ List available question suites:
 bin/ld-gpt-check run --list-suites
 ```
 
+By default the CLI tries to fetch the hosted question bank from:
+
+```text
+https://codexgo.yhklab.com/api/v1/questions
+```
+
+If the network is unavailable, it falls back to the built-in `candy_21` prompt. To run only built-in or local questions without remote fetch:
+
+```bash
+bin/ld-gpt-check run --no-remote-questions --list-suites
+```
+
 Run selected suites:
 
 ```bash
@@ -77,6 +89,52 @@ Load additional questions from a JSON bank:
 bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite candy_21,custom_1
 bin/ld-gpt-check run -m gpt-5.5 --question-url https://example.com/questions.json --suite custom_1
 ```
+
+### Create Questions
+
+Questions can come from the hosted backend, a local JSON file, or an explicit HTTPS URL. A question bank uses this shape:
+
+```json
+{
+  "schema_version": "1",
+  "questions": [
+    {
+      "id": "custom_1",
+      "version": "1",
+      "title": "简单数字题",
+      "prompt": "不使用任何外部工具回答：10 + 11 等于多少？",
+      "tags": ["math"],
+      "grader": {
+        "type": "number",
+        "expected": "21",
+        "independent_match": true
+      }
+    }
+  ]
+}
+```
+
+Supported graders:
+
+- `number`: extracts a number and compares it to `expected`. Set `independent_match: true` when the answer only needs to contain an independent value such as `21`.
+- `exact`: compares the full answer to `expected`. Optional `trim_space` and `case_sensitive` control strictness.
+- `regex`: passes when `pattern` matches. If the regex has a capture group, the first group is recorded as the extracted answer.
+
+Local file workflow:
+
+```bash
+bin/ld-gpt-check run --question-file ./questions.json --list-suites
+bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite custom_1 -n 5
+```
+
+Remote admin workflow:
+
+1. Log in at `https://codexgo.yhklab.com/account` with Linux.do.
+2. Open `https://codexgo.yhklab.com/admin/questions`.
+3. Paste the question bank JSON and save it.
+4. Users run `bin/ld-gpt-check run --list-suites` or `bin/ld-gpt-check run --suite custom_1`.
+
+Only Linux.do admins configured on the Worker can edit the remote question bank. The default admin Linux.do UID is `29368`.
 
 The built-in candy prompt must remain unchanged. Its grader only requires an independent `21` in the final answer, so `21` passes but `121` does not. Prompts tell Codex not to use external tools; the runner keeps Codex in read-only sandbox mode, preserves your local Codex config, and fails a run if Codex emits tool-call events.
 
@@ -120,6 +178,12 @@ Upload a run:
 
 ```bash
 bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload
+```
+
+Upload without showing your Linux.do identity in community views:
+
+```bash
+bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload --anonymous
 ```
 
 Log out:

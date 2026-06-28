@@ -56,10 +56,11 @@ type GradeResult struct {
 }
 
 type LoadOptions struct {
-	File      string
-	URL       string
-	CacheDir  string
-	AllowHTTP bool
+	File                  string
+	URL                   string
+	CacheDir              string
+	AllowHTTP             bool
+	FallbackOnRemoteError bool
 }
 
 func Builtin() []Question {
@@ -95,9 +96,12 @@ func Load(ctx context.Context, opts LoadOptions) ([]Question, error) {
 	if opts.URL != "" {
 		q, err := LoadRemote(ctx, opts.URL, opts.CacheDir, opts.AllowHTTP)
 		if err != nil {
-			return nil, err
+			if !opts.FallbackOnRemoteError {
+				return nil, err
+			}
+		} else {
+			questions = merge(questions, q)
 		}
-		questions = merge(questions, q)
 	}
 	if err := Validate(questions); err != nil {
 		return nil, err

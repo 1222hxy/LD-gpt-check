@@ -14,6 +14,7 @@ import {
   requiredSampleSizeForProportionDelta,
   standardDeviation,
   twoProportionZTest,
+  welchTTest,
 } from "./statistics.js";
 import { buildDashboardPayload } from "./mock/dashboardPayload.js";
 
@@ -126,6 +127,14 @@ describe("statistics helpers", () => {
     expect(result.forecast).toHaveLength(3);
     expect(result.forecast[0].value).toBeCloseTo(20, 6);
   });
+
+  it("detects a mean shift with Welch's t-test", () => {
+    const result = welchTTest([10, 11, 9, 10, 12], [18, 19, 20, 17, 18]);
+
+    expect(result.delta).toBeGreaterThan(7);
+    expect(result.tScore).toBeGreaterThan(8);
+    expect(result.pValue).toBeLessThan(0.001);
+  });
 });
 
 describe("dashboard statistics payload", () => {
@@ -150,6 +159,10 @@ describe("dashboard statistics payload", () => {
     expect(payload.statistics.modelRanking).toHaveLength(payload.modelBreakdown.length);
     expect(payload.statistics.questionDiagnostics).toHaveLength(payload.questionQuality.length);
     expect(payload.statistics.robustness.baselines.submissionAccuracyMedian).toBeGreaterThan(0);
+    expect(payload.statistics.distributionShape.dailyAccuracy.iqr).toBeGreaterThanOrEqual(0);
+    expect(payload.statistics.drift.ewma.series).toHaveLength(payload.trend.length);
+    expect(payload.statistics.riskBudget.allowedFailures).toBeGreaterThan(0);
+    expect(payload.statistics.efficiencyFrontier).toHaveLength(payload.modelBreakdown.length);
   });
 
   it("keeps model comparison scoped to the selected model", () => {

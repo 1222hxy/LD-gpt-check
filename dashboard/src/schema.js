@@ -39,7 +39,16 @@ const QuestionQualitySchema = z.object({
 
 const RecentSubmissionSchema = z.object({
   id: z.string(),
-  user: z.string(),
+  user: z.union([
+    z.string(),
+    z.object({
+      anonymous: z.boolean().optional(),
+      display_name: z.string().optional(),
+      username: z.string().optional(),
+      avatar_url: z.string().optional(),
+      linuxdo_url: z.string().optional(),
+    }),
+  ]),
   model: z.string(),
   accuracy: z.number(),
   questionCount: z.number(),
@@ -279,6 +288,94 @@ const RobustnessSchema = z.object({
   }),
 });
 
+const DistributionSummarySchema = z.object({
+  min: z.number(),
+  q1: z.number(),
+  median: z.number(),
+  q3: z.number(),
+  max: z.number(),
+  iqr: z.number(),
+  mean: z.number(),
+  stdDev: z.number(),
+  coefficientOfVariation: z.number(),
+  skewness: z.number(),
+  excessKurtosis: z.number(),
+  tailRisk: z.number(),
+});
+
+const DistributionShapeSchema = z.object({
+  dailyAccuracy: DistributionSummarySchema,
+  dailySubmissions: DistributionSummarySchema,
+  recentLatency: DistributionSummarySchema,
+  questionFailure: DistributionSummarySchema,
+  hourlyAccuracy: DistributionSummarySchema,
+});
+
+const DriftSchema = z.object({
+  window: z.object({
+    priorDays: z.number(),
+    recentDays: z.number(),
+    priorAccuracy: z.number(),
+    recentAccuracy: z.number(),
+    delta: z.number(),
+    zScore: z.number(),
+    pValue: z.number(),
+    verdict: VerdictSchema,
+  }),
+  volume: z.object({
+    priorMean: z.number(),
+    recentMean: z.number(),
+    delta: z.number(),
+    tScore: z.number(),
+    degreesOfFreedom: z.number(),
+    pValue: z.number(),
+    verdict: VerdictSchema,
+  }),
+  ewma: z.object({
+    lambda: z.number(),
+    latest: z.number(),
+    deltaVsMean: z.number(),
+    min: z.number(),
+    max: z.number(),
+    verdict: VerdictSchema,
+    series: z.array(z.object({ date: z.string(), value: z.number() })),
+  }),
+  cusum: z.object({
+    latest: z.number(),
+    min: z.number(),
+    max: z.number(),
+    signalScore: z.number(),
+    verdict: VerdictSchema,
+    series: z.array(z.object({ date: z.string(), value: z.number() })),
+  }),
+});
+
+const RiskBudgetSchema = z.object({
+  targetAccuracy: z.number(),
+  failureRate: z.number(),
+  failures: z.number(),
+  allowedFailures: z.number(),
+  excessFailures: z.number(),
+  budgetRemaining: z.number(),
+  burnRate: z.number(),
+  degradedAttemptShare: z.number(),
+  auditQuestions: z.number(),
+  outlierLoad: z.number(),
+  anomalyDays: z.number(),
+  verdict: VerdictSchema,
+});
+
+const EfficiencyFrontierSchema = z.object({
+  model: z.string(),
+  accuracy: z.number(),
+  avgTps: z.number(),
+  avgTimeSeconds: z.number(),
+  utilityScore: z.number(),
+  dominatedBy: z.array(z.string()),
+  onFrontier: z.boolean(),
+  verdict: VerdictSchema,
+});
+
 const StatisticsSchema = z.object({
   accuracy: StatisticalAccuracySchema,
   latency: LatencySchema,
@@ -297,6 +394,10 @@ const StatisticsSchema = z.object({
   questionDiagnostics: z.array(QuestionDiagnosticSchema),
   modelRanking: z.array(ModelRankingSchema),
   robustness: RobustnessSchema,
+  distributionShape: DistributionShapeSchema,
+  drift: DriftSchema,
+  riskBudget: RiskBudgetSchema,
+  efficiencyFrontier: z.array(EfficiencyFrontierSchema),
 });
 
 export const DashboardOverviewSchema = z.object({

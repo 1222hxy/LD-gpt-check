@@ -69,7 +69,13 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
   "recentSubmissions": [
     {
       "id": "sub_01",
-      "user": "alice",
+      "user": {
+        "anonymous": false,
+        "display_name": "alice",
+        "username": "alice",
+        "avatar_url": "https://cdn.ldstatic.com/user_avatar/linux.do/alice/288/170339_2.png",
+        "linuxdo_url": "https://linux.do/u/alice/summary"
+      },
       "model": "gpt-5.5",
       "accuracy": 0.9,
       "questionCount": 50,
@@ -330,10 +336,153 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
         "submissionLatencyMedian": 8.4,
         "questionFailureMedian": 0.211
       }
-    }
+    },
+    "distributionShape": {
+      "dailyAccuracy": {
+        "min": 0.801,
+        "q1": 0.829,
+        "median": 0.842,
+        "q3": 0.858,
+        "max": 0.884,
+        "iqr": 0.029,
+        "mean": 0.843,
+        "stdDev": 0.018,
+        "coefficientOfVariation": 0.021,
+        "skewness": -0.12,
+        "excessKurtosis": -0.42,
+        "tailRisk": 0.033
+      },
+      "dailySubmissions": {
+        "min": 36,
+        "q1": 47,
+        "median": 54,
+        "q3": 63,
+        "max": 76,
+        "iqr": 16,
+        "mean": 55,
+        "stdDev": 10,
+        "coefficientOfVariation": 0.182,
+        "skewness": 0.21,
+        "excessKurtosis": -0.67,
+        "tailRisk": 0
+      },
+      "recentLatency": {
+        "min": 6.7,
+        "q1": 7.5,
+        "median": 8.4,
+        "q3": 10.2,
+        "max": 13.2,
+        "iqr": 2.7,
+        "mean": 8.8,
+        "stdDev": 1.9,
+        "coefficientOfVariation": 0.216,
+        "skewness": 0.64,
+        "excessKurtosis": 0.12,
+        "tailRisk": 0.125
+      },
+      "questionFailure": {
+        "min": 0.079,
+        "q1": 0.142,
+        "median": 0.211,
+        "q3": 0.258,
+        "max": 0.309,
+        "iqr": 0.116,
+        "mean": 0.207,
+        "stdDev": 0.078,
+        "coefficientOfVariation": 0.377,
+        "skewness": -0.18,
+        "excessKurtosis": -1.1,
+        "tailRisk": 0
+      },
+      "hourlyAccuracy": {
+        "min": 0.792,
+        "q1": 0.824,
+        "median": 0.842,
+        "q3": 0.857,
+        "max": 0.872,
+        "iqr": 0.033,
+        "mean": 0.839,
+        "stdDev": 0.022,
+        "coefficientOfVariation": 0.026,
+        "skewness": -0.52,
+        "excessKurtosis": -0.31,
+        "tailRisk": 0.083
+      }
+    },
+    "drift": {
+      "window": {
+        "priorDays": 15,
+        "recentDays": 15,
+        "priorAccuracy": 0.846,
+        "recentAccuracy": 0.838,
+        "delta": -0.008,
+        "zScore": -4.1,
+        "pValue": 0.0001,
+        "verdict": "negative_drift"
+      },
+      "volume": {
+        "priorMean": 52.2,
+        "recentMean": 61.7,
+        "delta": 9.5,
+        "tScore": 3.2,
+        "degreesOfFreedom": 27.4,
+        "pValue": 0.0034,
+        "verdict": "changed"
+      },
+      "ewma": {
+        "lambda": 0.32,
+        "latest": 0.839,
+        "deltaVsMean": -0.01,
+        "min": 0.821,
+        "max": 0.862,
+        "verdict": "stable",
+        "series": [
+          {
+            "date": "2026-06-01",
+            "value": 0.842
+          }
+        ]
+      },
+      "cusum": {
+        "latest": -0.024,
+        "min": -0.031,
+        "max": 0.018,
+        "signalScore": 4.1,
+        "verdict": "alert",
+        "series": []
+      }
+    },
+    "riskBudget": {
+      "targetAccuracy": 0.835,
+      "failureRate": 0.158,
+      "failures": 30431,
+      "allowedFailures": 31779,
+      "excessFailures": 0,
+      "budgetRemaining": 0.042,
+      "burnRate": 0.96,
+      "degradedAttemptShare": 0.137,
+      "auditQuestions": 2,
+      "outlierLoad": 3,
+      "anomalyDays": 1,
+      "verdict": "watch"
+    },
+    "efficiencyFrontier": [
+      {
+        "model": "gpt-5.5",
+        "accuracy": 0.882,
+        "avgTps": 39.4,
+        "avgTimeSeconds": 7.9,
+        "utilityScore": 0.872,
+        "dominatedBy": [],
+        "onFrontier": true,
+        "verdict": "frontier"
+      }
+    ]
   }
 }
 ```
+
+`recentSubmissions[].user` may be a legacy string or a display object. For anonymous uploads, return `{ "anonymous": true, "display_name": "匿名", "username": "", "avatar_url": "", "linuxdo_url": "" }`. Anonymous mode hides identity only; the submission's benchmark data remains visible and statistically included.
 
 ## Statistical Fields
 
@@ -352,12 +501,17 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
 - `questionDiagnostics` ranks questions by Wilson interval, failure-rate z-score, sample size, and time penalty so review work starts with the highest risk items.
 - `modelRanking` estimates beta posterior means and an approximate probability of being the best model; use it for release candidate ranking, not as a sole promotion gate.
 - `robustness` uses median and median absolute deviation baselines to surface recent submission and question outliers.
+- `distributionShape` summarizes quartiles, IQR, coefficient of variation, skewness, excess kurtosis, and Tukey-fence tail risk for core distributions.
+- `drift.window` compares the first and second half of the selected range with a two-proportion z-test; `drift.volume` uses Welch's t-test for submission volume changes.
+- `drift.ewma` and `drift.cusum` expose smoothed accuracy and cumulative deviation series for monitoring drift shape, not only endpoint deltas.
+- `riskBudget` converts the target accuracy into allowed failures, burn rate, degraded-attempt share, and review load so operators can see whether the window is over budget.
+- `efficiencyFrontier` computes a Pareto-style model frontier across accuracy, TPS, and latency plus a weighted utility score for release tradeoffs.
 - `timeOfDay.hourly` compares each hour against the rest of the day with two-proportion z-tests, Holm-adjusted p-values, Wilson intervals, beta-posterior ranges, and Cohen's h effect size.
 - `timeOfDay.degradationWindows` merges adjacent significantly degraded hours into human-readable risk windows such as `02:00-06:00`.
 
 The local mock implementation uses:
 
-- `jstat` for normal and chi-square distribution CDFs.
+- `jstat` for normal, Student t, and chi-square distribution CDFs.
 - `simple-statistics` for descriptive statistics and quantiles.
 
 ## Frontend Safeguards

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/haowang02/ld-gpt-check/internal/api"
@@ -97,8 +98,10 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	questionFile := fs.String("question-file", "", "local question bank JSON file")
 	questionURL := fs.String("question-url", "", "remote HTTPS question bank JSON URL")
 	questionCache := fs.String("question-cache", questions.DefaultCacheDir(), "question bank cache directory")
+	noRemoteQuestions := fs.Bool("no-remote-questions", false, "do not fetch the default remote question bank")
 	listSuites := fs.Bool("list-suites", false, "list available question suites")
 	upload := fs.Bool("upload", false, l.S("flag_upload"))
+	anonymous := fs.Bool("anonymous", false, "upload without showing your Linux.do identity in public/community views")
 	jsonOut := fs.Bool("json", false, l.S("flag_json"))
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -121,10 +124,21 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if *timeout <= 0 {
 		return fmt.Errorf("%s", l.S("timeout_positive"))
 	}
+	remoteURL := strings.TrimSpace(*questionURL)
+	fallbackRemote := false
+	if remoteURL == "" && !*noRemoteQuestions {
+		apiBase := config.DefaultAPIBaseURL()
+		if cfg, err := config.Load(); err == nil && strings.TrimSpace(cfg.APIBaseURL) != "" {
+			apiBase = cfg.APIBaseURL
+		}
+		remoteURL = strings.TrimRight(apiBase, "/") + "/api/v1/questions"
+		fallbackRemote = true
+	}
 	allQuestions, err := questions.Load(ctx, questions.LoadOptions{
-		File:     *questionFile,
-		URL:      *questionURL,
-		CacheDir: *questionCache,
+		File:                  *questionFile,
+		URL:                   remoteURL,
+		CacheDir:              *questionCache,
+		FallbackOnRemoteError: fallbackRemote,
 	})
 	if err != nil {
 		return err
@@ -179,6 +193,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		lang = i18n.Detect(cfg.Language)
 		l = i18n.New(lang)
 		payload := api.PayloadFromSummary(version, summary, runtime.GOOS, runtime.GOARCH, system.CodexVersion())
+		payload.Anonymous = *anonymous
 		client := api.NewWithLang(cfg.APIBaseURL, cfg.AccessToken, lang)
 		resp, err := client.UploadRun(ctx, payload)
 		if err != nil {

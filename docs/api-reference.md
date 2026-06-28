@@ -65,6 +65,82 @@ Authorization: Bearer ldgc_...
 curl https://codexgo.yhklab.com/health
 ```
 
+## GET /api/v1/questions
+
+获取当前启用的题库 JSON。CLI 默认会尝试拉取该端点；如果拉取失败，会回退到本地内置 `candy_21` 原题。
+
+Legacy alias：`GET /api/questions`。
+
+认证：不需要。
+
+Query 参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `slug` | string | 可选。指定题库 slug；不传时返回默认或当前启用题库 |
+
+响应：
+
+```json
+{
+  "schema_version": "1",
+  "questions": [
+    {
+      "id": "candy_21",
+      "version": "1",
+      "title": "糖果形状口味保证题",
+      "prompt": "不使用任何外部工具回答以下问题：...",
+      "tags": ["math", "pigeonhole"],
+      "grader": {
+        "type": "number",
+        "expected": "21",
+        "independent_match": true
+      }
+    }
+  ]
+}
+```
+
+题目字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | string | suite id，CLI 用 `--suite` 选择 |
+| `version` | string | 题目版本 |
+| `title` | string | 展示名称 |
+| `prompt` | string | 发送给 Codex 的完整题面 |
+| `tags` | string[] | 可选标签 |
+| `grader` | object | 判题配置 |
+
+grader 类型：
+
+| type | 必填字段 | 说明 |
+| --- | --- | --- |
+| `number` | `expected` | 抽取数字并比较；`independent_match: true` 表示答案里出现独立数字即可 |
+| `exact` | `expected` | 全文匹配，可用 `trim_space`、`case_sensitive` 调整 |
+| `regex` | `pattern` | 正则匹配；有捕获组时记录第一个捕获组 |
+
+错误：
+
+- `404 not_found`：指定的 `slug` 不存在或未启用。
+
+## GET /admin/questions
+
+题目管理后台静态页面。该页面和 API Worker 同源，但页面文件由 `frontend/public/admin/questions/index.html` 构建到静态资源；Worker 只提供 JSON API。
+
+认证：Web session cookie。未登录会跳转 Linux.do OAuth；已登录但不在管理员列表时返回 `403`。
+
+管理员判断：
+
+- Linux.do 用户 UID 在 `ADMIN_LINUXDO_IDS` 中。
+- 当前默认管理员 UID：`29368`。
+
+功能：
+
+- `GET /admin/questions`：查看当前题库 JSON 编辑页。
+- `GET /api/v1/admin/questions`：读取当前可编辑题库，要求管理员 Web session。
+- `POST /api/v1/admin/questions`：保存题库到 D1 表 `question_banks.questions_json`，要求管理员 Web session 和同源请求。
+
 ## POST /api/device/start
 
 目标路径：`POST /api/v1/device-authorizations`。当前 Worker 已支持该 v1 alias。
@@ -329,6 +405,7 @@ Query 参数：
   "avg_reason_tokens": 30,
   "avg_time_seconds": 2.4,
   "avg_tps": 5,
+  "anonymous": false,
   "started_at": "2026-06-28T08:00:00Z",
   "finished_at": "2026-06-28T08:00:12Z",
   "duration_seconds": 12,
@@ -422,6 +499,7 @@ Query 参数：
 | `avg_reason_tokens` | number | 平均 reasoning tokens |
 | `avg_time_seconds` | number | 平均耗时秒数 |
 | `avg_tps` | number | 平均 tokens per second |
+| `anonymous` | boolean | 可选。为 `true` 时公共/community 展示隐藏 Linux.do 身份，用户占位固定为 `匿名`；测试数据、统计字段和提交记录仍正常保存、返回并参与统计 |
 | `started_at` / `finished_at` | string | 本次 benchmark 开始和结束时间，UTC ISO-8601 |
 | `duration_seconds` | number | 整次 benchmark wall-clock 耗时 |
 | `question_suite` | string | CLI 选择的 suite，例如 `candy_21` |
@@ -449,6 +527,7 @@ Query 参数：
 - `answer_preview` 用于调试和展示，服务端最多保存 300 字符。
 - 可上传 `thread_id`、event type 列表、cached input tokens 等诊断摘要，但不上传原始 JSONL event。
 - 不上传本地文件路径、环境变量、Codex 数据库或完整 prompt 历史。
+- `anonymous` 只影响身份展示，不会隐藏模型、准确率、题目、耗时、token 等测试数据。
 
 错误：
 
@@ -483,11 +562,21 @@ Query 参数：
       "accuracy": 100,
       "avg_time_seconds": 2.4,
       "avg_tps": 5,
+      "anonymous": true,
+      "user": {
+        "anonymous": true,
+        "display_name": "匿名",
+        "username": "",
+        "avatar_url": "",
+        "linuxdo_url": ""
+      },
       "created_at": "2026-06-28T08:00:00.000Z"
     }
   ]
 }
 ```
+
+`user` 是展示用安全对象。公开身份时会包含 `display_name`、`username`、`avatar_url` 和 `linuxdo_url`；匿名提交时固定返回 `display_name: "匿名"`，不会返回真实用户名或头像。
 
 错误：
 

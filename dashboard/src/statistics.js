@@ -127,6 +127,33 @@ export function chiSquareGoodness(rows) {
   };
 }
 
+export function welchTTest(sampleA, sampleB) {
+  if (sampleA.length < 2 || sampleB.length < 2) {
+    return { tScore: 0, degreesOfFreedom: 0, pValue: 1, delta: mean(sampleB) - mean(sampleA) };
+  }
+
+  const meanA = mean(sampleA);
+  const meanB = mean(sampleB);
+  const varianceA = ss.sampleVariance(sampleA);
+  const varianceB = ss.sampleVariance(sampleB);
+  const standardError = Math.sqrt(varianceA / sampleA.length + varianceB / sampleB.length);
+  if (!standardError) return { tScore: 0, degreesOfFreedom: sampleA.length + sampleB.length - 2, pValue: 1, delta: meanB - meanA };
+
+  const numerator = (varianceA / sampleA.length + varianceB / sampleB.length) ** 2;
+  const denominator =
+    (varianceA ** 2) / (sampleA.length ** 2 * (sampleA.length - 1)) +
+    (varianceB ** 2) / (sampleB.length ** 2 * (sampleB.length - 1));
+  const degreesOfFreedom = denominator ? numerator / denominator : sampleA.length + sampleB.length - 2;
+  const tScore = (meanB - meanA) / standardError;
+
+  return {
+    tScore,
+    degreesOfFreedom,
+    pValue: 2 * (1 - jStat.studentt.cdf(Math.abs(tScore), degreesOfFreedom)),
+    delta: meanB - meanA,
+  };
+}
+
 export function correlationTest(pairs) {
   const clean = pairs.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
   if (clean.length < 3) return { r: 0, pValue: 1, sampleSize: clean.length, strength: "insufficient" };
@@ -317,6 +344,11 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
   const averageModelSampleSize = Math.round(mean(modelTrials));
 
   const testCoverage = buildTestCoverage(questionQuality, recentSubmissions);
+  const trendStability = buildTrendStability(trend);
+  const timeOfDay = analyzeTimeOfDay(hourlyBuckets);
+  const questionDiagnostics = buildQuestionDiagnostics(questionQuality);
+  const modelRanking = buildModelRanking(modelBreakdown, modelSuccesses, modelTrials);
+  const robustness = buildRobustness({ recentSubmissions, questionQuality });
 
   return {
     accuracy: {
@@ -357,13 +389,25 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
     modelComparisons,
     pairwiseTests,
     testCoverage,
-    trendStability: buildTrendStability(trend),
-    timeOfDay: analyzeTimeOfDay(hourlyBuckets),
+    trendStability,
+    timeOfDay,
     forecast: buildForecast(trend),
     correlations: buildCorrelations({ trend, questionQuality, hourlyBuckets }),
-    questionDiagnostics: buildQuestionDiagnostics(questionQuality),
-    modelRanking: buildModelRanking(modelBreakdown, modelSuccesses, modelTrials),
-    robustness: buildRobustness({ recentSubmissions, questionQuality }),
+    questionDiagnostics,
+    modelRanking,
+    robustness,
+    distributionShape: buildDistributionShape({ trend, recentSubmissions, questionQuality, hourlyBuckets }),
+    drift: buildDriftAnalysis(trend),
+    riskBudget: buildRiskBudget({
+      totalTrials,
+      totalSuccesses,
+      baselineAccuracy,
+      trendStability,
+      timeOfDay,
+      robustness,
+      questionDiagnostics,
+    }),
+    efficiencyFrontier: buildEfficiencyFrontier(modelBreakdown),
   };
 }
 
@@ -518,6 +562,148 @@ function buildRobustness({ recentSubmissions, questionQuality }) {
       questionFailureMedian: round(ss.median(questionFailures), 3),
     },
   };
+}
+
+function buildDistributionShape({ trend, recentSubmissions, questionQuality, hourlyBuckets }) {
+  return {
+    dailyAccuracy: distributionSummary(trend.map((item) => item.accuracy), 3),
+    dailySubmissions: distributionSummary(trend.map((item) => item.submissions), 0),
+    recentLatency: distributionSummary(recentSubmissions.map((item) => item.avgTimeSeconds), 1),
+    questionFailure: distributionSummary(questionQuality.map((item) => item.failureRate), 3),
+    hourlyAccuracy: distributionSummary(hourlyBuckets.map((item) => item.accuracy), 3),
+  };
+}
+
+function buildDriftAnalysis(trend) {
+  const midpoint = Math.floor(trend.length / 2);
+  const prior = trend.slice(0, midpoint);
+  const recent = trend.slice(midpoint);
+  const priorTrials = prior.reduce((total, item) => total + item.submissions * 150, 0);
+  const recentTrials = recent.reduce((total, item) => total + item.submissions * 150, 0);
+  const priorSuccesses = prior.reduce((total, item) => total + Math.round(item.accuracy * item.submissions * 150), 0);
+  const recentSuccesses = recent.reduce((total, item) => total + Math.round(item.accuracy * item.submissions * 150), 0);
+  const accuracyTest = twoProportionZTest({
+    baselineSuccesses: priorSuccesses,
+    baselineTrials: priorTrials,
+    observedSuccesses: recentSuccesses,
+    observedTrials: recentTrials,
+  });
+  const volumeTest = welchTTest(
+    prior.map((item) => item.submissions),
+    recent.map((item) => item.submissions),
+  );
+  const ewma = ewmaSeries(trend.map((item) => item.accuracy), 0.32);
+  const cusum = cusumSeries(trend.map((item) => item.accuracy), mean(trend.map((item) => item.accuracy)));
+  const latestEwma = ewma.at(-1) ?? 0;
+  const ewmaDelta = latestEwma - mean(ewma);
+  const signalScore = Math.max(Math.abs(accuracyTest.zScore), Math.abs(volumeTest.tScore), Math.abs(ewmaDelta) * 100);
+
+  return {
+    window: {
+      priorDays: prior.length,
+      recentDays: recent.length,
+      priorAccuracy: round(priorTrials ? priorSuccesses / priorTrials : 0, 3),
+      recentAccuracy: round(recentTrials ? recentSuccesses / recentTrials : 0, 3),
+      delta: round(accuracyTest.delta, 3),
+      zScore: round(accuracyTest.zScore, 2),
+      pValue: round(accuracyTest.pValue, 4),
+      verdict: accuracyTest.pValue < 0.05 && accuracyTest.delta < 0 ? "negative_drift" : accuracyTest.pValue < 0.05 ? "positive_drift" : "stable",
+    },
+    volume: {
+      priorMean: round(mean(prior.map((item) => item.submissions)), 1),
+      recentMean: round(mean(recent.map((item) => item.submissions)), 1),
+      delta: round(volumeTest.delta, 1),
+      tScore: round(volumeTest.tScore, 2),
+      degreesOfFreedom: round(volumeTest.degreesOfFreedom, 1),
+      pValue: round(volumeTest.pValue, 4),
+      verdict: volumeTest.pValue < 0.05 ? "changed" : "stable",
+    },
+    ewma: {
+      lambda: 0.32,
+      latest: round(latestEwma, 3),
+      deltaVsMean: round(ewmaDelta, 3),
+      min: round(Math.min(...ewma), 3),
+      max: round(Math.max(...ewma), 3),
+      verdict: ewmaDelta < -0.015 ? "cooling" : ewmaDelta > 0.015 ? "heating" : "stable",
+      series: trend.map((item, index) => ({ date: item.date, value: round(ewma[index], 3) })),
+    },
+    cusum: {
+      latest: round(cusum.at(-1) ?? 0, 3),
+      min: round(Math.min(...cusum), 3),
+      max: round(Math.max(...cusum), 3),
+      signalScore: round(signalScore, 2),
+      verdict: signalScore >= 3 ? "alert" : signalScore >= 2 ? "watch" : "stable",
+      series: trend.map((item, index) => ({ date: item.date, value: round(cusum[index], 3) })),
+    },
+  };
+}
+
+function buildRiskBudget({ totalTrials, totalSuccesses, baselineAccuracy, trendStability, timeOfDay, robustness, questionDiagnostics }) {
+  const failures = totalTrials - totalSuccesses;
+  const allowedFailures = Math.round(totalTrials * (1 - baselineAccuracy));
+  const excessFailures = Math.max(0, failures - allowedFailures);
+  const failureRate = totalTrials ? failures / totalTrials : 0;
+  const budgetRemaining = totalTrials ? clamp((allowedFailures - failures) / allowedFailures, -1, 1) : 0;
+  const degradedAttempts = timeOfDay.summary.affectedAttempts || 0;
+  const degradedShare = totalTrials ? degradedAttempts / totalTrials : 0;
+  const auditQuestions = questionDiagnostics.filter((item) => item.verdict === "audit").length;
+  const outlierLoad = robustness.recentOutliers.length + robustness.questionOutliers.length;
+  const burnRate = baselineAccuracy >= 1 ? 0 : failureRate / (1 - baselineAccuracy);
+
+  return {
+    targetAccuracy: baselineAccuracy,
+    failureRate: round(failureRate, 3),
+    failures,
+    allowedFailures,
+    excessFailures,
+    budgetRemaining: round(budgetRemaining, 3),
+    burnRate: round(burnRate, 2),
+    degradedAttemptShare: round(degradedShare, 3),
+    auditQuestions,
+    outlierLoad,
+    anomalyDays: trendStability.anomalies.length,
+    verdict:
+      excessFailures > 0 || burnRate > 1.1
+        ? "over_budget"
+        : degradedShare > 0.12 || auditQuestions >= 2 || outlierLoad >= 3
+          ? "watch"
+          : "healthy",
+  };
+}
+
+function buildEfficiencyFrontier(modelBreakdown) {
+  const maxTps = Math.max(...modelBreakdown.map((item) => item.avgTps));
+  const minLatency = Math.min(...modelBreakdown.map((item) => item.avgTimeSeconds));
+
+  return modelBreakdown
+    .map((item) => {
+      const dominatedBy = modelBreakdown
+        .filter((candidate) => candidate.model !== item.model)
+        .filter(
+          (candidate) =>
+            candidate.accuracy >= item.accuracy &&
+            candidate.avgTps >= item.avgTps &&
+            candidate.avgTimeSeconds <= item.avgTimeSeconds &&
+            (candidate.accuracy > item.accuracy || candidate.avgTps > item.avgTps || candidate.avgTimeSeconds < item.avgTimeSeconds),
+        )
+        .map((candidate) => candidate.model);
+      const accuracyScore = item.accuracy;
+      const throughputScore = maxTps ? item.avgTps / maxTps : 0;
+      const latencyScore = item.avgTimeSeconds ? minLatency / item.avgTimeSeconds : 0;
+      const utilityScore = 0.58 * accuracyScore + 0.24 * throughputScore + 0.18 * latencyScore;
+
+      return {
+        model: item.model,
+        accuracy: round(item.accuracy, 3),
+        avgTps: item.avgTps,
+        avgTimeSeconds: item.avgTimeSeconds,
+        utilityScore: round(utilityScore, 3),
+        dominatedBy,
+        onFrontier: dominatedBy.length === 0,
+        verdict: dominatedBy.length === 0 ? "frontier" : dominatedBy.length === 1 ? "shadowed" : "dominated",
+      };
+    })
+    .sort((a, b) => b.utilityScore - a.utilityScore);
 }
 
 function buildPairwiseModelTests(modelBreakdown, modelSuccesses, modelTrials) {
@@ -797,6 +983,82 @@ function robustZ(value, values) {
   const mad = ss.medianAbsoluteDeviation(values);
   if (!mad) return 0;
   return (value - median) / (mad * 1.4826);
+}
+
+function distributionSummary(values, decimals) {
+  if (!values.length) {
+    return {
+      min: 0,
+      q1: 0,
+      median: 0,
+      q3: 0,
+      max: 0,
+      iqr: 0,
+      mean: 0,
+      stdDev: 0,
+      coefficientOfVariation: 0,
+      skewness: 0,
+      excessKurtosis: 0,
+      tailRisk: 0,
+    };
+  }
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const meanValue = mean(values);
+  const stdDev = standardDeviation(values);
+  const q1 = ss.quantile(sorted, 0.25);
+  const median = ss.quantile(sorted, 0.5);
+  const q3 = ss.quantile(sorted, 0.75);
+  const iqr = q3 - q1;
+  const moments = standardizedMoments(values, meanValue, stdDev);
+  const lowerFence = q1 - 1.5 * iqr;
+  const upperFence = q3 + 1.5 * iqr;
+  const tailRisk = values.filter((value) => value < lowerFence || value > upperFence).length / values.length;
+
+  return {
+    min: round(sorted[0], decimals),
+    q1: round(q1, decimals),
+    median: round(median, decimals),
+    q3: round(q3, decimals),
+    max: round(sorted.at(-1), decimals),
+    iqr: round(iqr, decimals),
+    mean: round(meanValue, decimals),
+    stdDev: round(stdDev, decimals),
+    coefficientOfVariation: meanValue ? round(stdDev / meanValue, 3) : 0,
+    skewness: round(moments.skewness, 2),
+    excessKurtosis: round(moments.excessKurtosis, 2),
+    tailRisk: round(tailRisk, 3),
+  };
+}
+
+function standardizedMoments(values, meanValue, stdDev) {
+  if (values.length < 3 || !stdDev) return { skewness: 0, excessKurtosis: 0 };
+  const n = values.length;
+  const normalized = values.map((value) => (value - meanValue) / stdDev);
+  const skewness = (n / ((n - 1) * (n - 2))) * normalized.reduce((total, value) => total + value ** 3, 0);
+  if (n < 4) return { skewness, excessKurtosis: 0 };
+  const kurtosisNumerator = n * (n + 1) * normalized.reduce((total, value) => total + value ** 4, 0);
+  const kurtosisDenominator = (n - 1) * (n - 2) * (n - 3);
+  const correction = (3 * (n - 1) ** 2) / ((n - 2) * (n - 3));
+  const excessKurtosis = kurtosisNumerator / kurtosisDenominator - correction;
+  return { skewness, excessKurtosis };
+}
+
+function ewmaSeries(values, lambda) {
+  if (!values.length) return [];
+  const result = [values[0]];
+  for (let index = 1; index < values.length; index += 1) {
+    result.push(lambda * values[index] + (1 - lambda) * result[index - 1]);
+  }
+  return result;
+}
+
+function cusumSeries(values, target) {
+  let total = 0;
+  return values.map((value) => {
+    total += value - target;
+    return total;
+  });
 }
 
 function round(value, decimals) {

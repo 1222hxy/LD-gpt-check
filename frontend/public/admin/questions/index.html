@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>题目管理 - LD-gpt-check</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f8fbff;
+        --text: #111827;
+        --muted: #64748b;
+        --line: #dbeafe;
+        --brand: #2563eb;
+        --cyan: #0891b2;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          linear-gradient(135deg, rgba(37, 99, 235, .08), transparent 34%),
+          linear-gradient(225deg, rgba(8, 145, 178, .13), transparent 38%),
+          var(--bg);
+        line-height: 1.5;
+        padding: 24px;
+      }
+      main { width: min(100%, 1120px); margin: 0 auto; }
+      nav, .hero, .panel {
+        border: 1px solid rgba(191, 219, 254, .9);
+        background: rgba(255, 255, 255, .92);
+        box-shadow: 0 20px 70px rgba(37, 99, 235, .13);
+        backdrop-filter: blur(18px);
+        border-radius: 16px;
+      }
+      nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding: 12px 14px; }
+      nav a { color: #334155; text-decoration: none; font-size: 14px; }
+      .brand { font-weight: 800; color: #1d4ed8; }
+      .nav-links { display: flex; flex-wrap: wrap; gap: 14px; }
+      .hero, .panel { padding: 24px; margin-bottom: 16px; }
+      .badge { display: inline-flex; margin-bottom: 12px; border: 1px solid #bfdbfe; border-radius: 999px; padding: 5px 10px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; background: #eff6ff; }
+      h1 { margin: 0; font-size: 34px; line-height: 1.12; letter-spacing: 0; }
+      p { margin: 10px 0 0; color: var(--muted); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; }
+      .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto; gap: 12px; align-items: end; }
+      label { display: grid; gap: 6px; font-weight: 650; }
+      label span { font-size: 12px; color: #64748b; font-weight: 650; text-transform: uppercase; letter-spacing: .02em; }
+      input { min-height: 42px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; font: 600 14px system-ui, sans-serif; }
+      .check { min-height: 42px; display: flex; align-items: center; gap: 8px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; background: #f8fafc; color: #334155; }
+      .check input { min-height: auto; }
+      textarea { width: 100%; min-height: 520px; margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; padding: 14px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #0f172a; tab-size: 2; resize: vertical; }
+      textarea:focus, input:focus { outline: 3px solid rgba(37, 99, 235, .16); border-color: var(--brand); }
+      .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+      button, .button { appearance: none; border: 1px solid var(--brand); border-radius: 10px; background: linear-gradient(135deg, var(--brand), var(--cyan)); color: #fff; min-height: 42px; padding: 10px 14px; font: 700 14px system-ui, sans-serif; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+      .secondary { border-color: #cbd5e1; background: #fff; color: #334155; }
+      .status { border-top: 1px solid #e2e8f0; margin-top: 16px; padding-top: 14px; font-size: 14px; color: #64748b; }
+      .error { color: #be123c; }
+      .success { color: #047857; }
+      @media (max-width: 760px) {
+        body { padding: 12px; }
+        .form-grid { grid-template-columns: 1fr; }
+        .hero, .panel { padding: 18px; }
+        h1 { font-size: 28px; }
+        button, .button { width: 100%; }
+        textarea { min-height: 420px; font-size: 12px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <a class="brand" href="/admin/questions">LD-gpt-check Admin</a>
+        <div class="nav-links">
+          <a href="/account">账号</a>
+          <a href="/api/v1/questions" target="_blank" rel="noreferrer">公开题库</a>
+        </div>
+      </nav>
+      <section class="hero">
+        <span class="badge">Admin</span>
+        <h1>题目 JSON 管理</h1>
+        <p>CLI 默认从 <code>/api/v1/questions</code> 拉取启用题库；失败时回退到本地内置糖果原题。</p>
+      </section>
+      <section class="panel" id="app">
+        <p>正在检查登录状态...</p>
+      </section>
+    </main>
+    <script>
+      const app = document.querySelector("#app");
+
+      function escapeHTML(value) {
+        return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+      }
+
+      async function load() {
+        const response = await fetch("/api/v1/admin/questions", { credentials: "same-origin" });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          location.href = payload.login_url || "/auth/linuxdo/start?next=/admin/questions";
+          return;
+        }
+        if (!response.ok) {
+          app.innerHTML = `<p class="error">${escapeHTML(payload.error || "加载失败")}</p>`;
+          return;
+        }
+        render(payload);
+      }
+
+      function render(payload) {
+        const bank = payload.bank;
+        app.innerHTML = `
+          <form id="question-form">
+            <div class="form-grid">
+              <label><span>Slug</span><input name="slug" value="${escapeHTML(bank.slug)}" pattern="[a-zA-Z0-9_.-]{1,64}" required /></label>
+              <label><span>标题</span><input name="title" value="${escapeHTML(bank.title)}" maxlength="128" required /></label>
+              <label class="check"><input type="checkbox" name="is_active" ${bank.is_active ? "checked" : ""} /> 启用此题库</label>
+            </div>
+            <label style="margin-top: 14px"><span>questions_json</span><textarea name="questions_json" spellcheck="false" required>${escapeHTML(bank.questions_json)}</textarea></label>
+            <div class="actions">
+              <button type="submit">保存题库</button>
+              <a class="button secondary" href="/api/v1/questions" target="_blank" rel="noreferrer">查看公开 JSON</a>
+              <a class="button secondary" href="/account">返回账号</a>
+            </div>
+          </form>
+          <p class="status" id="status">当前管理员：${escapeHTML(payload.user.username || payload.user.login || payload.user.id)}。最后更新：${escapeHTML(bank.updated_at || "尚未保存")}</p>
+        `;
+        document.querySelector("#question-form").addEventListener("submit", save);
+      }
+
+      async function save(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const status = document.querySelector("#status");
+        status.className = "status";
+        status.textContent = "正在保存...";
+        const body = {
+          slug: form.slug.value,
+          title: form.title.value,
+          is_active: form.is_active.checked,
+          questions_json: form.questions_json.value,
+        };
+        const response = await fetch("/api/v1/admin/questions", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          status.className = "status error";
+          status.textContent = payload.error || "保存失败";
+          return;
+        }
+        status.className = "status success";
+        status.textContent = `已保存：${payload.slug}，更新时间 ${payload.updated_at}`;
+      }
+
+      load().catch((error) => {
+        app.innerHTML = `<p class="error">${escapeHTML(error.message || "加载失败")}</p>`;
+      });
+    </script>
+  </body>
+</html>

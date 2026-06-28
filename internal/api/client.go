@@ -140,6 +140,7 @@ type UploadPayload struct {
 	AvgReasonTokens       float64                `json:"avg_reason_tokens"`
 	AvgTimeSeconds        float64                `json:"avg_time_seconds"`
 	AvgTPS                float64                `json:"avg_tps"`
+	Anonymous             bool                   `json:"anonymous,omitempty"`
 	StartedAt             string                 `json:"started_at,omitempty"`
 	FinishedAt            string                 `json:"finished_at,omitempty"`
 	DurationSeconds       float64                `json:"duration_seconds,omitempty"`

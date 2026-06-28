@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS benchmark_submissions (
   avg_reason_tokens REAL,
   avg_time_seconds REAL,
   avg_tps REAL,
+  is_anonymous INTEGER NOT NULL DEFAULT 0,
   started_at TEXT,
   finished_at TEXT,
   duration_seconds REAL,
@@ -161,6 +162,21 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   count INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS question_banks (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  schema_version TEXT NOT NULL,
+  questions_json TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  updated_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(created_by) REFERENCES users(id),
+  FOREIGN KEY(updated_by) REFERENCES users(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_benchmark_submissions_user_created ON benchmark_submissions(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_benchmark_question_results_submission ON benchmark_question_results(submission_id);
 CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_submission ON benchmark_attempts(submission_id);
@@ -168,3 +184,4 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_question ON benchmark_attempts
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_web_sessions_hash ON web_sessions(session_hash);
 CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
+CREATE INDEX IF NOT EXISTS idx_question_banks_active ON question_banks(is_active, updated_at);

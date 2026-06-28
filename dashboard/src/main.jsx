@@ -98,6 +98,14 @@ function App() {
             <RobustnessPanel robustness={data.statistics.robustness} />
           </div>
           <QuestionDiagnosticsPanel diagnostics={data.statistics.questionDiagnostics} />
+          <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+            <RiskBudgetPanel budget={data.statistics.riskBudget} />
+            <DriftPanel drift={data.statistics.drift} />
+          </div>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
+            <DistributionPanel shape={data.statistics.distributionShape} />
+            <EfficiencyFrontierPanel frontier={data.statistics.efficiencyFrontier} />
+          </div>
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
             <TrendPanel trend={data.trend} />
             <ModelPanel models={data.modelBreakdown} />
@@ -712,6 +720,164 @@ function QuestionDiagnosticsPanel({ diagnostics }) {
   );
 }
 
+function RiskBudgetPanel({ budget }) {
+  return (
+    <Panel title="质量风险预算" icon={ShieldCheck} action={riskBudgetLabel(budget.verdict)}>
+      <div className="risk-gauge">
+        <span>剩余预算</span>
+        <strong>{signedPercent(budget.budgetRemaining)}</strong>
+        <em>burn {budget.burnRate}x，目标 {percent(budget.targetAccuracy)}</em>
+        <div>
+          <i style={{ width: `${clampPercent(Math.max(0, budget.budgetRemaining))}%` }} />
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2">
+        <div className="budget-row">
+          <span>失败 / 允许</span>
+          <strong>
+            {budget.failures.toLocaleString("zh-CN")} / {budget.allowedFailures.toLocaleString("zh-CN")}
+          </strong>
+        </div>
+        <div className="budget-row">
+          <span>超额失败</span>
+          <strong>{budget.excessFailures.toLocaleString("zh-CN")}</strong>
+        </div>
+        <div className="budget-row">
+          <span>降智尝试占比</span>
+          <strong>{percent(budget.degradedAttemptShare)}</strong>
+        </div>
+        <div className="budget-row">
+          <span>审计题 / 异常负载</span>
+          <strong>
+            {budget.auditQuestions} / {budget.outlierLoad}
+          </strong>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function DriftPanel({ drift }) {
+  const chartData = drift.ewma.series.map((item, index) => ({
+    date: item.date,
+    ewmaPct: Math.round(item.value * 1000) / 10,
+    cusum: drift.cusum.series[index]?.value ?? 0,
+  }));
+
+  return (
+    <Panel title="窗口漂移监控" icon={TrendingUp} action="EWMA / CUSUM">
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="stat-card">
+          <span>准确率漂移</span>
+          <strong>{signedPercent(drift.window.delta)}</strong>
+          <em>p={formatPValue(drift.window.pValue)}，z={drift.window.zScore}</em>
+        </div>
+        <div className="stat-card">
+          <span>提交量漂移</span>
+          <strong>{signedNumber(drift.volume.delta)}</strong>
+          <em>p={formatPValue(drift.volume.pValue)}，t={drift.volume.tScore}</em>
+        </div>
+        <div className="stat-card">
+          <span>EWMA 最新</span>
+          <strong>{percent(drift.ewma.latest)}</strong>
+          <em>{driftLabel(drift.ewma.verdict)}，lambda={drift.ewma.lambda}</em>
+        </div>
+        <div className="stat-card">
+          <span>CUSUM 信号</span>
+          <strong>{drift.cusum.signalScore}</strong>
+          <em>{riskStatusLabel(drift.cusum.verdict)}，latest {drift.cusum.latest}</em>
+        </div>
+      </div>
+      <div className="chart-h-md mt-4">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke="#e7e5e4" />
+            <XAxis dataKey="date" minTickGap={34} tickLine={false} axisLine={false} tick={{ fill: "#78716c", fontSize: 12 }} />
+            <YAxis yAxisId="left" domain={[60, 100]} tickLine={false} axisLine={false} tick={{ fill: "#78716c", fontSize: 12 }} />
+            <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} tick={{ fill: "#78716c", fontSize: 12 }} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend iconType="circle" />
+            <Line yAxisId="left" type="monotone" dataKey="ewmaPct" name="EWMA %" stroke="#0f766e" strokeWidth={2.5} dot={false} />
+            <Line yAxisId="right" type="monotone" dataKey="cusum" name="CUSUM" stroke="#be123c" strokeWidth={2.2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </Panel>
+  );
+}
+
+function DistributionPanel({ shape }) {
+  const rows = [
+    { label: "日准确率", unit: "percent", ...shape.dailyAccuracy },
+    { label: "日提交量", unit: "number", ...shape.dailySubmissions },
+    { label: "近期耗时", unit: "seconds", ...shape.recentLatency },
+    { label: "题目失败率", unit: "percent", ...shape.questionFailure },
+    { label: "小时准确率", unit: "percent", ...shape.hourlyAccuracy },
+  ];
+
+  return (
+    <Panel title="分布形态" icon={BarChart3} action="IQR / moments">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="data-table distribution-table">
+          <thead>
+            <tr>
+              <th>指标</th>
+              <th>中位数</th>
+              <th>IQR</th>
+              <th>CV</th>
+              <th>偏度</th>
+              <th>峰度</th>
+              <th>尾部风险</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((item) => (
+              <tr key={item.label}>
+                <td>
+                  <strong>{item.label}</strong>
+                  <span>
+                    {formatDistributionValue(item.min, item.unit)} - {formatDistributionValue(item.max, item.unit)}
+                  </span>
+                </td>
+                <td>{formatDistributionValue(item.median, item.unit)}</td>
+                <td>{formatDistributionValue(item.iqr, item.unit)}</td>
+                <td>{item.coefficientOfVariation}</td>
+                <td>{item.skewness}</td>
+                <td>{item.excessKurtosis}</td>
+                <td>{percent(item.tailRisk)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+function EfficiencyFrontierPanel({ frontier }) {
+  return (
+    <Panel title="效率前沿" icon={Gauge} action="Pareto frontier">
+      <div className="grid gap-2">
+        {frontier.map((item) => (
+          <div className="frontier-row" key={item.model}>
+            <div>
+              <strong>{item.model}</strong>
+              <span>
+                {percent(item.accuracy)}，{item.avgTps} TPS，{item.avgTimeSeconds}s
+              </span>
+            </div>
+            <b>{item.utilityScore}</b>
+            <StatusBadge status={frontierStatus(item.verdict)} label={frontierLabel(item.verdict)} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3 text-xs leading-5 text-stone-500">
+        前沿模型不存在同时更准、更快、耗时更低的支配者；utility 用准确率、TPS、耗时加权用于排序。
+      </div>
+    </Panel>
+  );
+}
+
 function TrendPanel({ trend }) {
   const chartData = useMemo(
     () =>
@@ -858,7 +1024,9 @@ function RecentPanel({ submissions }) {
             {submissions.map((submission) => (
               <tr key={submission.id}>
                 <td className="font-mono text-xs text-stone-500">{submission.id}</td>
-                <td>{submission.user}</td>
+                <td>
+                  <SubmissionUserCell user={submission.user} />
+                </td>
                 <td>{submission.model}</td>
                 <td>{percent(submission.accuracy)}</td>
                 <td>{submission.questionCount}</td>
@@ -874,6 +1042,55 @@ function RecentPanel({ submissions }) {
       </div>
     </Panel>
   );
+}
+
+function SubmissionUserCell({ user }) {
+  const displayUser = normalizeSubmissionUser(user);
+  const avatar = displayUser.avatarUrl ? (
+    <img src={displayUser.avatarUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
+  ) : (
+    <span aria-hidden="true">{displayUser.anonymous ? "匿名" : displayUser.displayName.slice(0, 1)}</span>
+  );
+  const name = displayUser.linuxdoUrl ? (
+    <a href={displayUser.linuxdoUrl} target="_blank" rel="noreferrer">
+      {displayUser.displayName}
+    </a>
+  ) : (
+    <strong>{displayUser.displayName}</strong>
+  );
+
+  return (
+    <div className={displayUser.anonymous ? "submission-user is-anonymous" : "submission-user"}>
+      <div>{avatar}</div>
+      {name}
+    </div>
+  );
+}
+
+function normalizeSubmissionUser(user) {
+  if (!user || typeof user === "string") {
+    return {
+      anonymous: false,
+      displayName: user || "Linux.do 用户",
+      avatarUrl: "",
+      linuxdoUrl: "",
+    };
+  }
+  if (user.anonymous) {
+    return {
+      anonymous: true,
+      displayName: "匿名",
+      avatarUrl: "",
+      linuxdoUrl: "",
+    };
+  }
+  const username = user.username || "";
+  return {
+    anonymous: false,
+    displayName: user.display_name || username || "Linux.do 用户",
+    avatarUrl: user.avatar_url || "",
+    linuxdoUrl: user.linuxdo_url || (username ? `https://linux.do/u/${encodeURIComponent(username)}/summary` : ""),
+  };
 }
 
 function Panel({ title, icon: Icon, action, children }) {
@@ -1064,6 +1281,55 @@ function questionDiagnosticStatus(value) {
   if (value === "audit") return "regression";
   if (value === "watch") return "watch";
   return "healthy";
+}
+
+function riskBudgetLabel(value) {
+  if (value === "over_budget") return "超预算";
+  if (value === "watch") return "观察";
+  return "健康";
+}
+
+function riskStatusLabel(value) {
+  if (value === "alert") return "告警";
+  if (value === "watch") return "观察";
+  return "稳定";
+}
+
+function driftLabel(value) {
+  if (value === "cooling") return "走低";
+  if (value === "heating") return "走高";
+  return "平稳";
+}
+
+function frontierLabel(value) {
+  if (value === "frontier") return "前沿";
+  if (value === "shadowed") return "被压制";
+  return "被支配";
+}
+
+function frontierStatus(value) {
+  if (value === "frontier") return "healthy";
+  if (value === "shadowed") return "watch";
+  return "regression";
+}
+
+function formatDistributionValue(value, unit) {
+  if (unit === "percent") return percent(value);
+  if (unit === "seconds") return `${value}s`;
+  return value.toLocaleString("zh-CN");
+}
+
+function signedNumber(value) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value}`;
+}
+
+function clampPercent(value) {
+  return Math.round(clamp(value, 0, 1) * 100);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function compact(value) {
