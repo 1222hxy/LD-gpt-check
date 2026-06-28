@@ -149,12 +149,80 @@ async function devicePoll(request: Request, env: Env): Promise<Response> {
 
 async function devicePage(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const code = url.searchParams.get("code") ?? "";
+  const hasCode = !!url.searchParams.get("code");
   const user = await getWebUser(request, env);
-  const loginURL = `/auth/linuxdo/start?next=${encodeURIComponent(`/device${code ? `?code=${code}` : ""}`)}`;
-  const turnstile = env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
-    ? `<div class="turnstile"><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><div class="cf-turnstile" data-sitekey="${escapeHTML(env.TURNSTILE_SITE_KEY)}"></div></div>`
+  const loginURL = `/auth/linuxdo/start?next=${encodeURIComponent("/device")}`;
+  const turnstileEnabled = !!(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY);
+  const scriptNonce = cspNonce();
+  const turnstile = turnstileEnabled
+    ? `<div class="turnstile"><div class="cf-turnstile" data-sitekey="${escapeHTML(env.TURNSTILE_SITE_KEY || "")}" data-callback="ldgcTurnstileOK" data-expired-callback="ldgcTurnstileReset" data-error-callback="ldgcTurnstileReset"></div><p id="turnstile-status" class="status">完成人机验证后可授权。</p></div>`
     : "";
+  const pageScript = `<script nonce="${scriptNonce}">
+document.addEventListener("DOMContentLoaded", function () {
+  var inputs = Array.prototype.slice.call(document.querySelectorAll("input[name='code_digit']"));
+  var autofill = document.getElementById("otp-autofill");
+  function clean(value) {
+    return String(value || "").replace(/\\D/g, "").slice(0, 9);
+  }
+  function fillOTP(value) {
+    var text = clean(value);
+    if (!text) return;
+    inputs.forEach(function (box, i) { box.value = text.slice(i * 3, i * 3 + 3); });
+    var next = inputs.find(function (box) { return box.value.length < 3; });
+    (next || inputs[inputs.length - 1]).focus();
+  }
+  inputs.forEach(function (input, index) {
+    input.addEventListener("input", function () {
+      var text = clean(input.value);
+      if (text.length > 3) {
+        fillOTP(text);
+        return;
+      }
+      input.value = text;
+      if (input.value.length === 3 && inputs[index + 1]) inputs[index + 1].focus();
+    });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Backspace" && input.value === "" && inputs[index - 1]) inputs[index - 1].focus();
+    });
+    input.addEventListener("paste", function (event) {
+      var clipboard = event.clipboardData || window.clipboardData;
+      if (!clipboard) return;
+      var text = clean(clipboard.getData("text"));
+      if (text.length < 4) return;
+      event.preventDefault();
+      fillOTP(text);
+    });
+  });
+  if (autofill) {
+    autofill.addEventListener("input", function () { fillOTP(autofill.value); });
+    autofill.addEventListener("change", function () { fillOTP(autofill.value); });
+  }
+  var form = document.getElementById("approve-form");
+  if (form) {
+    form.addEventListener("submit", function () {
+      var joined = inputs.map(function (box) { return box.value; }).join("");
+      if (clean(joined).length === 9) fillOTP(joined);
+    });
+  }
+});
+${turnstileEnabled ? `
+window.ldgcTurnstileOK = function () {
+  var button = document.getElementById("approve-submit");
+  var status = document.getElementById("turnstile-status");
+  if (button) button.disabled = false;
+  if (status) status.textContent = "验证完成，可以授权。";
+};
+window.ldgcTurnstileReset = function () {
+  var button = document.getElementById("approve-submit");
+  var status = document.getElementById("turnstile-status");
+  if (button) button.disabled = true;
+  if (status) status.textContent = "请先完成人机验证。";
+};
+` : ""}
+</script>${turnstileEnabled ? `<script nonce="${scriptNonce}" src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>` : ""}`;
+  const otpInputs = Array.from({ length: 3 }, (_, i) =>
+    `<input class="otp-box" name="code_digit" aria-label="验证码第 ${i + 1} 组" inputmode="numeric" autocomplete="${i === 0 ? "one-time-code" : "off"}" maxlength="${i === 0 ? "11" : "3"}" pattern="${i === 0 ? "[0-9 -]{3,11}" : "[0-9]{3}"}" placeholder="000" required>`
+  ).join("");
   const body = `<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -165,10 +233,10 @@ async function devicePage(request: Request, env: Env): Promise<Response> {
 .shell{width:min(100%,560px);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 24px 80px rgba(37,99,235,.16);backdrop-filter:blur(18px);border-radius:16px;overflow:hidden}
 .top{padding:22px 24px;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.72)}.brand{font-weight:750;letter-spacing:0}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}
 .content{padding:24px}h1{margin:0;font-size:28px;line-height:1.15;letter-spacing:0}p{margin:12px 0 0;color:var(--muted)}.user{margin-top:18px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#334155}
-label{display:block;margin-top:20px;font-weight:650}input{margin-top:8px;width:100%;min-height:48px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;font:18px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;color:var(--text);background:#fff}input:focus{outline:3px solid rgba(37,99,235,.18);border-color:var(--brand)}
-.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:44px;padding:10px 14px;font:700 15px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}a.secondary{border-color:#cbd5e1;background:#fff;color:#334155}
-.turnstile{margin-top:18px}.hint{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:16px;font-size:14px}.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8}
-@media(max-width:520px){body{padding:12px}.content,.top{padding:18px}h1{font-size:24px}button,a.button{width:100%}}
+label{display:block;margin-top:20px;font-weight:650}.otp{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.otp-box{width:100%;min-height:58px;border:1px solid #cbd5e1;border-radius:10px;text-align:center;font:700 24px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;color:var(--text);background:#fff}.otp-box::placeholder{color:#cbd5e1}.otp-box:focus{outline:3px solid rgba(37,99,235,.18);border-color:var(--brand)}.otp-autofill{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:44px;padding:10px 14px;font:700 15px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed;filter:grayscale(.35)}button.secondary,a.secondary{border-color:#cbd5e1;background:#fff;color:#334155}
+.turnstile{margin-top:18px}.status{font-size:13px}.hint{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:16px;font-size:14px}.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8}
+@media(max-width:520px){body{padding:12px}.content,.top{padding:18px}h1{font-size:24px}.otp{gap:8px}.otp-box{font-size:20px}button,a.button{width:100%}}
 </style></head>
 <body>
 <main class="shell">
@@ -176,16 +244,20 @@ label{display:block;margin-top:20px;font-weight:650}input{margin-top:8px;width:1
 <section class="content">
 <h1>授权命令行设备</h1>
 ${user ? `<p class="user">当前登录用户：<strong>${escapeHTML(user.username || user.id)}</strong></p>
-<form method="post" action="/api/device/approve">
-  <label>终端显示的验证码<input name="user_code" value="${escapeHTML(code)}" placeholder="483-921-775" inputmode="numeric" autocomplete="one-time-code" maxlength="11" pattern="[0-9 -]{9,11}" required></label>
+<form id="approve-form" method="post" action="/api/device/approve">
+  <label>输入终端显示的 9 位验证码</label>
+  <input id="otp-autofill" class="otp-autofill" type="text" inputmode="numeric" autocomplete="one-time-code" tabindex="-1" aria-hidden="true">
+  <div class="otp">${otpInputs}</div>
   ${turnstile}
-  <div class="actions"><button type="submit">授权 CLI</button></div>
+  <div class="actions"><button id="approve-submit" type="submit"${turnstileEnabled ? " disabled" : ""}>授权 CLI</button><button class="secondary" type="submit" form="logout-form">退出登录</button></div>
 </form>
-<p class="hint">确认验证码和终端中的 <span class="code">user_code</span> 一致后再授权。</p>` : `<p>请先使用 Linux.do 登录，然后回到这里授权命令行工具。登录完成后，页面会保留终端带来的验证码。</p><div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div><p class="hint">如果你在 SSH、WSL 或远程服务器上运行 CLI，可以复制终端打印的链接到浏览器打开。</p>`}
+<form id="logout-form" method="post" action="/logout"></form>
+<p class="hint">确认验证码和终端中的 <span class="code">user_code</span> 一致后再授权。</p>` : `<p>请先使用 Linux.do 登录，然后回到这里输入终端显示的 9 位验证码。</p><div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div><p class="hint">${hasCode ? "为避免误授权，页面不会自动填入验证码；请从终端复制后手动输入。" : "如果你在 SSH、WSL 或远程服务器上运行 CLI，可以复制终端打印的链接到浏览器打开。"}</p>`}
 </section>
 </main>
+${pageScript}
 </body></html>`;
-  return html(body);
+  return html(body, 200, scriptNonce);
 }
 
 async function accountPage(request: Request, env: Env): Promise<Response> {
@@ -270,7 +342,15 @@ async function deviceApprove(request: Request, env: Env): Promise<Response> {
   const user = await getWebUser(request, env);
   if (!user) return wantsHTML ? html(resultPage("需要登录", "请先使用 Linux.do 登录后再授权 CLI。"), 401) : jsonError("login required", 401, "unauthorized");
 
-  const input = wantsHTML ? Object.fromEntries(await request.formData()) : await readJson<any>(request);
+  let input: Record<string, any>;
+  if (wantsHTML) {
+    const form = await request.formData();
+    input = Object.fromEntries(form);
+    const digits = form.getAll("code_digit").map((v) => String(v)).join("");
+    if (digits) input.user_code = digits;
+  } else {
+    input = await readJson<any>(request);
+  }
   try {
     await verifyTurnstileIfConfigured(request, env, input);
   } catch (err) {
@@ -622,8 +702,10 @@ function jsonError(message: string, status: number, code = "bad_request", reques
   return json({ error: message, code, request_id: requestID }, status);
 }
 
-function html(body: string, status = 200): Response {
-  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+function html(body: string, status = 200, scriptNonce = ""): Response {
+  const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
+  if (scriptNonce) headers.set("x-ldgc-script-nonce", scriptNonce);
+  return new Response(body, { status, headers });
 }
 
 function redirect(location: string, setCookie?: string | string[]): Response {
@@ -653,9 +735,14 @@ function withCommonHeaders(response: Response, request: Request, env: Env, reque
   }
 
   if ((headers.get("content-type") || "").includes("text/html")) {
+    const scriptNonce = headers.get("x-ldgc-script-nonce") || "";
+    headers.delete("x-ldgc-script-nonce");
+    const scriptSrc = scriptNonce
+      ? `script-src 'nonce-${scriptNonce}' https://challenges.cloudflare.com`
+      : "script-src https://challenges.cloudflare.com";
     headers.set(
       "content-security-policy",
-      "default-src 'none'; script-src https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+      `default-src 'none'; ${scriptSrc}; style-src 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
     );
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
@@ -760,6 +847,12 @@ async function randomToken(prefix: string): Promise<string> {
   return `${prefix}_${raw}`;
 }
 
+function cspNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 function numericCode(): string {
   const n = crypto.getRandomValues(new Uint32Array(3));
   const parts = [...n].map((x) => String(x % 1000).padStart(3, "0"));
@@ -809,7 +902,7 @@ function safeOrigin(value: string): string {
 }
 
 async function verifyTurnstileIfConfigured(request: Request, env: Env, input: Record<string, any>): Promise<void> {
-  if (!env.TURNSTILE_SECRET_KEY) return;
+  if (!env.TURNSTILE_SECRET_KEY || !env.TURNSTILE_SITE_KEY) return;
   const token = String(input["cf-turnstile-response"] || input.turnstile_token || "");
   if (!token) throw new APIError(400, "turnstile_required", "human verification is required");
 

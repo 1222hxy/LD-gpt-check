@@ -50,6 +50,12 @@ bin/ld-gpt-check setup --lang en
 Run the benchmark:
 
 ```bash
+bin/ld-gpt-check run -r xhigh -n 5
+```
+
+Pass `-m` only when you want to override the model from your local Codex config:
+
+```bash
 bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5
 ```
 
@@ -80,7 +86,7 @@ Print machine-readable output:
 bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --json
 ```
 
-Reasoning effort supports `low`, `medium`, `high`, and `xhigh`. The default effort is `medium`; the default test count is `1`. Each Codex run has a default timeout of `30m`; override it with `--timeout 10m` or `--timeout 90s`.
+Reasoning effort supports `low`, `medium`, `high`, and `xhigh`. The default effort is `medium`; the default test count is `1`. If `-m` is omitted, Codex uses its local default model from your existing Codex configuration. Each Codex run has a default timeout of `30m`; override it with `--timeout 10m` or `--timeout 90s`.
 
 ## Login and Upload
 

@@ -104,7 +104,7 @@ func Run(ctx context.Context, opts Options) error {
 		return nil
 	}
 
-	model, err := promptString(reader, out, l, l.S("wizard_model"), "gpt-5.5")
+	model, err := promptOptionalString(reader, out, l.S("wizard_model"), l.S("wizard_model_default"))
 	if err != nil {
 		return err
 	}
@@ -136,11 +136,12 @@ func Run(ctx context.Context, opts Options) error {
 		Tests:           tests,
 		Timeout:         timeout,
 		Lang:            lang,
+		Progress:        report.PrintProgress(out, lang, model, effort, report.ColorEnabled(out)),
 	})
 	if err != nil {
 		return err
 	}
-	report.PrintTableWithLang(summary, lang)
+	report.PrintTableWithWriter(out, summary, lang, report.ColorEnabled(out))
 
 	if upload {
 		payload := api.PayloadFromSummary(opts.Version, summary, runtime.GOOS, runtime.GOARCH, system.CodexVersion())
@@ -175,6 +176,15 @@ func promptString(r *bufio.Reader, out io.Writer, l i18n.Localizer, label, def s
 		}
 		fmt.Fprintln(out, l.S("prompt_non_empty"))
 	}
+}
+
+func promptOptionalString(r *bufio.Reader, out io.Writer, label, placeholder string) (string, error) {
+	fmt.Fprintf(out, "%s [%s]: ", label, placeholder)
+	s, err := readLine(r)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(s), nil
 }
 
 func promptBool(r *bufio.Reader, out io.Writer, l i18n.Localizer, label string, def bool) (bool, error) {

@@ -140,7 +140,20 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		return err
 	}
 
-	summary, err := runner.Run(ctx, runner.Options{Model: *model, ReasoningEffort: *effort, Tests: *tests, Timeout: *timeout, Lang: lang, Questions: selected})
+	progressOut := os.Stdout
+	if *jsonOut {
+		progressOut = os.Stderr
+	}
+	progress := report.PrintProgress(progressOut, lang, *model, *effort, report.ColorEnabled(progressOut))
+	summary, err := runner.Run(ctx, runner.Options{
+		Model:           *model,
+		ReasoningEffort: *effort,
+		Tests:           *tests,
+		Timeout:         *timeout,
+		Lang:            lang,
+		Questions:       selected,
+		Progress:        progress,
+	})
 	if err != nil {
 		return err
 	}
@@ -151,7 +164,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 			return err
 		}
 	} else {
-		report.PrintTableWithLang(summary, lang)
+		report.PrintTableWithLangColor(summary, lang, report.ColorEnabled(os.Stdout))
 	}
 	if *upload {
 		cfg, err := config.Load()

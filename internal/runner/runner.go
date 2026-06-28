@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -31,7 +30,27 @@ type Options struct {
 	Timeout         time.Duration
 	Lang            i18n.Lang
 	Questions       []questions.Question
+	Progress        func(ProgressEvent)
 }
+
+type ProgressEvent struct {
+	Type       ProgressEventType
+	Current    int
+	Total      int
+	Question   questions.Question
+	TestIndex  int
+	CaseResult CaseResult
+	Error      error
+}
+
+type ProgressEventType string
+
+const (
+	ProgressStarted   ProgressEventType = "started"
+	ProgressCaseStart ProgressEventType = "case_start"
+	ProgressCaseDone  ProgressEventType = "case_done"
+	ProgressCaseError ProgressEventType = "case_error"
+)
 
 type CaseResult struct {
 	Index           int     `json:"index"`
@@ -96,9 +115,6 @@ func ValidReasoningEffort(v string) bool {
 
 func Run(ctx context.Context, opts Options) (Summary, error) {
 	l := i18n.New(opts.Lang)
-	if opts.Model == "" {
-		return Summary{}, errors.New(l.S("runner_model_required"))
-	}
 	if opts.ReasoningEffort == "" {
 		opts.ReasoningEffort = "medium"
 	}
@@ -125,17 +141,30 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		return Summary{}, errors.New(l.S("runner_codex_missing"))
 	}
 
+	total := opts.Tests * len(opts.Questions)
+	emitProgress(opts.Progress, ProgressEvent{Type: ProgressStarted, Total: total})
 	results := make([]CaseResult, 0, opts.Tests*len(opts.Questions))
+	current := 0
 	for _, q := range opts.Questions {
 		for i := 1; i <= opts.Tests; i++ {
+			current++
+			emitProgress(opts.Progress, ProgressEvent{Type: ProgressCaseStart, Current: current, Total: total, Question: q, TestIndex: i})
 			res, err := runOne(ctx, codex, opts, q, i)
 			if err != nil {
+				emitProgress(opts.Progress, ProgressEvent{Type: ProgressCaseError, Current: current, Total: total, Question: q, TestIndex: i, Error: err})
 				return Summary{}, err
 			}
+			emitProgress(opts.Progress, ProgressEvent{Type: ProgressCaseDone, Current: current, Total: total, Question: q, TestIndex: i, CaseResult: res})
 			results = append(results, res)
 		}
 	}
 	return summarize(opts, results), nil
+}
+
+func emitProgress(fn func(ProgressEvent), ev ProgressEvent) {
+	if fn != nil {
+		fn(ev)
+	}
 }
 
 func runOne(ctx context.Context, codex string, opts Options, q questions.Question, index int) (CaseResult, error) {
@@ -145,25 +174,7 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		runCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
 	}
 	defer cancel()
-	workDir, err := os.MkdirTemp("", "ld-gpt-check-codex-*")
-	if err != nil {
-		return CaseResult{}, err
-	}
-	defer os.RemoveAll(workDir)
-
-	args := []string{
-		"exec",
-		"--json",
-		"--skip-git-repo-check",
-		"--ephemeral",
-		"--ignore-user-config",
-		"--ignore-rules",
-		"-C", workDir,
-		"-s", "read-only",
-		"--disable", "memories",
-		"-c", "model_reasoning_effort=" + opts.ReasoningEffort,
-		"-m", opts.Model,
-	}
+	args := codexArgs(opts.Model, opts.ReasoningEffort)
 	cmd := exec.CommandContext(runCtx, codex, args...)
 	cmd.Stdin = strings.NewReader(q.Prompt)
 
@@ -230,6 +241,22 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		TimeSeconds:     elapsed,
 		TPS:             tps,
 	}, nil
+}
+
+func codexArgs(model, effort string) []string {
+	args := []string{
+		"exec",
+		"--json",
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"-s", "read-only",
+		"--disable", "memories",
+		"-c", "model_reasoning_effort=" + effort,
+	}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "-m", strings.TrimSpace(model))
+	}
+	return args
 }
 
 func parseEvents(r io.Reader, lang i18n.Lang) (finalAnswer string, inputTokens, outputTokens, reasoningTokens int, toolUsed bool, err error) {

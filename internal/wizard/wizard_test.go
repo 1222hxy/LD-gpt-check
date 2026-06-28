@@ -75,6 +75,17 @@ func TestPromptEffortRetriesInvalidValue(t *testing.T) {
 	}
 }
 
+func TestPromptOptionalStringAllowsDefaultCodexConfig(t *testing.T) {
+	var out bytes.Buffer
+	got, err := promptOptionalString(bufio.NewReader(strings.NewReader("\n")), &out, "模型", "Codex 本地默认")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("optional model = %q", got)
+	}
+}
+
 func TestPromptDuration(t *testing.T) {
 	var out bytes.Buffer
 	got, err := promptDuration(bufio.NewReader(strings.NewReader("90s\n")), &out, i18n.New(i18n.ZH), "超时", 30*time.Minute)

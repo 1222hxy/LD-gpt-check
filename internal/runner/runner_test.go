@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -66,6 +67,32 @@ func TestParseEventsDetectsToolUse(t *testing.T) {
 	}
 }
 
+func TestCodexArgsMatchUpstreamInvocation(t *testing.T) {
+	want := []string{
+		"exec",
+		"--json",
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"-s", "read-only",
+		"--disable", "memories",
+		"-c", "model_reasoning_effort=xhigh",
+		"-m", "gpt-5.5",
+	}
+	if got := codexArgs(" gpt-5.5 ", "xhigh"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("codexArgs with model = %#v", got)
+	}
+
+	withoutModel := codexArgs("", "medium")
+	for i, arg := range withoutModel {
+		if arg == "-m" {
+			t.Fatalf("unexpected -m at index %d in %#v", i, withoutModel)
+		}
+		if strings.Contains(arg, "ignore-user-config") || strings.Contains(arg, "ignore-rules") {
+			t.Fatalf("unexpected config-disabling arg %q in %#v", arg, withoutModel)
+		}
+	}
+}
+
 func TestPreview(t *testing.T) {
 	got := Preview("  hello\n\n世界  again  ", 8)
 	if got != "hello 世界..." {
@@ -77,7 +104,7 @@ func TestPreview(t *testing.T) {
 }
 
 func TestRunOptionValidation(t *testing.T) {
-	if _, err := Run(context.Background(), Options{Model: "x", ReasoningEffort: "bad"}); err == nil {
+	if _, err := Run(context.Background(), Options{ReasoningEffort: "bad"}); err == nil {
 		t.Fatal("expected invalid effort error")
 	}
 	if _, err := Run(context.Background(), Options{Model: "x", ReasoningEffort: "medium", Tests: MaxTests + 1}); err == nil {

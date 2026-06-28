@@ -17,3 +17,16 @@ func TestDisplayWidthAndTruncate(t *testing.T) {
 		t.Fatalf("Truncate zero width = %q", got)
 	}
 }
+
+func TestDisplayWidthIgnoresANSIColor(t *testing.T) {
+	colored := Colorize("PASS", colorGreen, true)
+	if got := StripANSI(colored); got != "PASS" {
+		t.Fatalf("StripANSI = %q", got)
+	}
+	if got := DisplayWidth(colored); got != 4 {
+		t.Fatalf("DisplayWidth colored = %d", got)
+	}
+	if got := DisplayWidth(PadRight(colored, 6)); got != 6 {
+		t.Fatalf("PadRight colored width = %d", got)
+	}
+}
