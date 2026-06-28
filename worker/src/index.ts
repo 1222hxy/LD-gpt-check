@@ -1672,12 +1672,11 @@ function resultPage(title: string, message: string): string {
   return layoutPage(`${title} - LD-gpt-check`, `<section class="hero"><h1>${escapeHTML(title)}</h1><p>${escapeHTML(message)}</p><div class="actions"><a class="button" href="/account">返回账号页</a></div></section>`);
 }
 
+const LINUXDO_ICON_DATA_URI =
+  "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEuMiIgYmFzZVByb2ZpbGU9InRpbnktcHMiIHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4IiB2aWV3Qm94PSIwIDAgMTIwIDEyMCI+CiAgPGNsaXBQYXRoIGlkPSJhIj4KICAgIDxjaXJjbGUgY3g9IjYwIiBjeT0iNjAiIHI9IjQ3Ii8+CiAgPC9jbGlwUGF0aD4KICA8Y2lyY2xlIGZpbGw9IiNmMGYwZjAiIGN4PSI2MCIgY3k9IjYwIiByPSI1MCIvPgogIDxyZWN0IGZpbGw9IiMxYzFjMWUiIGNsaXAtcGF0aD0idXJsKCNhKSIgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAwIiBoZWlnaHQ9IjMwIi8+CiAgPHJlY3QgZmlsbD0iI2YwZjBmMCIgY2xpcC1wYXRoPSJ1cmwoI2EpIiB4PSIxMCIgeT0iNDAiIHdpZHRoPSIxMDAiIGhlaWdodD0iNDAiLz4KICA8cmVjdCBmaWxsPSIjZmZiMDAzIiBjbGlwLXBhdGg9InVybCgjYSkiIHg9IjEwIiB5PSI4MCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIzMCIvPgo8L3N2Zz4K";
+
 function linuxdoIcon(): string {
-  return `<svg class="linuxdo-icon" viewBox="0 0 40 40" role="img" aria-label="Linux.do" focusable="false">
-    <rect width="40" height="40" rx="10" fill="#1d4ed8"></rect>
-    <path d="M10 12.5h20v5.5H18.1v3.3h9.9v5.1h-9.9V32H10V12.5Z" fill="#fff"></path>
-    <circle cx="30" cy="30" r="3" fill="#67e8f9"></circle>
-  </svg>`;
+  return `<img class="linuxdo-icon" src="${LINUXDO_ICON_DATA_URI}" alt="" aria-hidden="true">`;
 }
 
 function userIdentityBlock(user: any): string {
