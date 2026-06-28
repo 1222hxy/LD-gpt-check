@@ -41,29 +41,29 @@ function renderHeroTerminal() {
       cursorStyle: "bar",
       disableStdin: true,
       fontFamily:
-        '"Cascadia Code", "SFMono-Regular", "Noto Sans SC", Consolas, "Liberation Mono", monospace',
-      fontSize: window.matchMedia("(max-width: 640px)").matches ? 11 : 12,
-      lineHeight: 1.35,
+        '"SFMono-Regular", "Cascadia Code", Consolas, "Liberation Mono", Menlo, Monaco, monospace',
+      fontSize: window.matchMedia("(max-width: 640px)").matches ? 11.5 : 13,
+      lineHeight: 1.42,
       rows: 15,
       scrollback: 0,
       theme: {
-        background: "#08111f",
-        foreground: "#d7e3ff",
-        cursor: "#68f0a5",
-        black: "#101827",
-        blue: "#79d7ff",
-        brightBlue: "#9de8ff",
-        brightCyan: "#7df9ff",
-        brightGreen: "#8ff7b3",
-        brightMagenta: "#c8b6ff",
-        brightRed: "#ff8ca0",
-        brightYellow: "#ffe08a",
-        cyan: "#5eead4",
-        green: "#68f0a5",
-        magenta: "#a997ff",
-        red: "#ff6b7a",
-        white: "#f8fbff",
-        yellow: "#f0c46c",
+        background: "#ffffff",
+        foreground: "#162033",
+        cursor: "#2563eb",
+        black: "#162033",
+        blue: "#2563eb",
+        brightBlue: "#0284c7",
+        brightCyan: "#0891b2",
+        brightGreen: "#047857",
+        brightMagenta: "#7c3aed",
+        brightRed: "#e11d48",
+        brightYellow: "#b45309",
+        cyan: "#0891b2",
+        green: "#047857",
+        magenta: "#7c3aed",
+        red: "#e11d48",
+        white: "#ffffff",
+        yellow: "#b45309",
       },
     });
     const fitAddon = new FitAddon();
@@ -85,32 +85,71 @@ function renderHeroTerminal() {
       reset: "\x1b[0m",
       bold: "\x1b[1m",
       dim: "\x1b[2m",
-      blue: "\x1b[38;2;121;215;255m",
-      cyan: "\x1b[38;2;94;234;212m",
-      green: "\x1b[38;2;104;240;165m",
-      red: "\x1b[38;2;255;107;122m",
-      yellow: "\x1b[38;2;240;196;108m",
-      violet: "\x1b[38;2;169;151;255m",
-      gray: "\x1b[38;2;116;133;166m",
+      blue: "\x1b[38;2;37;99;235m",
+      cyan: "\x1b[38;2;8;145;178m",
+      green: "\x1b[38;2;4;120;87m",
+      red: "\x1b[38;2;225;29;72m",
+      yellow: "\x1b[38;2;180;83;9m",
+      violet: "\x1b[38;2;124;58;237m",
+      gray: "\x1b[38;2;100;116;139m",
     };
 
-    [
-      `${c.blue}~/bench${c.reset} ${c.gray}$${c.reset} ${c.bold}ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload${c.reset}`,
+    const command = `${c.blue}~/bench${c.reset} ${c.gray}$${c.reset} ${c.bold}ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload${c.reset}`;
+    const outputLines = [
       "",
       `${c.cyan}start${c.reset} model=${c.bold}gpt-5.5${c.reset} reasoning=${c.violet}xhigh${c.reset} tests=${c.yellow}5${c.reset}`,
-      `${c.gray}case 1/5${c.reset} candy_21  ${c.green}PASS${c.reset}  answer=21  time=18.7s  tps=39.4`,
-      `${c.gray}case 2/5${c.reset} candy_21  ${c.red}FAIL${c.reset}  answer=27  time=21.3s  tps=38.1`,
-      `${c.gray}case 5/5${c.reset} candy_21  ${c.green}PASS${c.reset}  answer=21  time=17.9s  tps=38.5`,
+      `${c.gray}[00:00]${c.reset} case 1/5 candy_21  running codex exec --json`,
+      `${c.gray}[01:31]${c.reset} case 1/5  ${c.green}PASS${c.reset}  answer=21  time=91.5s  tps=53.3`,
+      `${c.gray}[03:15]${c.reset} case 2/5  ${c.red}FAIL${c.reset}  answer=27  time=104.2s tps=50.0`,
+      `${c.gray}[08:04]${c.reset} case 5/5  ${c.green}PASS${c.reset}  answer=21  time=88.7s  tps=51.0`,
       "",
       `${c.yellow}Run${c.reset}  ${c.yellow}In Tok${c.reset}  ${c.yellow}Out Tok${c.reset}  ${c.yellow}Reason Tok${c.reset}  ${c.yellow}Time(s)${c.reset}   ${c.yellow}TPS${c.reset}  ${c.yellow}OK${c.reset}`,
-      `${c.dim}---  ------  -------  ----------  -------  ----  --${c.reset}`,
-      `1       412      736        2100     18.7  39.4  ${c.green}✓${c.reset}`,
-      `2       412      812        2800     21.3  38.1  ${c.red}×${c.reset}`,
-      `5       412      690        1900     17.9  38.5  ${c.green}✓${c.reset}`,
-      "",
-      `${c.green}summary${c.reset} correct=4/5 accuracy=${c.bold}80.0%${c.reset} avg_time=19.4s avg_tps=38.9`,
+      `1     10163     4873        4660     91.5  53.3  ${c.green}✓${c.reset}`,
+      `2     10163     5210        4901    104.2  50.0  ${c.red}×${c.reset}`,
+      `5     10163     4522        4310     88.7  51.0  ${c.green}✓${c.reset}`,
+      `${c.green}summary${c.reset} correct=4/5 accuracy=${c.bold}80.0%${c.reset} avg_time=96.8s avg_tps=51.4`,
       `${c.cyan}upload${c.reset} saved summary, token metrics and case previews only`,
-    ].forEach((line) => terminal.writeln(line));
+    ];
+
+    const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    async function writeAnimated() {
+      if (reducedMotion) {
+        terminal.writeln(command);
+        outputLines.forEach((line) => terminal.writeln(line));
+        return;
+      }
+
+      for (const chunk of command.match(/(\x1b\[[0-9;]*m|.)/g) || []) {
+        terminal.write(chunk);
+        if (!chunk.startsWith("\x1b")) {
+          await sleep(chunk === " " ? 10 : 18);
+        }
+      }
+      terminal.writeln("");
+
+      for (const line of outputLines) {
+        const delay = line.includes("running")
+          ? 760
+          : line.includes("case")
+            ? 520
+            : line.includes("summary")
+              ? 640
+              : line === ""
+                ? 180
+                : 260;
+        await sleep(delay);
+        terminal.writeln(line);
+      }
+    }
+
+    writeAnimated().catch((error) => {
+      console.error("failed to animate hero terminal", error);
+      terminal.clear();
+      terminal.writeln(command);
+      outputLines.forEach((line) => terminal.writeln(line));
+    });
 
     const resizeObserver = new ResizeObserver(fit);
     resizeObserver.observe(mount);
