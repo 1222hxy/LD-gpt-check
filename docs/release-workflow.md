@@ -19,32 +19,30 @@ git push origin v0.2.0
 
 1. 运行 `go test ./...`。
 2. 用 tag 注入 CLI 版本号，例如 `v0.2.0` 会构建出 `ld-gpt-check version` 返回 `0.2.0`。
-3. 构建以下平台的二进制包：
+3. 构建以下平台的裸二进制文件：
 
 ```text
-ld-gpt-check_windows_amd64.zip
-ld-gpt-check_windows_arm64.zip
-ld-gpt-check_darwin_amd64.tar.gz
-ld-gpt-check_darwin_arm64.tar.gz
-ld-gpt-check_linux_amd64.tar.gz
-ld-gpt-check_linux_arm64.tar.gz
-ld-gpt-check_linux_armv7.tar.gz
-ld-gpt-check_linux_armv6.tar.gz
+ld-gpt-check_windows_amd64.exe
+ld-gpt-check_windows_arm64.exe
+ld-gpt-check_darwin_amd64
+ld-gpt-check_darwin_arm64
+ld-gpt-check_linux_amd64
+ld-gpt-check_linux_arm64
+ld-gpt-check_linux_armv7
+ld-gpt-check_linux_armv6
 ```
 
 4. 生成 `SHA256SUMS.txt`。
-5. 创建或更新对应的 GitHub Release，并上传所有压缩包和校验和文件。
+5. 创建或更新对应的 GitHub Release，并上传所有二进制文件和校验和文件。
 6. 如果配置了 Cloudflare R2 secrets，则把同一批文件镜像到 R2。
 
-## Release 包内容
+## Release 文件
 
-每个压缩包包含：
+Release 不再上传 zip 或 tar.gz，用户直接下载对应系统的二进制文件：
 
-- `ld-gpt-check` 或 `ld-gpt-check.exe`
-- `README.md`
-- `README.en.md`
-- `docs/commands.md`
-- `ld-gpt-check.example.toml`
+- Windows 下载 `.exe` 后直接运行。
+- Linux/macOS 下载后先执行 `chmod +x ld-gpt-check_*`，再运行对应文件。
+- `SHA256SUMS.txt` 用于校验下载文件。
 
 ## 可选：同步到 Cloudflare R2
 
@@ -72,11 +70,19 @@ ld-gpt-check/latest/
 CLOUDFLARE_R2_PUBLIC_BASE_URL
 ```
 
-当前生产下载域配置为：
+当前 R2 下载域配置为：
 
 ```text
 https://download.yhklab.com
 ```
+
+把 R2 域名放到 README 或首页作为主下载源前，先确认二进制文件不会触发 Cloudflare challenge：
+
+```bash
+curl -I https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_linux_amd64
+```
+
+如果响应里有 `cf-mitigated: challenge` 或状态码是 `403`，需要在 Cloudflare 给 `download.yhklab.com/ld-gpt-check/*` 跳过 challenge/安全规则；否则普通下载工具会拿到 challenge HTML，而不是二进制文件。
 
 ## 本地发布前检查
 

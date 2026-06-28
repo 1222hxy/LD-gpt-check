@@ -32,7 +32,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
-          cache: true
+          cache: false
 
       - name: Run tests
         run: go test ./...
@@ -47,32 +47,24 @@ jobs:
         include:
           - goos: windows
             goarch: amd64
-            archive: zip
           - goos: windows
             goarch: arm64
-            archive: zip
           - goos: darwin
             goarch: amd64
-            archive: tar.gz
           - goos: darwin
             goarch: arm64
-            archive: tar.gz
           - goos: linux
             goarch: amd64
-            archive: tar.gz
           - goos: linux
             goarch: arm64
-            archive: tar.gz
           - goos: linux
             goarch: arm
             goarm: "7"
             suffix: armv7
-            archive: tar.gz
           - goos: linux
             goarch: arm
             goarm: "6"
             suffix: armv6
-            archive: tar.gz
 
     steps:
       - name: Checkout
@@ -84,52 +76,37 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
-          cache: true
+          cache: false
 
       - name: Build package
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm || '' }}
-          ARCHIVE: ${{ matrix.archive }}
           SUFFIX: ${{ matrix.suffix || matrix.goarch }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
 
           version="${RELEASE_TAG#v}"
-          package_name="ld-gpt-check_${GOOS}_${SUFFIX}"
-          executable="ld-gpt-check"
+          asset_name="ld-gpt-check_${GOOS}_${SUFFIX}"
           if [ "${GOOS}" = "windows" ]; then
-            executable="${executable}.exe"
+            asset_name="${asset_name}.exe"
           fi
 
-          mkdir -p "dist/${package_name}"
+          mkdir -p dist
 
           CGO_ENABLED=0 go build \
             -trimpath \
             -ldflags="-s -w -X main.version=${version}" \
-            -o "dist/${package_name}/${executable}" \
+            -o "dist/${asset_name}" \
             ./cmd/ld-gpt-check
-
-          cp README.md README.en.md docs/commands.md ld-gpt-check.example.toml "dist/${package_name}/"
-
-          (
-            cd dist
-            if [ "${ARCHIVE}" = "zip" ]; then
-              zip -qr "${package_name}.zip" "${package_name}"
-            else
-              tar -czf "${package_name}.tar.gz" "${package_name}"
-            fi
-          )
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.goos }}-${{ matrix.suffix || matrix.goarch }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
+          path: dist/ld-gpt-check_*
           if-no-files-found: error
 
   publish:
@@ -158,7 +135,7 @@ jobs:
           set -euo pipefail
           (
             cd dist
-            find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 \
+            find . -maxdepth 1 -type f -name 'ld-gpt-check_*' -print0 \
               | sort -z \
               | xargs -0 sha256sum > SHA256SUMS.txt
           )
@@ -175,15 +152,15 @@ jobs:
 
           不确定下载哪个的话，优先选择下面三个：
 
-          - Windows Intel / AMD: [ld-gpt-check_windows_amd64.zip](${release_url}/ld-gpt-check_windows_amd64.zip)
-          - Linux Intel / AMD: [ld-gpt-check_linux_amd64.tar.gz](${release_url}/ld-gpt-check_linux_amd64.tar.gz)
-          - Linux ARM64: [ld-gpt-check_linux_arm64.tar.gz](${release_url}/ld-gpt-check_linux_arm64.tar.gz)
+          - Windows Intel / AMD: [ld-gpt-check_windows_amd64.exe](${release_url}/ld-gpt-check_windows_amd64.exe)
+          - Linux Intel / AMD: [ld-gpt-check_linux_amd64](${release_url}/ld-gpt-check_linux_amd64)
+          - Linux ARM64: [ld-gpt-check_linux_arm64](${release_url}/ld-gpt-check_linux_arm64)
 
-          macOS、Windows ARM64 和 Linux ARMv6/ARMv7 包在下方 Assets 中。
+          macOS、Windows ARM64 和 Linux ARMv6/ARMv7 二进制文件在下方 Assets 中。
 
           ## 校验
 
-          下载后可以用 \`SHA256SUMS.txt\` 校验压缩包。
+          下载后可以用 \`SHA256SUMS.txt\` 校验文件。
           EOF
 
           if [ -n "${R2_PUBLIC_BASE_URL}" ]; then
@@ -194,9 +171,9 @@ jobs:
 
           如果 GitHub 下载慢，可以试试镜像：
 
-          - Windows Intel / AMD: [ld-gpt-check_windows_amd64.zip](${mirror_base}/ld-gpt-check_windows_amd64.zip)
-          - Linux Intel / AMD: [ld-gpt-check_linux_amd64.tar.gz](${mirror_base}/ld-gpt-check_linux_amd64.tar.gz)
-          - Linux ARM64: [ld-gpt-check_linux_arm64.tar.gz](${mirror_base}/ld-gpt-check_linux_arm64.tar.gz)
+          - Windows Intel / AMD: [ld-gpt-check_windows_amd64.exe](${mirror_base}/ld-gpt-check_windows_amd64.exe)
+          - Linux Intel / AMD: [ld-gpt-check_linux_amd64](${mirror_base}/ld-gpt-check_linux_amd64)
+          - Linux ARM64: [ld-gpt-check_linux_arm64](${mirror_base}/ld-gpt-check_linux_arm64)
           EOF
           fi
 
@@ -210,9 +187,21 @@ jobs:
           fi
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt --clobber
+            for legacy_asset in \
+              ld-gpt-check_windows_amd64.zip \
+              ld-gpt-check_windows_arm64.zip \
+              ld-gpt-check_darwin_amd64.tar.gz \
+              ld-gpt-check_darwin_arm64.tar.gz \
+              ld-gpt-check_linux_amd64.tar.gz \
+              ld-gpt-check_linux_arm64.tar.gz \
+              ld-gpt-check_linux_armv7.tar.gz \
+              ld-gpt-check_linux_armv6.tar.gz
+            do
+              gh release delete-asset "${RELEASE_TAG}" "${legacy_asset}" -y >/dev/null 2>&1 || true
+            done
+            gh release upload "${RELEASE_TAG}" dist/ld-gpt-check_* dist/SHA256SUMS.txt --clobber
           else
-            gh release create "${RELEASE_TAG}" dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt "${flags[@]}"
+            gh release create "${RELEASE_TAG}" dist/ld-gpt-check_* dist/SHA256SUMS.txt "${flags[@]}"
           fi
 
       - name: Optional mirror to Cloudflare R2
@@ -244,9 +233,25 @@ jobs:
             aws s3 sync dist/ "s3://${R2_BUCKET}/ld-gpt-check/${version}/" \
               --endpoint-url "${endpoint}" \
               --exclude "*" \
-              --include "*.tar.gz" \
-              --include "*.zip" \
+              --include "ld-gpt-check_*" \
               --include "SHA256SUMS.txt"
+
+          for legacy_asset in \
+            ld-gpt-check_windows_amd64.zip \
+            ld-gpt-check_windows_arm64.zip \
+            ld-gpt-check_darwin_amd64.tar.gz \
+            ld-gpt-check_darwin_arm64.tar.gz \
+            ld-gpt-check_linux_amd64.tar.gz \
+            ld-gpt-check_linux_arm64.tar.gz \
+            ld-gpt-check_linux_armv7.tar.gz \
+            ld-gpt-check_linux_armv6.tar.gz
+          do
+            AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" \
+            AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" \
+            AWS_DEFAULT_REGION="auto" \
+              aws s3 rm "s3://${R2_BUCKET}/ld-gpt-check/${version}/${legacy_asset}" \
+                --endpoint-url "${endpoint}" >/dev/null 2>&1 || true
+          done
 
           AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" \
           AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" \
@@ -255,6 +260,22 @@ jobs:
               --endpoint-url "${endpoint}" \
               --delete \
               --exclude "*" \
-              --include "*.tar.gz" \
-              --include "*.zip" \
+              --include "ld-gpt-check_*" \
               --include "SHA256SUMS.txt"
+
+          for legacy_asset in \
+            ld-gpt-check_windows_amd64.zip \
+            ld-gpt-check_windows_arm64.zip \
+            ld-gpt-check_darwin_amd64.tar.gz \
+            ld-gpt-check_darwin_arm64.tar.gz \
+            ld-gpt-check_linux_amd64.tar.gz \
+            ld-gpt-check_linux_arm64.tar.gz \
+            ld-gpt-check_linux_armv7.tar.gz \
+            ld-gpt-check_linux_armv6.tar.gz
+          do
+            AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" \
+            AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" \
+            AWS_DEFAULT_REGION="auto" \
+              aws s3 rm "s3://${R2_BUCKET}/ld-gpt-check/latest/${legacy_asset}" \
+                --endpoint-url "${endpoint}" >/dev/null 2>&1 || true
+          done

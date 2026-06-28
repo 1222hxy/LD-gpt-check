@@ -178,30 +178,28 @@
           <div class="glass-panel p-6 md:p-8" id="install">
             <p class="section-kicker">Install</p>
             <h2 class="section-title">下载，然后跑一次。</h2>
-            <p class="section-copy">先确认本机已经安装并登录 Codex CLI。普通用户直接下载二进制，不需要安装 Go，也不需要编译；解压后运行 <code>ld-gpt-check</code> 进入向导。</p>
+            <p class="section-copy">先确认本机已经安装并登录 Codex CLI。普通用户直接下载二进制，不需要安装 Go，也不需要编译；Windows 直接运行 .exe，Linux 下载后加执行权限再运行。</p>
             <div class="download-grid" aria-label="常用二进制下载">
-              <a class="download-card download-card-primary" href="https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_windows_amd64.zip" target="_blank" rel="noreferrer">
+              <a class="download-card download-card-primary" href="https://github.com/1222hxy/LD-gpt-check/releases/latest/download/ld-gpt-check_windows_amd64.exe" target="_blank" rel="noreferrer">
                 <span>🪟 Windows Intel / AMD</span>
-                <strong>下载 Windows AMD64</strong>
-                <small>大多数 Windows 电脑选这个</small>
+                <strong>下载 Windows EXE</strong>
+                <small>大多数 Windows 电脑选这个，下载后直接运行</small>
               </a>
-              <a class="download-card" href="https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_linux_amd64.tar.gz" target="_blank" rel="noreferrer">
+              <a class="download-card" href="https://github.com/1222hxy/LD-gpt-check/releases/latest/download/ld-gpt-check_linux_amd64" target="_blank" rel="noreferrer">
                 <span>🐧 Linux x86_64</span>
-                <strong>下载 Linux AMD64</strong>
+                <strong>下载 Linux 二进制</strong>
                 <small>大多数 VPS / 服务器选这个</small>
               </a>
-              <a class="download-card" href="https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_linux_arm64.tar.gz" target="_blank" rel="noreferrer">
+              <a class="download-card" href="https://github.com/1222hxy/LD-gpt-check/releases/latest/download/ld-gpt-check_linux_arm64" target="_blank" rel="noreferrer">
                 <span>🐧 Linux ARM64</span>
-                <strong>下载 Linux ARM64</strong>
+                <strong>下载 ARM64 二进制</strong>
                 <small>ARM 云主机、NAS、开发板选这个</small>
               </a>
             </div>
             <p class="mt-4 text-sm leading-6 text-slate-500">
-              其他系统版本也可以从
-              <a class="text-blue-600 hover:underline" href="https://download.yhklab.com/ld-gpt-check/latest/SHA256SUMS.txt" target="_blank" rel="noreferrer">镜像校验文件</a>
-              查看；如果镜像下载失败，再去
+              其他系统版本和 SHA256 校验文件在
               <a class="text-blue-600 hover:underline" href="https://github.com/1222hxy/LD-gpt-check/releases/latest" target="_blank" rel="noreferrer">GitHub Releases</a>
-              下载同名文件。
+              的 Assets 里。
             </p>
             <div class="code-line" aria-label="运行命令">
               <span class="text-blue-600">$</span>

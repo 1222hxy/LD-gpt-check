@@ -21,11 +21,13 @@ For daily use, the wizard is the recommended path.
 
 You do not need Go and you do not need to compile anything. Make sure Codex CLI is installed and logged in, then download the right binary:
 
-- 🪟 Windows Intel / AMD: [`ld-gpt-check_windows_amd64.zip`](https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_windows_amd64.zip)
-- 🐧 Most Linux servers / VPS: [`ld-gpt-check_linux_amd64.tar.gz`](https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_linux_amd64.tar.gz)
-- 🐧 Linux ARM64: [`ld-gpt-check_linux_arm64.tar.gz`](https://download.yhklab.com/ld-gpt-check/latest/ld-gpt-check_linux_arm64.tar.gz)
+- 🪟 Windows Intel / AMD: [`ld-gpt-check_windows_amd64.exe`](https://github.com/1222hxy/LD-gpt-check/releases/latest/download/ld-gpt-check_windows_amd64.exe)
+- 🐧 Most Linux servers / VPS: [`ld-gpt-check_linux_amd64`](https://github.com/1222hxy/LD-gpt-check/releases/latest/download/ld-gpt-check_linux_amd64)
+- 🐧 Linux ARM64: [`ld-gpt-check_linux_arm64`](https://github.com/1222hxy/LD-gpt-check/releases/latest/download/ld-gpt-check_linux_arm64)
 
-If the mirror is unavailable, download the same file from [GitHub Releases](https://github.com/1222hxy/LD-gpt-check/releases/latest).
+More builds are available from [GitHub Releases](https://github.com/1222hxy/LD-gpt-check/releases/latest).
+
+Windows can run the `.exe` directly. On Linux/macOS, run `chmod +x ld-gpt-check_*` after downloading.
 
 Start the guided flow:
 
