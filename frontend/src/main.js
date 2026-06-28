@@ -95,21 +95,31 @@ function renderHeroTerminal() {
     };
 
     const command = `${c.blue}~/bench${c.reset} ${c.gray}$${c.reset} ${c.bold}ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload${c.reset}`;
-    const outputLines = [
-      "",
-      `${c.cyan}start${c.reset} model=${c.bold}gpt-5.5${c.reset} reasoning=${c.violet}xhigh${c.reset} tests=${c.yellow}5${c.reset}`,
-      `${c.gray}[00:00]${c.reset} case 1/5 candy_21  running codex exec --json`,
-      `${c.gray}[01:31]${c.reset} case 1/5  ${c.green}PASS${c.reset}  answer=21  time=91.5s  tps=53.3`,
-      `${c.gray}[03:15]${c.reset} case 2/5  ${c.red}FAIL${c.reset}  answer=27  time=104.2s tps=50.0`,
-      `${c.gray}[08:04]${c.reset} case 5/5  ${c.green}PASS${c.reset}  answer=21  time=88.7s  tps=51.0`,
-      "",
-      `${c.yellow}Run${c.reset}  ${c.yellow}In Tok${c.reset}  ${c.yellow}Out Tok${c.reset}  ${c.yellow}Reason Tok${c.reset}  ${c.yellow}Time(s)${c.reset}   ${c.yellow}TPS${c.reset}  ${c.yellow}OK${c.reset}`,
-      `1     10163     4873        4660     91.5  53.3  ${c.green}✓${c.reset}`,
-      `2     10163     5210        4901    104.2  50.0  ${c.red}×${c.reset}`,
-      `5     10163     4522        4310     88.7  51.0  ${c.green}✓${c.reset}`,
-      `${c.green}summary${c.reset} correct=4/5 accuracy=${c.bold}80.0%${c.reset} avg_time=96.8s avg_tps=51.4`,
-      `${c.cyan}upload${c.reset} saved summary, token metrics and case previews only`,
+    const outputEvents = [
+      { delay: 120, line: "" },
+      {
+        delay: 240,
+        line: `${c.cyan}start${c.reset} model=${c.bold}gpt-5.5${c.reset} reasoning=${c.violet}xhigh${c.reset} tests=${c.yellow}5${c.reset}`,
+      },
+      { delay: 650, line: `${c.gray}[00:00]${c.reset} case 1/5 candy_21  running codex exec --json` },
+      { delay: 1100, line: `${c.gray}[01:31]${c.reset} case 1/5  ${c.green}PASS${c.reset}  answer=21  time=91.5s  tps=53.3` },
+      { delay: 1250, line: `${c.gray}[03:15]${c.reset} case 2/5  ${c.red}FAIL${c.reset}  answer=27  time=104.2s tps=50.0` },
+      { delay: 900, line: `${c.gray}[08:04]${c.reset} case 5/5  ${c.green}PASS${c.reset}  answer=21  time=88.7s  tps=51.0` },
+      { delay: 160, line: "" },
+      {
+        delay: 260,
+        line: `${c.yellow}Run${c.reset}  ${c.yellow}In Tok${c.reset}  ${c.yellow}Out Tok${c.reset}  ${c.yellow}Reason Tok${c.reset}  ${c.yellow}Time(s)${c.reset}   ${c.yellow}TPS${c.reset}  ${c.yellow}OK${c.reset}`,
+      },
+      { delay: 90, line: `1     10163     4873        4660     91.5  53.3  ${c.green}✓${c.reset}` },
+      { delay: 90, line: `2     10163     5210        4901    104.2  50.0  ${c.red}×${c.reset}` },
+      { delay: 90, line: `5     10163     4522        4310     88.7  51.0  ${c.green}✓${c.reset}` },
+      {
+        delay: 520,
+        line: `${c.green}summary${c.reset} correct=4/5 accuracy=${c.bold}80.0%${c.reset} avg_time=96.8s avg_tps=51.4`,
+      },
+      { delay: 240, line: `${c.cyan}upload${c.reset} saved summary, token metrics and case previews only` },
     ];
+    const outputLines = outputEvents.map((event) => event.line);
 
     const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -124,21 +134,12 @@ function renderHeroTerminal() {
       for (const chunk of command.match(/(\x1b\[[0-9;]*m|.)/g) || []) {
         terminal.write(chunk);
         if (!chunk.startsWith("\x1b")) {
-          await sleep(chunk === " " ? 10 : 18);
+          await sleep(chunk === " " ? 8 : 13);
         }
       }
       terminal.writeln("");
 
-      for (const line of outputLines) {
-        const delay = line.includes("running")
-          ? 760
-          : line.includes("case")
-            ? 520
-            : line.includes("summary")
-              ? 640
-              : line === ""
-                ? 180
-                : 260;
+      for (const { delay, line } of outputEvents) {
         await sleep(delay);
         terminal.writeln(line);
       }
