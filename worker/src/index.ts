@@ -545,9 +545,11 @@ async function devicePoll(request: Request, env: Env): Promise<Response> {
 
 async function devicePage(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const hasCode = !!url.searchParams.get("code");
+  const codeParam = str(url.searchParams.get("code") || "", 32);
+  const hasCode = !!codeParam.replace(/\D/g, "").slice(0, 9);
   const user = await getWebUser(request, env);
-  const loginURL = `/auth/linuxdo/start?next=${encodeURIComponent("/device")}`;
+  const devicePath = hasCode ? `/device?code=${encodeURIComponent(codeParam)}` : "/device";
+  const loginURL = `/auth/linuxdo/start?next=${encodeURIComponent(devicePath)}`;
   const turnstileEnabled = !!(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY);
   const scriptNonce = cspNonce();
   const turnstile = turnstileEnabled
@@ -561,6 +563,7 @@ document.addEventListener("DOMContentLoaded", function () {
     return String(value || "").replace(/\\D/g, "").slice(0, 9);
   }
   function fillOTP(value) {
+    if (!inputs.length) return;
     var text = clean(value);
     if (!text) return;
     inputs.forEach(function (box, i) { box.value = text.slice(i * 3, i * 3 + 3); });
@@ -592,6 +595,12 @@ document.addEventListener("DOMContentLoaded", function () {
   if (autofill) {
     autofill.addEventListener("input", function () { fillOTP(autofill.value); });
     autofill.addEventListener("change", function () { fillOTP(autofill.value); });
+  }
+  try {
+    var codeFromURL = new URL(window.location.href).searchParams.get("code");
+    if (clean(codeFromURL).length === 9) fillOTP(codeFromURL);
+  } catch {
+    // Ignore malformed browser URL objects; manual input still works.
   }
   var form = document.getElementById("approve-form");
   if (form) {
@@ -648,7 +657,7 @@ ${user ? `<p class="user">当前登录用户：<strong>${escapeHTML(user.usernam
   <div class="actions"><button id="approve-submit" type="submit"${turnstileEnabled ? " disabled" : ""}>授权 CLI</button><button class="secondary" type="submit" form="logout-form">退出登录</button></div>
 </form>
 <form id="logout-form" method="post" action="/logout"></form>
-<p class="hint">确认验证码和终端中的 <span class="code">user_code</span> 一致后再授权。</p>` : `<p>请先使用 Linux.do 登录，然后回到这里输入终端显示的 9 位验证码。</p><div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div><p class="hint">${hasCode ? "为避免误授权，页面不会自动填入验证码；请从终端复制后手动输入。" : "如果你在 SSH、WSL 或远程服务器上运行 CLI，可以复制终端打印的链接到浏览器打开。"}</p>`}
+<p class="hint">确认验证码和终端中的 <span class="code">user_code</span> 一致后再授权。</p>` : `<p>请先使用 Linux.do 登录，然后回到这里输入终端显示的 9 位验证码。</p><div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div><p class="hint">${hasCode ? "登录完成后会回到当前验证码页面，并自动填入 URL 中的验证码。" : "如果你在 SSH、WSL 或远程服务器上运行 CLI，可以复制终端打印的链接到浏览器打开。"}</p>`}
 </section>
 </main>
 ${pageScript}
