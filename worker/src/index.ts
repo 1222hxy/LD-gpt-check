@@ -479,7 +479,7 @@ async function oauthCallback(request: Request, env: Env): Promise<Response> {
 async function apiMe(request: Request, env: Env): Promise<Response> {
   const auth = await getBearerUser(request, env);
   if (!auth) return jsonError("unauthorized", 401, "unauthorized");
-  return json({ user: { id: auth.user.id, username: auth.user.username } });
+  return json({ user: auth.user });
 }
 
 async function createSubmission(request: Request, env: Env): Promise<Response> {
@@ -507,9 +507,10 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
        (id, user_id, upload_id, upload_schema_version, client_version, model, reasoning_effort, question_count,
         attempt_count, correct_count, accuracy,
         avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps,
+        started_at, finished_at, duration_seconds, question_suite, client_timezone,
         os, arch, codex_version, codex_model_source, codex_model_provider, codex_provider_host,
         codex_sandbox, codex_ephemeral, codex_skip_git_repo_check, codex_disabled_features, codex_invocation, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       submissionID,
       auth.user.id,
@@ -527,6 +528,11 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       num(p.avg_reason_tokens),
       num(p.avg_time_seconds),
       num(p.avg_tps),
+      str(p.started_at, MAX_STRING_LENGTH),
+      str(p.finished_at, MAX_STRING_LENGTH),
+      num(p.duration_seconds),
+      str(p.question_suite, MAX_STRING_LENGTH),
+      str(p.client_timezone, 32),
       str(p.os, MAX_STRING_LENGTH),
       str(p.arch, MAX_STRING_LENGTH),
       str(p.codex_version, MAX_STRING_LENGTH),
@@ -575,10 +581,11 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       env.DB.prepare(
         `INSERT INTO benchmark_attempts
          (id, submission_id, question_id, question_version, case_index, status, is_correct,
-          expected_answer, extracted_answer, failure_reason, answer_preview, answer_preview_truncated,
+          expected_answer, extracted_answer, failure_reason, answer_preview, answer_preview_truncated, answer_hash,
           input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, time_seconds, tps,
-          codex_thread_id, event_count, event_types, tool_event_detected, answer_chars, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          codex_thread_id, event_count, event_types, tool_event_detected, answer_chars,
+          error_code, started_at, finished_at, timeout_seconds, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         crypto.randomUUID(),
         submissionID,
@@ -592,6 +599,7 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
         str(a.failure_reason, 64),
         str(a.answer_preview, MAX_PREVIEW_LENGTH),
         a.answer_preview_truncated ? 1 : 0,
+        str(a.answer_hash, 64),
         int(a.input_tokens),
         int(a.cached_input_tokens),
         int(a.output_tokens),
@@ -604,6 +612,10 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
         jsonArrayString(a.event_types, MAX_METADATA_LENGTH),
         a.tool_event_detected ? 1 : 0,
         int(a.answer_chars),
+        str(a.error_code, 64),
+        str(a.started_at, MAX_STRING_LENGTH),
+        str(a.finished_at, MAX_STRING_LENGTH),
+        num(a.timeout_seconds),
         now
       )
     );
@@ -728,7 +740,8 @@ async function getBearerUser(request: Request, env: Env): Promise<{ user: any; t
   if (!m) return null;
   const tokenHash = await hashSecret(m[1], env);
   const row = await env.DB.prepare(
-    `SELECT access_tokens.id AS token_id, users.id, users.username
+    `SELECT access_tokens.id AS token_id, users.id, users.username, users.login, users.name, users.email,
+            users.avatar_url, users.avatar_template, users.active, users.trust_level, users.silenced
      FROM access_tokens JOIN users ON users.id = access_tokens.user_id
      WHERE access_tokens.token_hash = ? AND access_tokens.revoked_at IS NULL
        AND (access_tokens.expires_at IS NULL OR access_tokens.expires_at > ?)`
@@ -737,14 +750,15 @@ async function getBearerUser(request: Request, env: Env): Promise<{ user: any; t
     .first<any>();
   if (!row) return null;
   await env.DB.prepare(`UPDATE access_tokens SET last_used_at = ? WHERE id = ?`).bind(iso(new Date()), row.token_id).run();
-  return { tokenID: row.token_id, user: { id: row.id, username: row.username } };
+  return { tokenID: row.token_id, user: publicUser(row) };
 }
 
 async function getWebUser(request: Request, env: Env): Promise<any | null> {
   const token = parseCookies(request.headers.get("cookie")).ldgc_session;
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT users.id, users.username
+    `SELECT users.id, users.username, users.login, users.name, users.email,
+            users.avatar_url, users.avatar_template, users.active, users.trust_level, users.silenced
      FROM web_sessions JOIN users ON users.id = web_sessions.user_id
      WHERE web_sessions.session_hash = ? AND web_sessions.revoked_at IS NULL AND web_sessions.expires_at > ?`
   )
@@ -754,28 +768,84 @@ async function getWebUser(request: Request, env: Env): Promise<any | null> {
 }
 
 async function upsertLinuxDoUser(profile: any, env: Env): Promise<{ id: string; username: string }> {
-  // Linux.do userinfo fields may differ by OAuth configuration; adjust this mapping after checking the actual response.
-  const providerUserID = String(profile.id ?? profile.sub ?? profile.user_id ?? "");
+  const providerUserID = str(profile.sub ?? profile.id ?? profile.user_id, MAX_STRING_LENGTH);
   if (!providerUserID) throw new Error("userinfo id missing");
-  const username = String(profile.username ?? profile.login ?? profile.name ?? providerUserID);
-  const avatarURL = String(profile.avatar_url ?? profile.avatar ?? "");
+  const username = str(profile.username ?? profile.login ?? profile.name ?? providerUserID, MAX_STRING_LENGTH);
+  const login = str(profile.login ?? "", MAX_STRING_LENGTH);
+  const name = str(profile.name ?? "", MAX_STRING_LENGTH);
+  const email = str(profile.email ?? "", MAX_STRING_LENGTH);
+  const avatarURL = str(profile.avatar_url ?? profile.avatar ?? "", MAX_STRING_LENGTH);
+  const avatarTemplate = str(profile.avatar_template ?? "", MAX_STRING_LENGTH);
+  const active = boolInt(profile.active);
+  const trustLevel = optionalInt(profile.trust_level);
+  const silenced = boolInt(profile.silenced);
+  const profileJSON = safeLinuxDoProfileJSON(profile);
   const existing = await env.DB.prepare(`SELECT id, username FROM users WHERE provider = 'linuxdo' AND provider_user_id = ?`)
     .bind(providerUserID)
     .first<any>();
   if (existing) {
-    await env.DB.prepare(`UPDATE users SET username = ?, avatar_url = ?, updated_at = ? WHERE id = ?`)
-      .bind(username, avatarURL, iso(new Date()), existing.id)
+    await env.DB.prepare(
+      `UPDATE users
+       SET username = ?, login = ?, name = ?, email = ?, avatar_url = ?, avatar_template = ?,
+           active = ?, trust_level = ?, silenced = ?, linuxdo_profile_json = ?, updated_at = ?
+       WHERE id = ?`
+    )
+      .bind(username, login, name, email, avatarURL, avatarTemplate, active, trustLevel, silenced, profileJSON, iso(new Date()), existing.id)
       .run();
     return { id: existing.id, username };
   }
   const id = crypto.randomUUID();
   await env.DB.prepare(
-    `INSERT INTO users (id, provider, provider_user_id, username, avatar_url, created_at, updated_at)
-     VALUES (?, 'linuxdo', ?, ?, ?, ?, ?)`
+    `INSERT INTO users
+      (id, provider, provider_user_id, username, login, name, email, avatar_url, avatar_template,
+       active, trust_level, silenced, linuxdo_profile_json, created_at, updated_at)
+     VALUES (?, 'linuxdo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, providerUserID, username, avatarURL, iso(new Date()), iso(new Date()))
+    .bind(id, providerUserID, username, login, name, email, avatarURL, avatarTemplate, active, trustLevel, silenced, profileJSON, iso(new Date()), iso(new Date()))
     .run();
   return { id, username };
+}
+
+function publicUser(row: any): Record<string, unknown> {
+  return {
+    id: row.id,
+    username: row.username || "",
+    login: row.login || "",
+    name: row.name || "",
+    email: row.email || "",
+    avatar_url: row.avatar_url || "",
+    avatar_template: row.avatar_template || "",
+    active: row.active == null ? null : !!row.active,
+    trust_level: row.trust_level == null ? null : int(row.trust_level),
+    silenced: row.silenced == null ? null : !!row.silenced,
+  };
+}
+
+function safeLinuxDoProfileJSON(profile: any): string {
+  const safe = {
+    id: profile.id ?? null,
+    sub: profile.sub ?? null,
+    username: profile.username ?? null,
+    login: profile.login ?? null,
+    name: profile.name ?? null,
+    email: profile.email ?? null,
+    avatar_template: profile.avatar_template ?? null,
+    avatar_url: profile.avatar_url ?? null,
+    active: profile.active ?? null,
+    trust_level: profile.trust_level ?? null,
+    silenced: profile.silenced ?? null,
+    external_ids: profile.external_ids ?? null,
+  };
+  return str(JSON.stringify(safe), MAX_METADATA_LENGTH);
+}
+
+function boolInt(value: unknown): number | null {
+  return typeof value === "boolean" ? (value ? 1 : 0) : null;
+}
+
+function optionalInt(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isInteger(n) ? n : null;
 }
 
 async function readJson<T>(request: Request): Promise<T> {
@@ -1100,6 +1170,10 @@ function validateSubmissionPayload(p: any): string | null {
   for (const key of ["avg_input_tokens", "avg_output_tokens", "avg_reason_tokens", "avg_time_seconds", "avg_tps"]) {
     if (!validNumber(p[key], 0, Number.MAX_SAFE_INTEGER)) return `${key} must be a non-negative number`;
   }
+  for (const key of ["started_at", "finished_at", "question_suite", "client_timezone"]) {
+    if (p[key] != null && (typeof p[key] !== "string" || p[key].length > MAX_STRING_LENGTH)) return `${key} must be a short string`;
+  }
+  if (p.duration_seconds != null && !validNumber(p.duration_seconds, 0, Number.MAX_SAFE_INTEGER)) return "duration_seconds must be a non-negative number";
   if (!requiredString(p.os)) return "os is required";
   if (!requiredString(p.arch)) return "arch is required";
   if (!requiredString(p.codex_version)) return "codex_version is required";
@@ -1147,6 +1221,7 @@ function validateSubmissionPayload(p: any): string | null {
     if (typeof a.answer_preview !== "string") return "attempt answer_preview must be a string";
     if ("full_answer" in a || "prompt" in a || "prompt_text" in a) return "attempt must not include full answer or prompt";
     if (a.answer_preview_truncated != null && typeof a.answer_preview_truncated !== "boolean") return "answer_preview_truncated must be a boolean";
+    if (a.answer_hash != null && (typeof a.answer_hash !== "string" || a.answer_hash.length > 64)) return "answer_hash must be a sha256 hex string";
     for (const key of ["input_tokens", "output_tokens", "reasoning_tokens"]) {
       if (!validInt(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative integer`;
     }
@@ -1159,6 +1234,10 @@ function validateSubmissionPayload(p: any): string | null {
     for (const key of ["time_seconds", "tps"]) {
       if (!validNumber(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative number`;
     }
+    for (const key of ["error_code", "started_at", "finished_at"]) {
+      if (a[key] != null && (typeof a[key] !== "string" || a[key].length > MAX_STRING_LENGTH)) return `attempt ${key} must be a short string`;
+    }
+    if (a.timeout_seconds != null && !validNumber(a.timeout_seconds, 0, Number.MAX_SAFE_INTEGER)) return "attempt timeout_seconds must be a non-negative number";
   }
   return null;
 }

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,7 @@ type Options struct {
 	Tests           int
 	Timeout         time.Duration
 	Lang            i18n.Lang
+	QuestionSuite   string
 	Questions       []questions.Question
 	Progress        func(ProgressEvent)
 }
@@ -67,6 +70,7 @@ type CaseResult struct {
 	FailureReason          string   `json:"failure_reason,omitempty"`
 	AnswerPreview          string   `json:"answer_preview"`
 	AnswerPreviewTruncated bool     `json:"answer_preview_truncated"`
+	AnswerHash             string   `json:"answer_hash,omitempty"`
 	FullAnswer             string   `json:"-"`
 	InputTokens            int      `json:"input_tokens"`
 	CachedInputTokens      int      `json:"cached_input_tokens"`
@@ -81,6 +85,10 @@ type CaseResult struct {
 	ToolEventDetected      bool     `json:"tool_event_detected"`
 	AnswerChars            int      `json:"answer_chars"`
 	Error                  string   `json:"error,omitempty"`
+	ErrorCode              string   `json:"error_code,omitempty"`
+	StartedAt              string   `json:"started_at,omitempty"`
+	FinishedAt             string   `json:"finished_at,omitempty"`
+	TimeoutSeconds         float64  `json:"timeout_seconds,omitempty"`
 }
 
 type Summary struct {
@@ -94,6 +102,11 @@ type Summary struct {
 	AvgReasoningTokens    float64           `json:"avg_reason_tokens"`
 	AvgTimeSeconds        float64           `json:"avg_time_seconds"`
 	AvgTPS                float64           `json:"avg_tps"`
+	StartedAt             string            `json:"started_at,omitempty"`
+	FinishedAt            string            `json:"finished_at,omitempty"`
+	DurationSeconds       float64           `json:"duration_seconds,omitempty"`
+	QuestionSuite         string            `json:"question_suite,omitempty"`
+	ClientTimezone        string            `json:"client_timezone,omitempty"`
 	UploadSchemaVersion   int               `json:"upload_schema_version"`
 	CodexModelSource      string            `json:"codex_model_source"`
 	CodexModelProvider    string            `json:"codex_model_provider,omitempty"`
@@ -250,7 +263,8 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		return CaseResult{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_codex_failed", msg))
 	}
 
-	elapsed := time.Since(start).Seconds()
+	finished := time.Now()
+	elapsed := finished.Sub(start).Seconds()
 	tps := 0.0
 	if elapsed > 0 {
 		tps = float64(parsed.OutputTokens) / elapsed
@@ -272,6 +286,7 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		FailureReason:          grade.FailureReason,
 		AnswerPreview:          Preview(parsed.FinalAnswer, previewMax),
 		AnswerPreviewTruncated: PreviewTruncated(parsed.FinalAnswer, previewMax),
+		AnswerHash:             SHA256Hex(parsed.FinalAnswer),
 		FullAnswer:             parsed.FinalAnswer,
 		InputTokens:            parsed.InputTokens,
 		CachedInputTokens:      parsed.CachedInputTokens,
@@ -285,6 +300,9 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		EventTypes:             parsed.EventTypes,
 		ToolEventDetected:      parsed.ToolUsed,
 		AnswerChars:            utf8.RuneCountInString(parsed.FinalAnswer),
+		StartedAt:              start.UTC().Format(time.RFC3339Nano),
+		FinishedAt:             finished.UTC().Format(time.RFC3339Nano),
+		TimeoutSeconds:         opts.Timeout.Seconds(),
 	}, nil
 }
 
@@ -369,7 +387,9 @@ func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 		ReasoningEffort:       opts.ReasoningEffort,
 		Tests:                 len(cases),
 		Correct:               correct,
-		UploadSchemaVersion:   2,
+		QuestionSuite:         strings.TrimSpace(opts.QuestionSuite),
+		ClientTimezone:        time.Now().Format("-07:00"),
+		UploadSchemaVersion:   3,
 		CodexSandbox:          "read-only",
 		CodexEphemeral:        true,
 		CodexSkipGitRepoCheck: true,
@@ -386,8 +406,20 @@ func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 		s.AvgReasoningTokens = float64(reason) / n
 		s.AvgTimeSeconds = secs / n
 		s.AvgTPS = tps / n
+		s.StartedAt = cases[0].StartedAt
+		s.FinishedAt = cases[len(cases)-1].FinishedAt
+		if start, err := time.Parse(time.RFC3339Nano, s.StartedAt); err == nil {
+			if finish, err := time.Parse(time.RFC3339Nano, s.FinishedAt); err == nil && finish.After(start) {
+				s.DurationSeconds = finish.Sub(start).Seconds()
+			}
+		}
 	}
 	return s
+}
+
+func SHA256Hex(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func applyCodexConfigMetadata(s *Summary, requestedModel string) {

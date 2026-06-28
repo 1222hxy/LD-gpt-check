@@ -155,6 +155,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		Tests:           *tests,
 		Timeout:         *timeout,
 		Lang:            lang,
+		QuestionSuite:   *suite,
 		Questions:       selected,
 		Progress:        progress,
 	})

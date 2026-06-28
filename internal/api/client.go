@@ -140,6 +140,11 @@ type UploadPayload struct {
 	AvgReasonTokens       float64                `json:"avg_reason_tokens"`
 	AvgTimeSeconds        float64                `json:"avg_time_seconds"`
 	AvgTPS                float64                `json:"avg_tps"`
+	StartedAt             string                 `json:"started_at,omitempty"`
+	FinishedAt            string                 `json:"finished_at,omitempty"`
+	DurationSeconds       float64                `json:"duration_seconds,omitempty"`
+	QuestionSuite         string                 `json:"question_suite,omitempty"`
+	ClientTimezone        string                 `json:"client_timezone,omitempty"`
 	OS                    string                 `json:"os"`
 	Arch                  string                 `json:"arch"`
 	CodexVersion          string                 `json:"codex_version"`
@@ -183,6 +188,7 @@ type UploadAttempt struct {
 	FailureReason          string   `json:"failure_reason,omitempty"`
 	AnswerPreview          string   `json:"answer_preview"`
 	AnswerPreviewTruncated bool     `json:"answer_preview_truncated"`
+	AnswerHash             string   `json:"answer_hash,omitempty"`
 	InputTokens            int      `json:"input_tokens"`
 	CachedInputTokens      int      `json:"cached_input_tokens"`
 	OutputTokens           int      `json:"output_tokens"`
@@ -195,6 +201,10 @@ type UploadAttempt struct {
 	EventTypes             []string `json:"event_types,omitempty"`
 	ToolEventDetected      bool     `json:"tool_event_detected"`
 	AnswerChars            int      `json:"answer_chars"`
+	ErrorCode              string   `json:"error_code,omitempty"`
+	StartedAt              string   `json:"started_at,omitempty"`
+	FinishedAt             string   `json:"finished_at,omitempty"`
+	TimeoutSeconds         float64  `json:"timeout_seconds,omitempty"`
 }
 
 func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVersion string) UploadPayload {
@@ -211,6 +221,7 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 			FailureReason:          c.FailureReason,
 			AnswerPreview:          runner.Preview(c.AnswerPreview, 300),
 			AnswerPreviewTruncated: c.AnswerPreviewTruncated,
+			AnswerHash:             c.AnswerHash,
 			InputTokens:            c.InputTokens,
 			CachedInputTokens:      c.CachedInputTokens,
 			OutputTokens:           c.OutputTokens,
@@ -223,6 +234,10 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 			EventTypes:             append([]string(nil), c.EventTypes...),
 			ToolEventDetected:      c.ToolEventDetected,
 			AnswerChars:            c.AnswerChars,
+			ErrorCode:              c.ErrorCode,
+			StartedAt:              c.StartedAt,
+			FinishedAt:             c.FinishedAt,
+			TimeoutSeconds:         c.TimeoutSeconds,
 		})
 	}
 	questionResults := make([]UploadQuestionResult, 0, len(s.Questions))
@@ -231,7 +246,7 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 	}
 	return UploadPayload{
 		UploadID:              newUploadID(),
-		UploadSchemaVersion:   firstPositive(s.UploadSchemaVersion, 2),
+		UploadSchemaVersion:   firstPositive(s.UploadSchemaVersion, 3),
 		ClientVersion:         version,
 		Model:                 strings.TrimSpace(s.Model),
 		ReasoningEffort:       s.ReasoningEffort,
@@ -244,6 +259,11 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 		AvgReasonTokens:       s.AvgReasoningTokens,
 		AvgTimeSeconds:        s.AvgTimeSeconds,
 		AvgTPS:                s.AvgTPS,
+		StartedAt:             s.StartedAt,
+		FinishedAt:            s.FinishedAt,
+		DurationSeconds:       s.DurationSeconds,
+		QuestionSuite:         s.QuestionSuite,
+		ClientTimezone:        s.ClientTimezone,
 		OS:                    osName,
 		Arch:                  arch,
 		CodexVersion:          codexVersion,
@@ -292,7 +312,7 @@ func (c Client) UploadRun(ctx context.Context, payload UploadPayload) (map[strin
 		return nil, err
 	}
 	var out map[string]any
-	err := c.do(ctx, requestOptions{method: http.MethodPost, path: "/api/v1/submissions", body: payload, auth: true, out: &out})
+	err := c.do(ctx, requestOptions{method: http.MethodPost, path: "/api/v1/submissions", body: payload, auth: true, out: &out, retrySafe: true})
 	return out, err
 }
 

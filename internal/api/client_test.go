@@ -71,6 +71,7 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 			QuestionID:        questions.DefaultSuite,
 			QuestionVersion:   "1",
 			AnswerPreview:     "short",
+			AnswerHash:        runner.SHA256Hex("full private answer"),
 			FullAnswer:        "full private answer",
 			InputTokens:       101,
 			OutputTokens:      202,
@@ -83,7 +84,15 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 			EventCount:        3,
 			EventTypes:        []string{"item.completed", "turn.completed"},
 			AnswerChars:       12,
+			StartedAt:         "2026-06-28T10:00:00Z",
+			FinishedAt:        "2026-06-28T10:00:05Z",
+			TimeoutSeconds:    1800,
 		}},
+		StartedAt:       "2026-06-28T10:00:00Z",
+		FinishedAt:      "2026-06-28T10:00:05Z",
+		DurationSeconds: 5,
+		QuestionSuite:   questions.DefaultSuite,
+		ClientTimezone:  "+08:00",
 	}
 	p := PayloadFromSummary("0.1.0", s, "linux", "amd64", "codex 1")
 	b, err := json.Marshal(p)
@@ -102,6 +111,12 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 	}
 	if a.CachedInputTokens != 10 || a.TotalTokens != 303 || a.CodexThreadID != "thread_1" || a.EventCount != 3 || a.AnswerChars != 12 {
 		t.Fatalf("diagnostics not preserved: %#v", a)
+	}
+	if p.UploadSchemaVersion != 3 || p.QuestionSuite != questions.DefaultSuite || p.ClientTimezone != "+08:00" || p.DurationSeconds != 5 {
+		t.Fatalf("v3 summary fields not preserved: %#v", p)
+	}
+	if a.AnswerHash == "" || a.AnswerHash == a.AnswerPreview || a.StartedAt == "" || a.TimeoutSeconds != 1800 {
+		t.Fatalf("v3 attempt fields not preserved: %#v", a)
 	}
 }
 
@@ -162,26 +177,36 @@ func TestRequestURLPreservesBasePath(t *testing.T) {
 	}
 }
 
-func TestUnsafeUploadDoesNotRetry(t *testing.T) {
+func TestUploadRetriesTransientErrorWithSameUploadID(t *testing.T) {
 	var calls atomic.Int32
+	var uploadIDs []string
 	client := New("https://example.com", "token")
 	client.Retry = RetryPolicy{MaxAttempts: 3, BaseDelay: time.Nanosecond, MaxDelay: time.Nanosecond}
 	client.HTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		calls.Add(1)
-		return response(http.StatusServiceUnavailable, `{"error":"busy"}`), nil
+		var body UploadPayload
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		uploadIDs = append(uploadIDs, body.UploadID)
+		if calls.Add(1) == 1 {
+			return response(http.StatusServiceUnavailable, `{"error":"busy"}`), nil
+		}
+		return response(http.StatusOK, `{"id":"sub_1","duplicate":false}`), nil
 	})}
 
 	payload := validUploadPayload()
-	payload.Model = "m"
-	payload.AttemptCount = 1
-	payload.Attempts = []UploadAttempt{{QuestionID: questions.DefaultSuite, QuestionVersion: "1", CaseIndex: 1, Status: "completed"}}
-	payload.Questions = []UploadQuestionResult{{QuestionID: questions.DefaultSuite, QuestionVersion: "1", QuestionTitle: "q", GraderType: "number", ExpectedAnswer: "21", PromptHash: "abc", Tests: 1}}
-	_, err := client.UploadRun(context.Background(), payload)
-	if err == nil {
-		t.Fatal("expected upload error")
+	resp, err := client.UploadRun(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("upload should not retry, calls = %d", calls.Load())
+	if resp["id"] != "sub_1" {
+		t.Fatalf("response = %#v", resp)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("upload should retry once, calls = %d", calls.Load())
+	}
+	if len(uploadIDs) != 2 || uploadIDs[0] != payload.UploadID || uploadIDs[1] != payload.UploadID {
+		t.Fatalf("upload ids = %#v", uploadIDs)
 	}
 }
 
