@@ -351,6 +351,7 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
   const robustness = buildRobustness({ recentSubmissions, questionQuality });
 
   return {
+    coverage: buildCoverage({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets, totalTrials, latencyValues, accuracyValues }),
     accuracy: {
       mean: round(accuracyMean, 3),
       stdDev: round(standardDeviation(accuracyValues), 3),
@@ -365,6 +366,7 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
       p90: round(percentile(latencyValues, 90), 1),
       p95: round(percentile(latencyValues, 95), 1),
       stdDev: round(standardDeviation(latencyValues), 1),
+      sampleSize: latencyValues.length,
     },
     regression: {
       baselineAccuracy,
@@ -381,6 +383,7 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
         minimumDetectableEffect({ baselineRate: baselineAccuracy, sampleSize: averageModelSampleSize }),
         3,
       ),
+      verdict: averageModelSampleSize > 0 ? "measured" : "insufficient",
       requiredSamples: [0.01, 0.02, 0.05].map((delta) => ({
         delta,
         perGroup: requiredSampleSizeForProportionDelta({ baselineRate: baselineAccuracy, delta }),
@@ -408,6 +411,29 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
       questionDiagnostics,
     }),
     efficiencyFrontier: buildEfficiencyFrontier(modelBreakdown),
+  };
+}
+
+function buildCoverage({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets, totalTrials, latencyValues, accuracyValues }) {
+  const activeHours = hourlyBuckets.filter((item) => item.attempts > 0).length;
+  const comparedModels = modelBreakdown.filter((item) => item.submissions * 150 >= 30).length;
+  return {
+    submissions: recentSubmissions.length,
+    attempts: totalTrials,
+    trendDays: trend.length,
+    models: modelBreakdown.length,
+    comparedModels,
+    questions: questionQuality.length,
+    activeHours,
+    accuracySamples: accuracyValues.length,
+    latencySamples: latencyValues.length,
+    hasSubmissions: totalTrials > 0,
+    hasTrend: trend.length >= 2,
+    hasForecast: trend.length >= 3,
+    hasModelComparison: comparedModels >= 2,
+    hasQuestionDiagnostics: questionQuality.some((item) => item.attempts >= 30),
+    hasTimeOfDay: activeHours >= 2 && totalTrials > 0,
+    hasDistribution: accuracyValues.length >= 2 || trend.length >= 2,
   };
 }
 
@@ -560,6 +586,8 @@ function buildRobustness({ recentSubmissions, questionQuality }) {
       submissionAccuracyMedian: round(ss.median(submissionAccuracy), 3),
       submissionLatencyMedian: round(ss.median(submissionLatency), 1),
       questionFailureMedian: round(ss.median(questionFailures), 3),
+      submissionSampleSize: recentSubmissions.length,
+      questionSampleSize: questionQuality.length,
     },
   };
 }
@@ -570,7 +598,7 @@ function buildDistributionShape({ trend, recentSubmissions, questionQuality, hou
     dailySubmissions: distributionSummary(trend.map((item) => item.submissions), 0),
     recentLatency: distributionSummary(recentSubmissions.map((item) => item.avgTimeSeconds), 1),
     questionFailure: distributionSummary(questionQuality.map((item) => item.failureRate), 3),
-    hourlyAccuracy: distributionSummary(hourlyBuckets.map((item) => item.accuracy), 3),
+    hourlyAccuracy: distributionSummary(hourlyBuckets.filter((item) => item.attempts > 0).map((item) => item.accuracy), 3),
   };
 }
 
@@ -909,6 +937,7 @@ function buildTrendStability(trend) {
     lowerControlLimit: round(lowerControlLimit, 3),
     latestZScore: round(latestZScore, 2),
     anomalies,
+    verdict: trend.length >= 2 ? "measured" : "insufficient",
   };
 }
 
@@ -941,6 +970,7 @@ function formatForecast(trend, decimals) {
     rSquared: round(trend.rSquared, 3),
     pValue: round(trend.pValue, 4),
     residualStdDev: round(trend.residualStdDev, decimals === 0 ? 1 : 4),
+    sampleSize: trend.sampleSize ?? trend.forecast.length,
     verdict: trend.verdict,
     forecast: trend.forecast.map((item) => ({
       step: item.step,
@@ -1000,6 +1030,7 @@ function distributionSummary(values, decimals) {
       skewness: 0,
       excessKurtosis: 0,
       tailRisk: 0,
+      sampleSize: 0,
     };
   }
 
@@ -1028,6 +1059,7 @@ function distributionSummary(values, decimals) {
     skewness: round(moments.skewness, 2),
     excessKurtosis: round(moments.excessKurtosis, 2),
     tailRisk: round(tailRisk, 3),
+    sampleSize: values.length,
   };
 }
 

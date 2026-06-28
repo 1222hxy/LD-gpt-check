@@ -67,6 +67,7 @@ function App() {
   if (dashboard.isError) return <ErrorState onRetry={dashboard.refetch} />;
 
   const data = dashboard.data;
+  const coverage = data.statistics.coverage;
 
   return (
     <main className="min-h-screen bg-[#f7f7f2] text-ink">
@@ -80,6 +81,7 @@ function App() {
         <Sidebar filters={filters} models={data.filters.models} onChange={setFilters} />
         <div className="grid min-w-0 gap-5">
           <SummaryGrid summary={data.summary} />
+          {!coverage.hasSubmissions ? <DataNotice coverage={coverage} /> : null}
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
             <StatisticsPanel statistics={data.statistics} />
             <TestPanel coverage={data.statistics.testCoverage} />
@@ -88,9 +90,9 @@ function App() {
             <PairwisePanel tests={data.statistics.pairwiseTests} />
             <PowerPanel statistics={data.statistics} />
           </div>
-          <TimeOfDayPanel analysis={data.statistics.timeOfDay} />
+          <TimeOfDayPanel analysis={data.statistics.timeOfDay} coverage={coverage} />
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
-            <ForecastPanel forecast={data.statistics.forecast} />
+            <ForecastPanel forecast={data.statistics.forecast} coverage={coverage} />
             <CorrelationPanel correlations={data.statistics.correlations} />
           </div>
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
@@ -194,6 +196,18 @@ function Sidebar({ filters, models, onChange }) {
   );
 }
 
+function DataNotice({ coverage }) {
+  return (
+    <section className="data-notice">
+      <strong>当前筛选范围内数据不足</strong>
+      <span>
+        真实提交 {coverage.submissions.toLocaleString("zh-CN")} 条，尝试 {coverage.attempts.toLocaleString("zh-CN")} 次。
+        Dashboard 会保留原始计数，但统计推断、预测、漂移和异常检测需要更多样本后才显示结论。
+      </span>
+    </section>
+  );
+}
+
 function SummaryGrid({ summary }) {
   const cards = [
     { label: "提交量", value: compact(summary.submissions), icon: Activity, tone: "teal", meta: "benchmark_submissions" },
@@ -221,6 +235,14 @@ function SummaryGrid({ summary }) {
 }
 
 function StatisticsPanel({ statistics }) {
+  const coverage = statistics.coverage;
+  if (!coverage.hasSubmissions) {
+    return (
+      <Panel title="统计置信度" icon={ShieldCheck} action="数据不足">
+        <EmptyState detail="当前筛选范围内没有提交样本，无法计算准确率置信区间、耗时分位数或回归检验。" />
+      </Panel>
+    );
+  }
   const cards = [
     {
       label: "准确率 95% CI",
@@ -234,12 +256,12 @@ function StatisticsPanel({ statistics }) {
     },
     {
       label: "P95 耗时",
-      value: `${statistics.latency.p95}s`,
-      meta: `中位数 ${statistics.latency.median}s，标准差 ${statistics.latency.stdDev}s`,
+      value: statistics.latency.sampleSize > 0 ? `${statistics.latency.p95}s` : "数据不足",
+      meta: `n=${statistics.latency.sampleSize.toLocaleString("zh-CN")}，中位数 ${statistics.latency.median}s`,
     },
     {
       label: "回归 z 检验",
-      value: `z=${statistics.regression.zScore}`,
+      value: statistics.regression.verdict === "insufficient" ? "数据不足" : `z=${statistics.regression.zScore}`,
       meta: `p=${formatPValue(statistics.regression.pValue)}，${verdictLabel(statistics.regression.verdict)}`,
     },
   ];
@@ -268,7 +290,7 @@ function StatisticsPanel({ statistics }) {
             </tr>
           </thead>
           <tbody>
-            {statistics.modelComparisons.map((item) => (
+            {statistics.modelComparisons.length ? statistics.modelComparisons.map((item) => (
               <tr key={item.model}>
                 <td>{item.model}</td>
                 <td>{item.sampleSize.toLocaleString("zh-CN")}</td>
@@ -281,7 +303,9 @@ function StatisticsPanel({ statistics }) {
                   <StatusBadge status={modelVerdictStatus(item.verdict)} label={modelVerdictLabel(item.verdict)} />
                 </td>
               </tr>
-            ))}
+            )) : (
+              <tr><td colSpan={6}><EmptyTableText text="需要至少一个模型提交样本。" /></td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -301,8 +325,8 @@ function TestPanel({ coverage }) {
                 {suite.passed.toLocaleString("zh-CN")} / {suite.total.toLocaleString("zh-CN")}
               </span>
             </div>
-            <Progress value={suite.passed / suite.total} />
-            <StatusBadge status={suite.status === "pass" ? "healthy" : "watch"} />
+            <Progress value={suite.total > 0 ? suite.passed / suite.total : 0} />
+            <StatusBadge status={suite.status === "pass" ? "healthy" : "watch"} label={suite.status === "empty" ? "不足" : suite.status === "measured" ? "已测" : undefined} />
           </div>
         ))}
       </div>
@@ -325,6 +349,13 @@ function TestPanel({ coverage }) {
 }
 
 function PairwisePanel({ tests }) {
+  if (!tests.length) {
+    return (
+      <Panel title="模型显著性" icon={BarChart3} action="数据不足">
+        <EmptyState detail="需要至少两个模型各有足够尝试数，才能进行成对显著性比较。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="模型显著性" icon={BarChart3} action="Holm 校正">
       <div className="min-w-0 overflow-x-auto">
@@ -365,6 +396,13 @@ function PairwisePanel({ tests }) {
 
 function PowerPanel({ statistics }) {
   const stability = statistics.trendStability;
+  if (statistics.power.verdict === "insufficient") {
+    return (
+      <Panel title="检验效能" icon={Gauge} action="数据不足">
+        <EmptyState detail="当前没有模型尝试样本，无法估算最小可检测差异和样本量需求。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="检验效能" icon={Gauge} action="power 80%">
       <div className="grid gap-2">
@@ -396,15 +434,33 @@ function PowerPanel({ statistics }) {
   );
 }
 
-function TimeOfDayPanel({ analysis }) {
+function TimeOfDayPanel({ analysis, coverage }) {
   const worstHour = analysis.summary.worstHour;
   const worstSegment = analysis.summary.worstSegment;
   const [selectedHour, setSelectedHour] = useState(worstHour?.hour ?? 0);
-  const selected = analysis.hourly.find((hour) => hour.hour === selectedHour) || analysis.hourly[0];
+  const selected = analysis.hourly.find((hour) => hour.hour === selectedHour) || analysis.hourly[0] || {
+    hour: 0,
+    label: "00:00",
+    accuracy: 0,
+    ci95Low: 0,
+    ci95High: 0,
+    adjustedPValue: 1,
+    effectSize: 0,
+    riskScore: 0,
+    avgLatencySeconds: 0,
+  };
 
   useEffect(() => {
     setSelectedHour(worstHour?.hour ?? 0);
   }, [worstHour?.hour]);
+
+  if (!coverage.hasTimeOfDay || analysis.omnibus.verdict === "insufficient") {
+    return (
+      <Panel title="时段降智分析" icon={Clock3} action="数据不足">
+        <EmptyState detail={`当前只有 ${coverage.activeHours} 个小时有真实样本；至少需要 2 个有样本的小时才比较时段差异。`} />
+      </Panel>
+    );
+  }
 
   return (
     <Panel title="时段降智分析" icon={Clock3} action="jStat + Holm">
@@ -491,18 +547,22 @@ function TimeOfDayPanel({ analysis }) {
   );
 }
 
-function ForecastPanel({ forecast }) {
-  const chartData = useMemo(
-    () =>
-      forecast.accuracy.forecast.map((item, index) => ({
-        step: `+${item.step}`,
-        accuracyPct: Math.round(item.value * 1000) / 10,
-        accuracyLowPct: Math.round(item.low * 1000) / 10,
-        accuracyHighPct: Math.round(item.high * 1000) / 10,
-        submissions: forecast.submissions.forecast[index]?.value ?? 0,
-      })),
-    [forecast],
-  );
+function ForecastPanel({ forecast, coverage }) {
+  const chartData = forecast.accuracy.forecast.map((item, index) => ({
+    step: `+${item.step}`,
+    accuracyPct: Math.round(item.value * 1000) / 10,
+    accuracyLowPct: Math.round(item.low * 1000) / 10,
+    accuracyHighPct: Math.round(item.high * 1000) / 10,
+    submissions: forecast.submissions.forecast[index]?.value ?? 0,
+  }));
+
+  if (!coverage.hasForecast || forecast.accuracy.verdict === "insufficient") {
+    return (
+      <Panel title="趋势预测" icon={TrendingUp} action="数据不足">
+        <EmptyState detail={`当前只有 ${coverage.trendDays} 个真实日期点；至少需要 3 个日期点才生成趋势预测。`} />
+      </Panel>
+    );
+  }
 
   return (
     <Panel title="趋势预测" icon={TrendingUp} action="OLS forecast">
@@ -574,6 +634,14 @@ function ForecastPanel({ forecast }) {
 }
 
 function CorrelationPanel({ correlations }) {
+  const hasEnough = correlations.some((item) => item.sampleSize >= 3);
+  if (!hasEnough) {
+    return (
+      <Panel title="相关性扫描" icon={BarChart3} action="数据不足">
+        <EmptyState detail="每组相关性至少需要 3 个配对样本；当前真实样本不足，暂不输出相关性结论。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="相关性扫描" icon={BarChart3} action="Pearson r">
       <div className="grid gap-2">
@@ -596,6 +664,13 @@ function CorrelationPanel({ correlations }) {
 }
 
 function ModelRankingPanel({ ranking }) {
+  if (!ranking.length || ranking.every((item) => item.verdict === "insufficient")) {
+    return (
+      <Panel title="贝叶斯模型排名" icon={ShieldCheck} action="数据不足">
+        <EmptyState detail="需要至少两个模型拥有足够尝试样本，才能估算模型排名概率。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="贝叶斯模型排名" icon={ShieldCheck} action="posterior">
       <div className="grid gap-2">
@@ -623,6 +698,15 @@ function ModelRankingPanel({ ranking }) {
 function RobustnessPanel({ robustness }) {
   const recentOutliers = robustness.recentOutliers.slice(0, 5);
   const questionOutliers = robustness.questionOutliers.slice(0, 5);
+  const sampleSize = robustness.baselines.submissionSampleSize + robustness.baselines.questionSampleSize;
+
+  if (sampleSize < 3) {
+    return (
+      <Panel title="鲁棒异常检测" icon={Gauge} action="数据不足">
+        <EmptyState detail="MAD 异常检测至少需要多个提交或题目样本；当前样本不足，暂不判断异常。" />
+      </Panel>
+    );
+  }
 
   return (
     <Panel title="鲁棒异常检测" icon={Gauge} action="MAD z-score">
@@ -644,7 +728,7 @@ function RobustnessPanel({ robustness }) {
         <div>
           <h3 className="mb-2 text-sm font-semibold text-stone-800">提交异常</h3>
           <div className="grid gap-2">
-            {(recentOutliers.length ? recentOutliers : [{ id: "无异常提交", model: "MAD 阈值内", accuracyRobustZ: 0, latencyRobustZ: 0 }]).map((item) => (
+            {(recentOutliers.length ? recentOutliers : [{ id: "暂无提交异常", model: "真实样本未超过 MAD 阈值", accuracyRobustZ: 0, latencyRobustZ: 0 }]).map((item) => (
               <div className="outlier-row" key={item.id}>
                 <div>
                   <strong>{item.id}</strong>
@@ -659,7 +743,7 @@ function RobustnessPanel({ robustness }) {
         <div>
           <h3 className="mb-2 text-sm font-semibold text-stone-800">题目异常</h3>
           <div className="grid gap-2">
-            {(questionOutliers.length ? questionOutliers : [{ questionId: "无异常题目", title: "MAD 阈值内", failureRate: 0, failureRobustZ: 0 }]).map((item) => (
+            {(questionOutliers.length ? questionOutliers : [{ questionId: "暂无题目异常", title: "真实样本未超过 MAD 阈值", failureRate: 0, failureRobustZ: 0 }]).map((item) => (
               <div className="outlier-row" key={item.questionId}>
                 <div>
                   <strong>{item.title}</strong>
@@ -677,6 +761,13 @@ function RobustnessPanel({ robustness }) {
 }
 
 function QuestionDiagnosticsPanel({ diagnostics }) {
+  if (!diagnostics.length || diagnostics.every((item) => item.verdict === "insufficient")) {
+    return (
+      <Panel title="题目诊断优先级" icon={Activity} action="数据不足">
+        <EmptyState detail="每道题需要足够尝试数才会进入诊断优先级；当前题目样本不足。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="题目诊断优先级" icon={Activity} action="Wilson + z-score">
       <div className="min-w-0 overflow-x-auto">
@@ -721,6 +812,13 @@ function QuestionDiagnosticsPanel({ diagnostics }) {
 }
 
 function RiskBudgetPanel({ budget }) {
+  if (budget.verdict === "insufficient") {
+    return (
+      <Panel title="质量风险预算" icon={ShieldCheck} action="数据不足">
+        <EmptyState detail="风险预算需要真实尝试数和准确率；当前没有足够尝试样本。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="质量风险预算" icon={ShieldCheck} action={riskBudgetLabel(budget.verdict)}>
       <div className="risk-gauge">
@@ -763,6 +861,14 @@ function DriftPanel({ drift }) {
     ewmaPct: Math.round(item.value * 1000) / 10,
     cusum: drift.cusum.series[index]?.value ?? 0,
   }));
+
+  if (drift.window.verdict === "insufficient") {
+    return (
+      <Panel title="窗口漂移监控" icon={TrendingUp} action="数据不足">
+        <EmptyState detail="漂移监控至少需要 4 个日期点，才能比较前后窗口和 EWMA/CUSUM 信号。" />
+      </Panel>
+    );
+  }
 
   return (
     <Panel title="窗口漂移监控" icon={TrendingUp} action="EWMA / CUSUM">
@@ -814,6 +920,15 @@ function DistributionPanel({ shape }) {
     { label: "题目失败率", unit: "percent", ...shape.questionFailure },
     { label: "小时准确率", unit: "percent", ...shape.hourlyAccuracy },
   ];
+  const hasSamples = rows.some((item) => item.sampleSize > 0);
+
+  if (!hasSamples) {
+    return (
+      <Panel title="分布形态" icon={BarChart3} action="数据不足">
+        <EmptyState detail="当前没有可用于分布统计的真实样本。" />
+      </Panel>
+    );
+  }
 
   return (
     <Panel title="分布形态" icon={BarChart3} action="IQR / moments">
@@ -836,7 +951,7 @@ function DistributionPanel({ shape }) {
                 <td>
                   <strong>{item.label}</strong>
                   <span>
-                    {formatDistributionValue(item.min, item.unit)} - {formatDistributionValue(item.max, item.unit)}
+                    n={item.sampleSize}，{formatDistributionValue(item.min, item.unit)} - {formatDistributionValue(item.max, item.unit)}
                   </span>
                 </td>
                 <td>{formatDistributionValue(item.median, item.unit)}</td>
@@ -855,6 +970,13 @@ function DistributionPanel({ shape }) {
 }
 
 function EfficiencyFrontierPanel({ frontier }) {
+  if (!frontier.length || frontier.every((item) => item.verdict === "insufficient")) {
+    return (
+      <Panel title="效率前沿" icon={Gauge} action="数据不足">
+        <EmptyState detail="需要至少两个模型具备足够真实样本，才能判断 Pareto 效率前沿。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="效率前沿" icon={Gauge} action="Pareto frontier">
       <div className="grid gap-2">
@@ -888,6 +1010,14 @@ function TrendPanel({ trend }) {
     [trend],
   );
 
+  if (!trend.length) {
+    return (
+      <Panel title="趋势" icon={TrendingUp} action="数据不足">
+        <EmptyState detail="当前筛选范围内没有按日期聚合的真实提交。" />
+      </Panel>
+    );
+  }
+
   return (
     <Panel title="趋势" icon={TrendingUp} action="提交量 / 准确率">
       <div className="chart-h-lg">
@@ -909,6 +1039,13 @@ function TrendPanel({ trend }) {
 }
 
 function ModelPanel({ models }) {
+  if (!models.length) {
+    return (
+      <Panel title="模型对比" icon={BarChart3} action="数据不足">
+        <EmptyState detail="当前筛选范围内没有模型提交数据。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="模型对比" icon={BarChart3} action="准确率 / TPS">
       <div className="chart-h-md">
@@ -936,6 +1073,13 @@ function ModelPanel({ models }) {
 }
 
 function QualityPanel({ questions }) {
+  if (!questions.length) {
+    return (
+      <Panel title="题目质量" icon={ShieldCheck} action="数据不足">
+        <EmptyState detail="当前筛选范围内没有题目级结果数据。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="题目质量" icon={ShieldCheck} action="低准确率优先">
       <div className="min-w-0 overflow-x-auto">
@@ -975,6 +1119,13 @@ function QualityPanel({ questions }) {
 
 function SegmentPanel({ segments }) {
   const total = segments.reduce((sum, item) => sum + item.count, 0);
+  if (!segments.length || total <= 0) {
+    return (
+      <Panel title="运行环境" icon={Gauge} action="数据不足">
+        <EmptyState detail="当前筛选范围内没有可聚合的运行环境或渠道数据。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="运行环境" icon={Gauge} action="系统分布">
       <div className="distribution-stack" aria-label="运行环境提交量分布">
@@ -1004,6 +1155,13 @@ function SegmentPanel({ segments }) {
 }
 
 function RecentPanel({ submissions }) {
+  if (!submissions.length) {
+    return (
+      <Panel title="最近提交" icon={Activity} action="0 条">
+        <EmptyState detail="当前筛选范围内没有最近提交记录。" />
+      </Panel>
+    );
+  }
   return (
     <Panel title="最近提交" icon={Activity} action={`${submissions.length} 条`}>
       <div className="min-w-0 overflow-x-auto">
@@ -1108,8 +1266,21 @@ function Panel({ title, icon: Icon, action, children }) {
   );
 }
 
+function EmptyState({ title = "数据不足", detail = "当前筛选范围内没有足够真实样本生成这个统计结论。" }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
+  );
+}
+
+function EmptyTableText({ text }) {
+  return <div className="empty-table-text">{text}</div>;
+}
+
 function Progress({ value }) {
-  const pct = Math.round(value * 100);
+  const pct = Number.isFinite(value) ? Math.round(clamp(value, 0, 1) * 100) : 0;
   return (
     <div className="progress-cell">
       <span>{pct}%</span>
@@ -1190,42 +1361,52 @@ function formatPValue(value) {
 }
 
 function verdictLabel(value) {
+  if (value === "insufficient") return "样本不足";
   if (value === "improved") return "显著提升";
   if (value === "regression") return "显著回退";
   return "未见显著差异";
 }
 
 function modelVerdictLabel(value) {
+  if (value === "insufficient") return "样本不足";
   if (value === "leader") return "最佳";
-  if (value === "overlap") return "区间重叠";
+  if (value === "competitive" || value === "overlap") return "区间接近";
   return "低于最佳";
 }
 
 function modelVerdictStatus(value) {
+  if (value === "insufficient") return "watch";
   if (value === "leader") return "healthy";
-  if (value === "overlap") return "watch";
+  if (value === "competitive" || value === "overlap") return "watch";
   return "regression";
 }
 
 function pairwiseLabel(value) {
+  if (value === "insufficient") return "样本不足";
   if (value === "leader") return "对照";
+  if (value === "better") return "更好";
   if (value === "significant") return "显著";
   return "不显著";
 }
 
 function pairwiseStatus(value) {
+  if (value === "insufficient") return "watch";
   if (value === "leader") return "healthy";
+  if (value === "better") return "healthy";
   if (value === "significant") return "regression";
   return "watch";
 }
 
 function timeOmnibusLabel(value) {
+  if (value === "insufficient") return "样本不足";
   return value === "time_effect_detected" ? "存在显著时段效应" : "未见显著时段效应";
 }
 
 function timeLabel(value) {
+  if (value === "insufficient" || value === "empty") return "不足";
   if (value === "degraded") return "降智";
   if (value === "elevated") return "偏高";
+  if (value === "strong") return "偏高";
   return "正常";
 }
 
@@ -1251,63 +1432,86 @@ function correlationStrengthLabel(value) {
 }
 
 function correlationLabel(value) {
+  if (value === "insufficient") return "样本不足";
+  if (value === "aligned") return "方向符合";
+  if (value === "review") return "需复核";
   return value === "significant" ? "显著" : "不显著";
 }
 
 function correlationStatus(value, r) {
+  if (value === "insufficient") return "watch";
+  if (value === "aligned") return "healthy";
+  if (value === "review") return "watch";
   if (value !== "significant") return "watch";
   return r < 0 ? "regression" : "healthy";
 }
 
 function modelRankingLabel(value) {
+  if (value === "insufficient") return "样本不足";
+  if (value === "leader") return "领先";
+  if (value === "competitive") return "接近";
+  if (value === "lagging") return "落后";
   if (value === "ship") return "可发布";
   if (value === "candidate") return "候选";
   return "规避";
 }
 
 function modelRankingStatus(value) {
+  if (value === "insufficient") return "watch";
+  if (value === "leader") return "healthy";
+  if (value === "competitive") return "watch";
+  if (value === "lagging") return "regression";
   if (value === "ship") return "healthy";
   if (value === "candidate") return "watch";
   return "regression";
 }
 
 function questionDiagnosticLabel(value) {
+  if (value === "insufficient") return "样本不足";
+  if (value === "review") return "审计";
   if (value === "audit") return "审计";
   if (value === "watch") return "观察";
   return "正常";
 }
 
 function questionDiagnosticStatus(value) {
+  if (value === "insufficient") return "watch";
+  if (value === "review") return "regression";
   if (value === "audit") return "regression";
   if (value === "watch") return "watch";
   return "healthy";
 }
 
 function riskBudgetLabel(value) {
+  if (value === "insufficient") return "数据不足";
   if (value === "over_budget") return "超预算";
   if (value === "watch") return "观察";
   return "健康";
 }
 
 function riskStatusLabel(value) {
+  if (value === "insufficient") return "样本不足";
   if (value === "alert") return "告警";
   if (value === "watch") return "观察";
   return "稳定";
 }
 
 function driftLabel(value) {
+  if (value === "insufficient") return "样本不足";
   if (value === "cooling") return "走低";
   if (value === "heating") return "走高";
   return "平稳";
 }
 
 function frontierLabel(value) {
+  if (value === "insufficient") return "样本不足";
   if (value === "frontier") return "前沿";
   if (value === "shadowed") return "被压制";
   return "被支配";
 }
 
 function frontierStatus(value) {
+  if (value === "insufficient") return "watch";
   if (value === "frontier") return "healthy";
   if (value === "shadowed") return "watch";
   return "regression";

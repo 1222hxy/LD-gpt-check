@@ -1180,6 +1180,13 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
      GROUP BY hour
      ORDER BY hour ASC`
   ).bind(...binds).all<any>();
+  const sampleRows = await env.DB.prepare(
+    `SELECT s.accuracy, s.avg_time_seconds
+     FROM benchmark_submissions s
+     WHERE ${where}
+     ORDER BY s.created_at DESC
+     LIMIT 2000`
+  ).bind(...binds).all<any>();
 
   const trend = (trendRows.results ?? []).map((row: any) => ({
     date: String(row.date || ""),
@@ -1225,8 +1232,8 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     accuracy: ratio(row.accuracy),
   }));
   const hourlyBuckets = normalizeHourlyBuckets(hourlyRows.results ?? []);
-  const accuracyValues = recentSubmissions.map((item: any) => item.accuracy);
-  const latencyValues = recentSubmissions.map((item: any) => item.avgTimeSeconds);
+  const accuracyValues = (sampleRows.results ?? []).map((row: any) => ratio(row.accuracy)).filter((value: number) => Number.isFinite(value));
+  const latencyValues = (sampleRows.results ?? []).map((row: any) => round(num(row.avg_time_seconds), 1)).filter((value: number) => Number.isFinite(value) && value > 0);
   const totalAttempts = int(summaryRow?.total_attempts);
   const averageAccuracy = ratio(summaryRow?.average_accuracy);
   const statistics = buildDashboardStatistics({
@@ -2380,9 +2387,10 @@ function buildDashboardStatistics(input: any): Record<string, unknown> {
   const latencyValues = input.latencyValues as number[];
   const totalAttempts = int(input.totalAttempts);
   const averageAccuracy = clampRatio(input.averageAccuracy);
+  const coverage = dashboardCoverage({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets, accuracyValues, latencyValues, totalAttempts });
   const accuracy = statisticalAccuracy(averageAccuracy, totalAttempts, accuracyValues);
   const latency = latencySummary(latencyValues);
-  const regression = regressionSummary(trend, averageAccuracy);
+  const regression = regressionSummary(trend, averageAccuracy, totalAttempts);
   const modelComparisons = modelComparisonStats(modelBreakdown);
   const pairwiseTests = pairwiseStats(modelBreakdown);
   const testCoverage = testCoverageStats({ totalAttempts, recentSubmissions, questionQuality, modelBreakdown, hourlyBuckets });
@@ -2401,12 +2409,13 @@ function buildDashboardStatistics(input: any): Record<string, unknown> {
     dailySubmissions: distributionSummary(trend.map((item) => item.submissions)),
     recentLatency: distributionSummary(latencyValues),
     questionFailure: distributionSummary(questionQuality.map((item) => item.failureRate)),
-    hourlyAccuracy: distributionSummary(hourlyBuckets.map((item) => item.accuracy)),
+    hourlyAccuracy: distributionSummary(hourlyBuckets.filter((item) => item.attempts > 0).map((item) => item.accuracy)),
   };
   const drift = driftStats(trend);
   const riskBudget = riskBudgetStats({ averageAccuracy, totalAttempts, recentSubmissions, questionDiagnostics, trendStability });
   const efficiencyFrontier = efficiencyFrontierStats(modelBreakdown);
   return {
+    coverage,
     accuracy,
     latency,
     regression,
@@ -2428,8 +2437,47 @@ function buildDashboardStatistics(input: any): Record<string, unknown> {
   };
 }
 
+function dashboardCoverage(input: any): Record<string, unknown> {
+  const trend = input.trend as any[];
+  const modelBreakdown = input.modelBreakdown as any[];
+  const questionQuality = input.questionQuality as any[];
+  const recentSubmissions = input.recentSubmissions as any[];
+  const hourlyBuckets = input.hourlyBuckets as any[];
+  const totalAttempts = int(input.totalAttempts);
+  const activeHours = hourlyBuckets.filter((item) => int(item.attempts) > 0).length;
+  const comparedModels = modelBreakdown.filter((item) => int(item.attempts || item.submissions) >= 30).length;
+  return {
+    submissions: recentSubmissions.length,
+    attempts: totalAttempts,
+    trendDays: trend.length,
+    models: modelBreakdown.length,
+    comparedModels,
+    questions: questionQuality.length,
+    activeHours,
+    accuracySamples: (input.accuracyValues || []).length,
+    latencySamples: (input.latencyValues || []).length,
+    hasSubmissions: totalAttempts > 0 || recentSubmissions.length > 0,
+    hasTrend: trend.length >= 2,
+    hasForecast: trend.length >= 3,
+    hasModelComparison: comparedModels >= 2,
+    hasQuestionDiagnostics: questionQuality.some((item) => int(item.attempts) >= 30),
+    hasTimeOfDay: activeHours >= 2 && totalAttempts > 0,
+    hasDistribution: (input.accuracyValues || []).length >= 2 || trend.length >= 2,
+  };
+}
+
 function statisticalAccuracy(meanValue: number, sampleSize: number, values: number[]): Record<string, number> {
-  const n = Math.max(sampleSize, values.length, 1);
+  const n = Math.max(sampleSize, values.length, 0);
+  if (n <= 0) {
+    return {
+      mean: 0,
+      stdDev: 0,
+      ci95Low: 0,
+      ci95High: 0,
+      marginOfError: 0,
+      sampleSize: 0,
+    };
+  }
   const margin = 1.96 * Math.sqrt(Math.max(meanValue * (1 - meanValue), 0) / n);
   return {
     mean: round(meanValue, 3),
@@ -2448,10 +2496,21 @@ function latencySummary(values: number[]): Record<string, number> {
     p90: round(quantile(values, 0.9), 1),
     p95: round(quantile(values, 0.95), 1),
     stdDev: round(stdDev(values), 1),
+    sampleSize: values.length,
   };
 }
 
-function regressionSummary(trend: any[], observedAccuracy: number): Record<string, unknown> {
+function regressionSummary(trend: any[], observedAccuracy: number, totalAttempts: number): Record<string, unknown> {
+  if (trend.length < 2 || totalAttempts <= 0) {
+    return {
+      baselineAccuracy: 0,
+      observedAccuracy: round(observedAccuracy, 3),
+      delta: 0,
+      zScore: 0,
+      pValue: 1,
+      verdict: "insufficient",
+    };
+  }
   const midpoint = Math.max(1, Math.floor(trend.length / 2));
   const baseline = trend.length > 1 ? mean(trend.slice(0, midpoint).map((item) => item.accuracy)) : observedAccuracy;
   const delta = observedAccuracy - baseline;
@@ -2468,9 +2527,10 @@ function regressionSummary(trend: any[], observedAccuracy: number): Record<strin
 
 function modelComparisonStats(models: any[]): any[] {
   const best = Math.max(0, ...models.map((item) => item.accuracy));
+  const comparableModels = models.filter((item) => int(item.attempts || item.submissions) >= 30).length;
   return models.map((item) => {
-    const n = Math.max(int(item.attempts || item.submissions), 1);
-    const margin = 1.96 * Math.sqrt(Math.max(item.accuracy * (1 - item.accuracy), 0) / n);
+    const n = Math.max(int(item.attempts || item.submissions), 0);
+    const margin = n > 0 ? 1.96 * Math.sqrt(Math.max(item.accuracy * (1 - item.accuracy), 0) / n) : 0;
     const delta = item.accuracy - best;
     return {
       model: item.model,
@@ -2483,18 +2543,22 @@ function modelComparisonStats(models: any[]): any[] {
       posteriorLow: round(clampRatio(item.accuracy - margin), 3),
       posteriorHigh: round(clampRatio(item.accuracy + margin), 3),
       deltaVsBest: round(delta, 3),
-      verdict: Math.abs(delta) < 0.005 ? "leader" : delta > -0.03 ? "competitive" : "lagging",
+      verdict: comparableModels < 2 || n < 30 ? "insufficient" : Math.abs(delta) < 0.005 ? "leader" : delta > -0.03 ? "competitive" : "lagging",
     };
   });
 }
 
 function pairwiseStats(models: any[]): any[] {
-  if (models.length === 0) return [];
+  if (models.length < 2) return [];
   const best = [...models].sort((a, b) => b.accuracy - a.accuracy)[0];
   return models.map((item) => {
+    const bestN = Math.max(int(best.attempts || best.submissions), 0);
+    const itemN = Math.max(int(item.attempts || item.submissions), 0);
     const delta = item.accuracy - best.accuracy;
-    const pooled = Math.sqrt(Math.max(best.accuracy * (1 - best.accuracy), 0.001) / Math.max(best.attempts || 1, 1)
-      + Math.max(item.accuracy * (1 - item.accuracy), 0.001) / Math.max(item.attempts || 1, 1));
+    const pooled = bestN > 0 && itemN > 0
+      ? Math.sqrt(Math.max(best.accuracy * (1 - best.accuracy), 0.001) / bestN
+        + Math.max(item.accuracy * (1 - item.accuracy), 0.001) / itemN)
+      : 0;
     const zScore = safeDivide(delta, pooled || 0.01);
     const pValue = pValueFromScore(zScore);
     return {
@@ -2505,7 +2569,7 @@ function pairwiseStats(models: any[]): any[] {
       pValue,
       adjustedPValue: round(Math.min(1, pValue * Math.max(models.length - 1, 1)), 4),
       effectSize: round(delta, 3),
-      verdict: Math.abs(delta) < 0.01 ? "similar" : delta > 0 ? "better" : "significant",
+      verdict: bestN < 30 || itemN < 30 ? "insufficient" : item.model === best.model ? "leader" : Math.abs(delta) < 0.01 ? "similar" : delta > 0 ? "better" : "significant",
     };
   });
 }
@@ -2521,7 +2585,7 @@ function testCoverageStats(input: any): Record<string, unknown> {
       { label: "提交样本", passed: recent.length, total: recent.length, status: recent.length > 0 ? "pass" : "empty" },
       { label: "题目覆盖", passed: questions.filter((item) => item.attempts > 0).length, total: questions.length, status: questions.length > 0 ? "pass" : "empty" },
       { label: "模型覆盖", passed: models.length, total: models.length, status: models.length > 0 ? "pass" : "empty" },
-      { label: "时段覆盖", passed: hourly.filter((item) => item.submissions > 0).length, total: 24, status: "measured" },
+      { label: "时段覆盖", passed: hourly.filter((item) => item.submissions > 0).length, total: 24, status: hourly.some((item) => item.submissions > 0) ? "measured" : "empty" },
     ],
     totalAttempts: int(input.totalAttempts),
     passRate: round(passRate, 3),
@@ -2532,6 +2596,18 @@ function testCoverageStats(input: any): Record<string, unknown> {
 }
 
 function trendStabilityStats(trend: any[]): Record<string, unknown> {
+  if (trend.length < 2) {
+    return {
+      submissionStdDev: 0,
+      accuracyStdDev: 0,
+      accuracyMean: 0,
+      upperControlLimit: 0,
+      lowerControlLimit: 0,
+      latestZScore: 0,
+      anomalies: [],
+      verdict: "insufficient",
+    };
+  }
   const submissions = trend.map((item) => item.submissions);
   const accuracies = trend.map((item) => item.accuracy);
   const accuracyMean = mean(accuracies);
@@ -2550,10 +2626,12 @@ function trendStabilityStats(trend: any[]): Record<string, unknown> {
       .map((item) => ({ date: item.date, accuracy: item.accuracy, zScore: safeDivide(item.accuracy - accuracyMean, accuracyStdDev || 0.01) }))
       .filter((item) => Math.abs(item.zScore) >= 3)
       .map((item) => ({ date: item.date, accuracy: round(item.accuracy, 3), zScore: round(item.zScore, 2) })),
+    verdict: "measured",
   };
 }
 
 function timeOfDayStats(hourlyBuckets: any[], overallAccuracy: number): Record<string, unknown> {
+  const totalAttempts = hourlyBuckets.reduce((acc, item) => acc + int(item.attempts), 0);
   const hourly = hourlyBuckets.map((item) => {
     const margin = item.attempts > 0 ? 1.96 * Math.sqrt(Math.max(item.accuracy * (1 - item.accuracy), 0) / item.attempts) : 0;
     const delta = item.accuracy - overallAccuracy;
@@ -2576,7 +2654,7 @@ function timeOfDayStats(hourlyBuckets: any[], overallAccuracy: number): Record<s
       adjustedPValue: round(Math.min(1, pValue * 24), 4),
       effectSize: round(delta, 3),
       riskScore: round(Math.max(0, -delta) * Math.log10(item.attempts + 1), 3),
-      verdict: item.attempts === 0 ? "empty" : delta < -0.05 ? "degraded" : delta > 0.05 ? "strong" : "stable",
+      verdict: item.attempts === 0 ? "empty" : totalAttempts <= 0 ? "insufficient" : delta < -0.05 ? "degraded" : delta > 0.05 ? "strong" : "stable",
     };
   });
   const segments = [
@@ -2588,17 +2666,18 @@ function timeOfDayStats(hourlyBuckets: any[], overallAccuracy: number): Record<s
   const activeHours = hourly.filter((item) => item.attempts > 0);
   const worstHour = activeHours.length ? [...activeHours].sort((a, b) => a.accuracy - b.accuracy)[0] : null;
   const worstSegment = segments.filter((item) => item.attempts > 0).sort((a, b) => a.accuracy - b.accuracy)[0] || null;
+  const enough = activeHours.length >= 2 && totalAttempts > 0;
   return {
     omnibus: {
       statistic: round(stdDev(activeHours.map((item) => item.accuracy)) * 100, 2),
       degreesOfFreedom: Math.max(activeHours.length - 1, 0),
       pValue: activeHours.length > 1 ? pValueFromScore(stdDev(activeHours.map((item) => item.accuracy)) * 10) : 1,
-      verdict: activeHours.some((item) => item.verdict === "degraded") ? "time_effect_detected" : "stable",
+      verdict: enough ? (activeHours.some((item) => item.verdict === "degraded") ? "time_effect_detected" : "stable") : "insufficient",
     },
     hourly,
     segments,
     worstHours: activeHours.sort((a, b) => a.accuracy - b.accuracy).slice(0, 4),
-    degradationWindows: worstSegment && worstSegment.deltaVsDay < 0 ? [{
+    degradationWindows: enough && worstSegment && worstSegment.deltaVsDay < 0 ? [{
       startHour: worstSegment.startHour,
       endHour: worstSegment.endHour,
       attempts: worstSegment.attempts,
@@ -2640,6 +2719,18 @@ function timeSegment(label: string, startHour: number, endHour: number, hourly: 
 
 function forecastSeries(values: number[], clampToRatio: boolean): Record<string, unknown> {
   const n = values.length;
+  if (n < 3) {
+    return {
+      slope: 0,
+      intercept: round(values[0] || 0, 4),
+      rSquared: 0,
+      pValue: 1,
+      residualStdDev: 0,
+      sampleSize: n,
+      verdict: "insufficient",
+      forecast: [],
+    };
+  }
   const xs = values.map((_, index) => index + 1);
   const xMean = mean(xs);
   const yMean = mean(values);
@@ -2667,6 +2758,7 @@ function forecastSeries(values: number[], clampToRatio: boolean): Record<string,
     rSquared: round(clampRatio(rSquared), 3),
     pValue: pValueFromScore(safeDivide(slope, residualStdDev || 0.01)),
     residualStdDev: round(residualStdDev, 3),
+    sampleSize: n,
     verdict: Math.abs(slope) < 0.001 ? "stable" : slope > 0 ? "rising" : "falling",
     forecast,
   };
@@ -2684,7 +2776,7 @@ function correlationStats(trend: any[], recent: any[], questions: any[]): any[] 
     correlationRow("TPS vs 准确率", "avgTps", "accuracy", "positive", tps, accuracies),
     correlationRow("Token vs 提交量", "tokens", "submissions", "positive", tokens, submissions),
     correlationRow("耗时 vs 准确率", "latency", "accuracy", "negative", latency, recentAccuracy),
-  ].filter((item) => item.sampleSize > 0 || questions.length >= 0);
+  ];
 }
 
 function correlationRow(metric: string, x: string, y: string, expectedDirection: string, xs: number[], ys: number[]): Record<string, unknown> {
@@ -2698,7 +2790,7 @@ function correlationRow(metric: string, x: string, y: string, expectedDirection:
     r: round(r, 3),
     pValue: pValueFromScore(r * Math.sqrt(Math.max(sampleSize - 2, 1))),
     sampleSize,
-    strength: Math.abs(r) > 0.7 ? "strong" : Math.abs(r) > 0.35 ? "moderate" : "weak",
+    strength: sampleSize < 3 ? "insufficient" : Math.abs(r) > 0.7 ? "strong" : Math.abs(r) > 0.35 ? "moderate" : "weak",
     verdict: sampleSize < 3 ? "insufficient" : Math.sign(r) === (expectedDirection === "negative" ? -1 : 1) ? "aligned" : "review",
   };
 }
@@ -2718,7 +2810,7 @@ function questionDiagnosticStats(questions: any[], averageAccuracy: number): any
       ci95High: round(clampRatio(item.accuracy + margin), 3),
       difficultyZ: round(difficultyZ, 2),
       priorityScore: round(priority, 2),
-      verdict: priority > 1.2 ? "review" : "healthy",
+      verdict: item.attempts < 30 ? "insufficient" : priority > 1.2 ? "review" : "healthy",
     };
   });
 }
@@ -2727,20 +2819,33 @@ function modelRankingStats(models: any[]): any[] {
   if (models.length === 0) return [];
   const sorted = [...models].sort((a, b) => b.accuracy - a.accuracy);
   return sorted.map((item, index) => {
-    const n = Math.max(item.attempts || item.submissions || 1, 1);
-    const posteriorMean = (item.accuracy * n + 1) / (n + 2);
+    const n = Math.max(int(item.attempts || item.submissions), 0);
+    const posteriorMean = n > 0 ? (item.accuracy * n + 1) / (n + 2) : 0;
     return {
       model: item.model,
       posteriorMean: round(posteriorMean, 3),
       posteriorStdDev: round(Math.sqrt(Math.max(posteriorMean * (1 - posteriorMean), 0) / (n + 3)), 3),
       probabilityBest: round(index === 0 ? 1 / Math.max(sorted.filter((m) => Math.abs(m.accuracy - item.accuracy) < 0.005).length, 1) : 0, 3),
       expectedLoss: round(Math.max(0, sorted[0].accuracy - item.accuracy), 3),
-      verdict: index === 0 ? "leader" : sorted[0].accuracy - item.accuracy < 0.03 ? "competitive" : "lagging",
+      verdict: sorted.length < 2 || n < 30 ? "insufficient" : index === 0 ? "leader" : sorted[0].accuracy - item.accuracy < 0.03 ? "competitive" : "lagging",
     };
   });
 }
 
 function robustnessStats(recent: any[], questions: any[]): Record<string, unknown> {
+  if (recent.length < 3 && questions.length < 3) {
+    return {
+      recentOutliers: [],
+      questionOutliers: [],
+      baselines: {
+        submissionAccuracyMedian: 0,
+        submissionLatencyMedian: 0,
+        questionFailureMedian: 0,
+        submissionSampleSize: recent.length,
+        questionSampleSize: questions.length,
+      },
+    };
+  }
   const accMedian = quantile(recent.map((item) => item.accuracy), 0.5);
   const latencyMedian = quantile(recent.map((item) => item.avgTimeSeconds), 0.5);
   const failureMedian = quantile(questions.map((item) => item.failureRate), 0.5);
@@ -2772,12 +2877,31 @@ function robustnessStats(recent: any[], questions: any[]): Record<string, unknow
       submissionAccuracyMedian: round(accMedian, 3),
       submissionLatencyMedian: round(latencyMedian, 1),
       questionFailureMedian: round(failureMedian, 3),
+      submissionSampleSize: recent.length,
+      questionSampleSize: questions.length,
     },
   };
 }
 
 function distributionSummary(values: number[]): Record<string, number> {
   const clean = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!clean.length) {
+    return {
+      min: 0,
+      q1: 0,
+      median: 0,
+      q3: 0,
+      max: 0,
+      iqr: 0,
+      mean: 0,
+      stdDev: 0,
+      coefficientOfVariation: 0,
+      skewness: 0,
+      excessKurtosis: 0,
+      tailRisk: 0,
+      sampleSize: 0,
+    };
+  }
   const q1 = quantile(clean, 0.25);
   const median = quantile(clean, 0.5);
   const q3 = quantile(clean, 0.75);
@@ -2796,11 +2920,52 @@ function distributionSummary(values: number[]): Record<string, number> {
     skewness: round(moment(clean, 3, avg, sd), 3),
     excessKurtosis: round(moment(clean, 4, avg, sd) - 3, 3),
     tailRisk: round(clean.length ? clean.filter((value) => value < q1 - 1.5 * (q3 - q1) || value > q3 + 1.5 * (q3 - q1)).length / clean.length : 0, 3),
+    sampleSize: clean.length,
   };
 }
 
 function driftStats(trend: any[]): Record<string, unknown> {
   const values = trend.map((item) => item.accuracy);
+  if (values.length < 4) {
+    return {
+      window: {
+        priorDays: 0,
+        recentDays: values.length,
+        priorAccuracy: 0,
+        recentAccuracy: round(mean(values), 3),
+        delta: 0,
+        zScore: 0,
+        pValue: 1,
+        verdict: "insufficient",
+      },
+      volume: {
+        priorMean: 0,
+        recentMean: round(mean(trend.map((item) => item.submissions)), 1),
+        delta: 0,
+        tScore: 0,
+        degreesOfFreedom: 0,
+        pValue: 1,
+        verdict: "insufficient",
+      },
+      ewma: {
+        lambda: 0.35,
+        latest: round(values[values.length - 1] || 0, 3),
+        deltaVsMean: 0,
+        min: round(Math.min(0, ...values), 3),
+        max: round(Math.max(0, ...values), 3),
+        verdict: "insufficient",
+        series: trend.map((item) => ({ date: item.date, value: item.accuracy })),
+      },
+      cusum: {
+        latest: 0,
+        min: 0,
+        max: 0,
+        signalScore: 0,
+        verdict: "insufficient",
+        series: trend.map((item) => ({ date: item.date, value: 0 })),
+      },
+    };
+  }
   const recentDays = Math.min(7, Math.max(1, Math.ceil(values.length / 3)));
   const priorValues = values.slice(0, Math.max(values.length - recentDays, 0));
   const recentValues = values.slice(-recentDays);
@@ -2855,6 +3020,22 @@ function driftStats(trend: any[]): Record<string, unknown> {
 function riskBudgetStats(input: any): Record<string, unknown> {
   const targetAccuracy = 0.85;
   const attempts = Math.max(int(input.totalAttempts), 0);
+  if (attempts <= 0) {
+    return {
+      targetAccuracy,
+      failureRate: 0,
+      failures: 0,
+      allowedFailures: 0,
+      excessFailures: 0,
+      budgetRemaining: 0,
+      burnRate: 0,
+      degradedAttemptShare: 0,
+      auditQuestions: 0,
+      outlierLoad: 0,
+      anomalyDays: 0,
+      verdict: "insufficient",
+    };
+  }
   const failures = Math.max(0, Math.round(attempts * (1 - input.averageAccuracy)));
   const allowedFailures = Math.max(1, Math.round(attempts * (1 - targetAccuracy)));
   const excessFailures = Math.max(0, failures - allowedFailures);
@@ -2876,6 +3057,7 @@ function riskBudgetStats(input: any): Record<string, unknown> {
 }
 
 function efficiencyFrontierStats(models: any[]): any[] {
+  const comparableModels = models.filter((item) => int(item.attempts || item.submissions) >= 30).length;
   return models.map((item) => {
     const dominatedBy = models
       .filter((other) => other.model !== item.model
@@ -2893,7 +3075,7 @@ function efficiencyFrontierStats(models: any[]): any[] {
       utilityScore: round(utilityScore, 2),
       dominatedBy,
       onFrontier: dominatedBy.length === 0,
-      verdict: dominatedBy.length === 0 ? "frontier" : dominatedBy.length <= 1 ? "shadowed" : "dominated",
+      verdict: comparableModels < 2 || int(item.attempts || item.submissions) < 30 ? "insufficient" : dominatedBy.length === 0 ? "frontier" : dominatedBy.length <= 1 ? "shadowed" : "dominated",
     };
   });
 }
@@ -2907,6 +3089,7 @@ function powerStats(models: any[], averageAccuracy: number): Record<string, unkn
     baselineAccuracy: round(averageAccuracy, 3),
     averageModelSampleSize,
     minimumDetectableEffect: round(minimumDetectableEffect, 3),
+    verdict: averageModelSampleSize > 0 ? "measured" : "insufficient",
     requiredSamples: [0.01, 0.02, 0.05].map((delta) => ({
       delta,
       perGroup: Math.ceil((2 * variance * 1.96 ** 2) / Math.max(delta ** 2, 0.0001)),

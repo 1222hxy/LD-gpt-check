@@ -87,6 +87,7 @@ const LatencySchema = z.object({
   p90: z.number(),
   p95: z.number(),
   stdDev: z.number(),
+  sampleSize: z.number(),
 });
 
 const RegressionSchema = z.object({
@@ -102,6 +103,7 @@ const PowerSchema = z.object({
   baselineAccuracy: z.number(),
   averageModelSampleSize: z.number(),
   minimumDetectableEffect: z.number(),
+  verdict: VerdictSchema,
   requiredSamples: z.array(z.object({ delta: z.number(), perGroup: z.number() })),
 });
 
@@ -154,6 +156,7 @@ const TrendStabilitySchema = z.object({
   lowerControlLimit: z.number(),
   latestZScore: z.number(),
   anomalies: z.array(z.object({ date: z.string(), accuracy: z.number(), zScore: z.number() })),
+  verdict: VerdictSchema,
 });
 
 const HourlyAnalysisSchema = z.object({
@@ -224,6 +227,7 @@ const ForecastSeriesSchema = z.object({
   rSquared: z.number(),
   pValue: z.number(),
   residualStdDev: z.number(),
+  sampleSize: z.number(),
   verdict: VerdictSchema,
   forecast: z.array(z.object({ step: z.number(), value: z.number(), low: z.number(), high: z.number() })),
 });
@@ -285,6 +289,8 @@ const RobustnessSchema = z.object({
     submissionAccuracyMedian: z.number(),
     submissionLatencyMedian: z.number(),
     questionFailureMedian: z.number(),
+    submissionSampleSize: z.number(),
+    questionSampleSize: z.number(),
   }),
 });
 
@@ -301,6 +307,26 @@ const DistributionSummarySchema = z.object({
   skewness: z.number(),
   excessKurtosis: z.number(),
   tailRisk: z.number(),
+  sampleSize: z.number(),
+});
+
+const CoverageSchema = z.object({
+  submissions: z.number(),
+  attempts: z.number(),
+  trendDays: z.number(),
+  models: z.number(),
+  comparedModels: z.number(),
+  questions: z.number(),
+  activeHours: z.number(),
+  accuracySamples: z.number(),
+  latencySamples: z.number(),
+  hasSubmissions: z.boolean(),
+  hasTrend: z.boolean(),
+  hasForecast: z.boolean(),
+  hasModelComparison: z.boolean(),
+  hasQuestionDiagnostics: z.boolean(),
+  hasTimeOfDay: z.boolean(),
+  hasDistribution: z.boolean(),
 });
 
 const DistributionShapeSchema = z.object({
@@ -377,6 +403,7 @@ const EfficiencyFrontierSchema = z.object({
 });
 
 const StatisticsSchema = z.object({
+  coverage: CoverageSchema,
   accuracy: StatisticalAccuracySchema,
   latency: LatencySchema,
   regression: RegressionSchema,
