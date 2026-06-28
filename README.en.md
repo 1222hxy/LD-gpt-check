@@ -3,7 +3,7 @@
 > 🧪 A lightweight Codex / GPT benchmark for the Linux.do community.  
 > Run `ld-gpt-check`, follow the guided flow, and get a reproducible local benchmark in minutes.
 
-中文文档：[README.md](README.md) · Website: [codexgo.yhklab.com](https://codexgo.yhklab.com) · Commands: [docs/commands.md](docs/commands.md)
+中文文档：[README.md](README.md) · Website: [codexgo.yhklab.com](https://codexgo.yhklab.com) · Commands: [docs/commands.md](docs/commands.md) · Release workflow: [docs/release-workflow.md](docs/release-workflow.md)
 
 ## ✨ What It Is
 

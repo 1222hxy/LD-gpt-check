@@ -116,7 +116,7 @@ openssl rand -base64 32
 
 ## 4.1 可选：Release 二进制镜像到 Cloudflare R2
 
-GitHub Release 是默认下载源。若想把每次发布的二进制同步到 Cloudflare R2，给 GitHub Actions 配置这些 repository secrets：
+GitHub Release 是默认下载源。完整发布流程见 [GitHub Release 工作流](release-workflow.md)。若想把每次发布的二进制同步到 Cloudflare R2，给 GitHub Actions 配置这些 repository secrets：
 
 ```text
 CLOUDFLARE_R2_ACCOUNT_ID

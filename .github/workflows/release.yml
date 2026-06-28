@@ -1,214 +1,260 @@
-name: release
+name: Release CLI
 
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version string for manual builds, for example v0.1.0"
-        required: false
-        default: "dev"
+      tag:
+        description: "Existing release tag, for example v0.2.0"
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build release binaries
+  test:
+    name: Go tests
     runs-on: ubuntu-latest
-    env:
-      R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
-      R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
-      R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      R2_PUBLIC_BASE_URL: ${{ vars.CLOUDFLARE_R2_PUBLIC_BASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.22.x"
           cache: true
 
-      - name: Test
+      - name: Run tests
         run: go test ./...
 
-      - name: Build archives
-        shell: bash
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.suffix || matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            archive: zip
+          - goos: windows
+            goarch: arm64
+            archive: zip
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            suffix: armv7
+            archive: tar.gz
+          - goos: linux
+            goarch: arm
+            goarm: "6"
+            suffix: armv6
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+
+      - name: Build package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm || '' }}
+          ARCHIVE: ${{ matrix.archive }}
+          SUFFIX: ${{ matrix.suffix || matrix.goarch }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
 
-          version="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.version }}"
-          fi
-          if [[ -z "${version}" ]]; then
-            version="dev"
+          version="${RELEASE_TAG#v}"
+          package_name="ld-gpt-check_${GOOS}_${SUFFIX}"
+          executable="ld-gpt-check"
+          if [ "${GOOS}" = "windows" ]; then
+            executable="${executable}.exe"
           fi
 
-          mkdir -p dist
-          targets=(
-            "linux/amd64"
-            "linux/arm64"
-            "linux/arm/6"
-            "linux/arm/7"
-            "linux/386"
-            "darwin/amd64"
-            "darwin/arm64"
-            "windows/amd64"
-            "windows/arm64"
-            "windows/386"
-            "freebsd/amd64"
-            "freebsd/arm64"
+          mkdir -p "dist/${package_name}"
+
+          CGO_ENABLED=0 go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${version}" \
+            -o "dist/${package_name}/${executable}" \
+            ./cmd/ld-gpt-check
+
+          cp README.md README.en.md docs/commands.md ld-gpt-check.example.toml "dist/${package_name}/"
+
+          (
+            cd dist
+            if [ "${ARCHIVE}" = "zip" ]; then
+              zip -qr "${package_name}.zip" "${package_name}"
+            else
+              tar -czf "${package_name}.tar.gz" "${package_name}"
+            fi
           )
 
-          for target in "${targets[@]}"; do
-            IFS=/ read -r goos goarch goarm <<< "${target}"
-            name="ld-gpt-check_${version}_${goos}_${goarch}"
-            alias="ld-gpt-check_${goos}_${goarch}"
-            if [[ -n "${goarm:-}" ]]; then
-              name="${name}v${goarm}"
-              alias="${alias}v${goarm}"
-            fi
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.suffix || matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
 
-            out_dir="dist/${name}"
-            mkdir -p "${out_dir}"
-            bin="ld-gpt-check"
-            if [[ "${goos}" == "windows" ]]; then
-              bin="ld-gpt-check.exe"
-            fi
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-            echo "Building ${name}"
-            build_env=(CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}")
-            if [[ -n "${goarm:-}" ]]; then
-              build_env+=(GOARM="${goarm}")
-            fi
-            env "${build_env[@]}" go build -trimpath \
-              -ldflags="-s -w -X main.version=${version}" \
-              -o "${out_dir}/${bin}" ./cmd/ld-gpt-check
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-            cp README.md README.en.md ld-gpt-check.example.toml "${out_dir}/"
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          (
+            cd dist
+            find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS.txt
+          )
 
-            if [[ "${goos}" == "windows" ]]; then
-              (cd dist && python -m zipfile -c "${name}.zip" "${name}")
-              cp "dist/${name}.zip" "dist/${alias}.zip"
-            else
-              (cd dist && tar -czf "${name}.tar.gz" "${name}")
-              cp "dist/${name}.tar.gz" "dist/${alias}.tar.gz"
-            fi
-            rm -rf "${out_dir}"
-          done
-
-          (cd dist && sha256sum * > checksums.txt)
-
-      - name: Create release notes
-        shell: bash
+      - name: Create release summary
+        env:
+          R2_PUBLIC_BASE_URL: ${{ vars.CLOUDFLARE_R2_PUBLIC_BASE_URL }}
         run: |
           set -euo pipefail
 
-          version="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.version }}"
-          fi
-          if [[ -z "${version}" ]]; then
-            version="dev"
-          fi
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+          cat > dist/RELEASE_NOTES.md <<EOF
+          ## 直接下载
 
-          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${version}"
-          cat > dist/RELEASE_BODY.md <<EOF
-          # 🍬 LD-gpt-check ${version}
+          不确定下载哪个的话，优先选择下面三个：
 
-          ## 🚀 直接下载
+          - Windows Intel / AMD: [ld-gpt-check_windows_amd64.zip](${release_url}/ld-gpt-check_windows_amd64.zip)
+          - Linux Intel / AMD: [ld-gpt-check_linux_amd64.tar.gz](${release_url}/ld-gpt-check_linux_amd64.tar.gz)
+          - Linux ARM64: [ld-gpt-check_linux_arm64.tar.gz](${release_url}/ld-gpt-check_linux_arm64.tar.gz)
 
-          > 不确定下载哪个？大多数用户看这里就够了。解压后运行 \`ld-gpt-check\`，进入向导。
+          macOS、Windows ARM64 和 Linux ARMv6/ARMv7 包在下方 Assets 中。
 
-          ### 🪟 Windows Intel / AMD 用户
+          ## 校验
 
-          **👉 [下载 Windows AMD64 版](${release_url}/ld-gpt-check_windows_amd64.zip)**
-
-          适用于绝大多数 Windows 台式机、笔记本、游戏本和云服务器。
-
-          ### 🐧 Linux 常用版本
-
-          **👉 [下载 Linux AMD64 版](${release_url}/ld-gpt-check_linux_amd64.tar.gz)**
-
-          适用于绝大多数 x86_64 Linux 电脑、服务器和 VPS。
-
-          **👉 [下载 Linux ARM64 版](${release_url}/ld-gpt-check_linux_arm64.tar.gz)**
-
-          适用于 ARM64 Linux 服务器、部分 NAS、开发板和云主机。
-
-          ## 📦 其他系统
-
-          页面下方 Assets 里还有 macOS、Windows ARM64、Linux 32 位 ARM、FreeBSD 等版本。
-
-          ## ✅ 校验
-
-          下载后可用 \`checksums.txt\` 校验 SHA256。
-
-          ## 🪄 使用
-
-          运行 \`ld-gpt-check\` 后跟着向导操作即可。需要先安装并登录本机 Codex CLI。
+          下载后可以用 \`SHA256SUMS.txt\` 校验压缩包。
           EOF
 
-          if [[ -n "${R2_PUBLIC_BASE_URL}" ]]; then
+          if [ -n "${R2_PUBLIC_BASE_URL}" ]; then
             mirror_base="${R2_PUBLIC_BASE_URL%/}/ld-gpt-check/latest"
-            cat >> dist/RELEASE_BODY.md <<EOF
+            cat >> dist/RELEASE_NOTES.md <<EOF
 
-          ## ☁️ Cloudflare R2 镜像
+          ## Cloudflare R2 镜像
 
           如果 GitHub 下载慢，可以试试镜像：
 
-          - [Windows AMD64](${mirror_base}/ld-gpt-check_windows_amd64.zip)
-          - [Linux AMD64](${mirror_base}/ld-gpt-check_linux_amd64.tar.gz)
-          - [Linux ARM64](${mirror_base}/ld-gpt-check_linux_arm64.tar.gz)
+          - Windows Intel / AMD: [ld-gpt-check_windows_amd64.zip](${mirror_base}/ld-gpt-check_windows_amd64.zip)
+          - Linux Intel / AMD: [ld-gpt-check_linux_amd64.tar.gz](${mirror_base}/ld-gpt-check_linux_amd64.tar.gz)
+          - Linux ARM64: [ld-gpt-check_linux_arm64.tar.gz](${mirror_base}/ld-gpt-check_linux_arm64.tar.gz)
           EOF
           fi
 
-      - name: Upload optional Cloudflare R2 mirror
-        if: ${{ env.R2_ACCOUNT_ID != '' && env.R2_BUCKET != '' && env.R2_ACCESS_KEY_ID != '' && env.R2_SECRET_ACCESS_KEY != '' }}
-        shell: bash
+      - name: Create or update GitHub Release
         run: |
           set -euo pipefail
-          python -m pip install --user awscli
-          export PATH="$HOME/.local/bin:$PATH"
-          export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
-          export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
-          export AWS_DEFAULT_REGION="auto"
 
-          version="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.version }}"
+          flags=(--verify-tag --title "${RELEASE_TAG}" --generate-notes --notes-file dist/RELEASE_NOTES.md)
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            flags+=(--prerelease)
           fi
-          if [[ -z "${version}" ]]; then
-            version="dev"
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "${RELEASE_TAG}" dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt "${flags[@]}"
+          fi
+
+      - name: Optional mirror to Cloudflare R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${R2_ACCOUNT_ID}" ] || [ -z "${R2_BUCKET}" ] || [ -z "${R2_ACCESS_KEY_ID}" ] || [ -z "${R2_SECRET_ACCESS_KEY}" ]; then
+            echo "Cloudflare R2 secrets are not configured; skipping mirror."
+            exit 0
+          fi
+
+          if ! command -v aws >/dev/null 2>&1; then
+            python -m pip install --user awscli
+            echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+            export PATH="${HOME}/.local/bin:${PATH}"
           fi
 
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          aws s3 sync dist "s3://${R2_BUCKET}/ld-gpt-check/${version}/" \
-            --endpoint-url "${endpoint}" \
-            --exclude "RELEASE_BODY.md"
-          aws s3 sync dist "s3://${R2_BUCKET}/ld-gpt-check/latest/" \
-            --endpoint-url "${endpoint}" \
-            --exclude "RELEASE_BODY.md"
+          version="${RELEASE_TAG#v}"
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ld-gpt-check-binaries
-          path: dist/*
+          AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" \
+          AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" \
+          AWS_DEFAULT_REGION="auto" \
+            aws s3 sync dist/ "s3://${R2_BUCKET}/ld-gpt-check/${version}/" \
+              --endpoint-url "${endpoint}" \
+              --exclude "*" \
+              --include "*.tar.gz" \
+              --include "*.zip" \
+              --include "SHA256SUMS.txt"
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.zip
-            dist/*.tar.gz
-            dist/checksums.txt
-          body_path: dist/RELEASE_BODY.md
-          generate_release_notes: true
+          AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" \
+          AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}" \
+          AWS_DEFAULT_REGION="auto" \
+            aws s3 sync dist/ "s3://${R2_BUCKET}/ld-gpt-check/latest/" \
+              --endpoint-url "${endpoint}" \
+              --delete \
+              --exclude "*" \
+              --include "*.tar.gz" \
+              --include "*.zip" \
+              --include "SHA256SUMS.txt"
