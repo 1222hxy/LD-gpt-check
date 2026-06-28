@@ -86,6 +86,15 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
       "accuracy": 0.861
     }
   ],
+  "hourlyBuckets": [
+    {
+      "hour": 2,
+      "submissions": 44,
+      "attempts": 6600,
+      "accuracy": 0.792,
+      "avgLatencySeconds": 11.4
+    }
+  ],
   "statistics": {
     "accuracy": {
       "mean": 0.842,
@@ -171,6 +180,67 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
       "lowerControlLimit": 0.779,
       "latestZScore": -0.42,
       "anomalies": []
+    },
+    "timeOfDay": {
+      "omnibus": {
+        "statistic": 168.4,
+        "degreesOfFreedom": 23,
+        "pValue": 0.0001,
+        "verdict": "time_effect_detected"
+      },
+      "hourly": [
+        {
+          "hour": 2,
+          "label": "02:00",
+          "attempts": 6600,
+          "submissions": 44,
+          "accuracy": 0.792,
+          "avgLatencySeconds": 11.4,
+          "ci95Low": 0.782,
+          "ci95High": 0.802,
+          "posteriorLow": 0.782,
+          "posteriorHigh": 0.802,
+          "deltaVsDay": -0.05,
+          "zScore": -9.2,
+          "pValue": 0.0001,
+          "adjustedPValue": 0.0001,
+          "effectSize": -0.14,
+          "riskScore": 4.06,
+          "verdict": "degraded"
+        }
+      ],
+      "segments": [
+        {
+          "label": "深夜",
+          "startHour": 0,
+          "endHour": 5,
+          "attempts": 38600,
+          "accuracy": 0.805,
+          "avgLatencySeconds": 10.8,
+          "deltaVsDay": -0.037,
+          "zScore": -10.1,
+          "pValue": 0.0001,
+          "adjustedPValue": 0.0001,
+          "verdict": "degraded"
+        }
+      ],
+      "worstHours": [],
+      "degradationWindows": [
+        {
+          "startHour": 2,
+          "endHour": 5,
+          "attempts": 26400,
+          "riskScore": 14.4,
+          "minDelta": -0.052,
+          "label": "02:00-06:00"
+        }
+      ],
+      "summary": {
+        "worstHour": null,
+        "worstSegment": null,
+        "affectedAttempts": 26400,
+        "overallAccuracy": 0.842
+      }
     }
   }
 }
@@ -186,6 +256,15 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
 - `power` estimates the minimum detectable effect and per-group sample requirements for common accuracy deltas at 80% power.
 - `testCoverage` summarizes automated checks, regression samples, and visual smoke checks shown in the dashboard.
 - `trendStability` provides control-chart style limits and recent z-scores for trend monitoring.
+- `hourlyBuckets` groups attempts by local hour of day. Production should derive it from `benchmark_submissions.created_at` or the attempt timestamp if stored.
+- `timeOfDay.omnibus` uses a chi-square test across hourly pass/fail buckets to detect whether time of day matters overall.
+- `timeOfDay.hourly` compares each hour against the rest of the day with two-proportion z-tests, Holm-adjusted p-values, Wilson intervals, beta-posterior ranges, and Cohen's h effect size.
+- `timeOfDay.degradationWindows` merges adjacent significantly degraded hours into human-readable risk windows such as `02:00-06:00`.
+
+The local mock implementation uses:
+
+- `jstat` for normal and chi-square distribution CDFs.
+- `simple-statistics` for descriptive statistics and quantiles.
 
 Recommended Worker behavior:
 

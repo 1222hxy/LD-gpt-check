@@ -3,6 +3,8 @@ import {
   binomialConfidenceInterval,
   betaPosteriorSummary,
   buildStatistics,
+  analyzeTimeOfDay,
+  chiSquareGoodness,
   cohenH,
   mean,
   minimumDetectableEffect,
@@ -62,6 +64,34 @@ describe("statistics helpers", () => {
     expect(sampleSize).toBeGreaterThan(1000);
     expect(mde).toBeLessThanOrEqual(0.021);
   });
+
+  it("detects time-of-day degradation and adjusted hourly risk", () => {
+    const hourlyBuckets = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      submissions: 20,
+      attempts: 1000,
+      accuracy: hour >= 2 && hour <= 4 ? 0.72 : 0.84,
+      avgLatencySeconds: hour >= 2 && hour <= 4 ? 12 : 8,
+    }));
+    const result = analyzeTimeOfDay(hourlyBuckets);
+
+    expect(result.omnibus.verdict).toBe("time_effect_detected");
+    expect(result.worstHours[0].hour).toBeGreaterThanOrEqual(2);
+    expect(result.worstHours[0].adjustedPValue).toBeLessThan(0.05);
+    expect(result.degradationWindows[0].label).toBe("02:00-05:00");
+  });
+
+  it("uses chi-square omnibus testing across time buckets", () => {
+    const result = chiSquareGoodness([
+      { successes: 90, trials: 100 },
+      { successes: 70, trials: 100 },
+      { successes: 88, trials: 100 },
+    ]);
+
+    expect(result.statistic).toBeGreaterThan(0);
+    expect(result.degreesOfFreedom).toBe(2);
+    expect(result.pValue).toBeLessThan(0.01);
+  });
 });
 
 describe("dashboard statistics payload", () => {
@@ -77,6 +107,9 @@ describe("dashboard statistics payload", () => {
     expect(payload.statistics.trendStability.upperControlLimit).toBeGreaterThan(
       payload.statistics.trendStability.lowerControlLimit,
     );
+    expect(payload.hourlyBuckets).toHaveLength(24);
+    expect(payload.statistics.timeOfDay.hourly).toHaveLength(24);
+    expect(payload.statistics.timeOfDay.omnibus.verdict).toMatch(/stable|time_effect_detected/);
     expect(payload.statistics.testCoverage.suites).toHaveLength(4);
   });
 

@@ -166,6 +166,64 @@
     @apply truncate text-right font-semibold tabular-nums text-stone-950;
   }
 
+  .hour-grid {
+    @apply grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8;
+  }
+
+  .hour-cell {
+    @apply min-w-0 rounded-md border px-3 py-2 text-sm;
+  }
+
+  .hour-cell span,
+  .hour-cell em {
+    @apply block truncate text-xs;
+  }
+
+  .hour-cell strong {
+    @apply mt-1 block truncate text-lg font-semibold tabular-nums;
+  }
+
+  .hour-normal {
+    @apply border-stone-200 bg-stone-50 text-stone-700;
+  }
+
+  .hour-elevated {
+    @apply border-green-200 bg-green-50 text-moss;
+  }
+
+  .hour-degraded {
+    @apply border-rose-200 bg-rose-50 text-berry;
+  }
+
+  .time-segment-row {
+    @apply grid min-h-12 grid-cols-[minmax(0,1fr)_64px_56px] items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm;
+  }
+
+  .time-segment-row strong {
+    @apply block truncate font-semibold text-stone-900;
+  }
+
+  .time-segment-row span {
+    @apply mt-1 block truncate text-xs text-stone-400;
+  }
+
+  .time-segment-row b {
+    @apply text-right font-semibold tabular-nums text-stone-950;
+  }
+
+  .time-window-card {
+    @apply min-w-0 rounded-md border border-stone-200 bg-stone-50 p-3;
+  }
+
+  .time-window-card span,
+  .time-window-card em {
+    @apply block truncate text-xs text-stone-500;
+  }
+
+  .time-window-card strong {
+    @apply mt-1 block truncate text-xl font-semibold tabular-nums text-stone-950;
+  }
+
   .data-table {
     @apply w-full min-w-[760px] border-collapse text-left text-sm;
   }

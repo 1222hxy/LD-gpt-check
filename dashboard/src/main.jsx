@@ -66,6 +66,7 @@ function App() {
             <PairwisePanel tests={data.statistics.pairwiseTests} />
             <PowerPanel statistics={data.statistics} />
           </div>
+          <TimeOfDayPanel analysis={data.statistics.timeOfDay} />
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
             <TrendPanel trend={data.trend} />
             <ModelPanel models={data.modelBreakdown} />
@@ -356,6 +357,76 @@ function PowerPanel({ statistics }) {
   );
 }
 
+function TimeOfDayPanel({ analysis }) {
+  const worstHour = analysis.summary.worstHour;
+  const worstSegment = analysis.summary.worstSegment;
+  return (
+    <Panel title="时段降智分析" icon={Clock3} action="jStat + Holm">
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="stat-card">
+          <span>卡方总体检验</span>
+          <strong>p={formatPValue(analysis.omnibus.pValue)}</strong>
+          <em>{timeOmnibusLabel(analysis.omnibus.verdict)}，df={analysis.omnibus.degreesOfFreedom}</em>
+        </div>
+        <div className="stat-card">
+          <span>最差小时</span>
+          <strong>{worstHour ? worstHour.label : "无显著"}</strong>
+          <em>{worstHour ? `${signedPercent(worstHour.deltaVsDay)}，Holm p=${formatPValue(worstHour.adjustedPValue)}` : "未检测到降智时段"}</em>
+        </div>
+        <div className="stat-card">
+          <span>最差分段</span>
+          <strong>{worstSegment ? worstSegment.label : "无"}</strong>
+          <em>{worstSegment ? `${percent(worstSegment.accuracy)}，${signedPercent(worstSegment.deltaVsDay)}` : "样本不足"}</em>
+        </div>
+        <div className="stat-card">
+          <span>受影响尝试</span>
+          <strong>{analysis.summary.affectedAttempts.toLocaleString("zh-CN")}</strong>
+          <em>Holm 校正后显著低于全天均值</em>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0">
+          <div className="hour-grid" aria-label="24 小时准确率热力图">
+            {analysis.hourly.map((hour) => (
+              <div className={`hour-cell hour-${hour.verdict}`} key={hour.hour} title={`${hour.label} ${percent(hour.accuracy)}`}>
+                <span>{String(hour.hour).padStart(2, "0")}</span>
+                <strong>{percent(hour.accuracy)}</strong>
+                <em>{signedPercent(hour.deltaVsDay)}</em>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          {analysis.segments.map((segment) => (
+            <div className="time-segment-row" key={segment.label}>
+              <div>
+                <strong>{segment.label}</strong>
+                <span>
+                  {String(segment.startHour).padStart(2, "0")}:00-{String(segment.endHour + 1).padStart(2, "0")}:00
+                </span>
+              </div>
+              <b>{percent(segment.accuracy)}</b>
+              <StatusBadge status={timeStatus(segment.verdict)} label={timeLabel(segment.verdict)} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-3">
+        {(analysis.degradationWindows.length ? analysis.degradationWindows.slice(0, 3) : [{ label: "无显著窗口", attempts: 0, riskScore: 0, minDelta: 0 }]).map((window) => (
+          <div className="time-window-card" key={window.label}>
+            <span>{window.label}</span>
+            <strong>{signedPercent(window.minDelta)}</strong>
+            <em>risk {window.riskScore}，n={window.attempts.toLocaleString("zh-CN")}</em>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
 function TrendPanel({ trend }) {
   const chartData = useMemo(
     () =>
@@ -638,6 +709,22 @@ function pairwiseLabel(value) {
 function pairwiseStatus(value) {
   if (value === "leader") return "healthy";
   if (value === "significant") return "regression";
+  return "watch";
+}
+
+function timeOmnibusLabel(value) {
+  return value === "time_effect_detected" ? "存在显著时段效应" : "未见显著时段效应";
+}
+
+function timeLabel(value) {
+  if (value === "degraded") return "降智";
+  if (value === "elevated") return "偏高";
+  return "正常";
+}
+
+function timeStatus(value) {
+  if (value === "degraded") return "regression";
+  if (value === "elevated") return "healthy";
   return "watch";
 }
 

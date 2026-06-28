@@ -30,7 +30,8 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
   const recentSubmissions = buildRecentSubmissions(selectedModels);
   const segments = buildSegments(selectedModels.length);
   const summary = summarize(trend, modelBreakdown, segments);
-  const statistics = buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions });
+  const hourlyBuckets = buildHourlyBuckets(days, selectedModels);
+  const statistics = buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets });
 
   return {
     updatedAt: new Date().toISOString(),
@@ -45,6 +46,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
     questionQuality,
     recentSubmissions,
     segments,
+    hourlyBuckets,
     statistics,
   };
 }
@@ -123,6 +125,42 @@ function buildSegments(modelCount) {
     count: Math.round(86 + modelCount * 41 + index * 34),
     accuracy: round(0.795 + index * 0.018 + modelCount * 0.006, 3),
   }));
+}
+
+function buildHourlyBuckets(days, models) {
+  const modelAccuracy = average(models.map((item) => MODEL_PROFILES[item].accuracy));
+  const modelLatency = average(models.map((item) => MODEL_PROFILES[item].latency));
+  const scale = Math.sqrt(days / 30);
+  return Array.from({ length: 24 }, (_, hour) => {
+    const volumeCurve = 1 + 0.24 * Math.sin((hour - 8) / 24 * Math.PI * 2) + 0.18 * Math.sin((hour - 15) / 24 * Math.PI * 2);
+    const circadianPenalty = circadianAccuracyPenalty(hour);
+    const latencyPenalty = circadianLatencyPenalty(hour);
+    const submissions = Math.max(8, Math.round((32 + models.length * 7) * scale * volumeCurve));
+    const attempts = submissions * 150;
+    const accuracy = clamp(modelAccuracy - circadianPenalty + Math.cos(hour / 2.7) * 0.006, 0.68, 0.93);
+
+    return {
+      hour,
+      submissions,
+      attempts,
+      accuracy: round(accuracy, 3),
+      avgLatencySeconds: round(modelLatency + latencyPenalty + Math.sin(hour / 3) * 0.4, 1),
+    };
+  });
+}
+
+function circadianAccuracyPenalty(hour) {
+  if (hour >= 2 && hour <= 5) return 0.045;
+  if (hour >= 14 && hour <= 16) return 0.026;
+  if (hour >= 22 || hour <= 1) return 0.015;
+  return 0;
+}
+
+function circadianLatencyPenalty(hour) {
+  if (hour >= 2 && hour <= 5) return 2.2;
+  if (hour >= 14 && hour <= 16) return 1.3;
+  if (hour >= 22 || hour <= 1) return 0.8;
+  return 0;
 }
 
 function summarize(trend, modelBreakdown, segments) {

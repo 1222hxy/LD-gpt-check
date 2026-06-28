@@ -1,23 +1,21 @@
+import jStatPackage from "jstat";
+import * as ss from "simple-statistics";
+
+const { jStat } = jStatPackage;
+
 export function mean(values) {
   if (!values.length) return 0;
-  return values.reduce((total, value) => total + value, 0) / values.length;
+  return ss.mean(values);
 }
 
 export function standardDeviation(values) {
   if (values.length < 2) return 0;
-  const avg = mean(values);
-  const variance = values.reduce((total, value) => total + (value - avg) ** 2, 0) / (values.length - 1);
-  return Math.sqrt(variance);
+  return ss.sampleStandardDeviation(values);
 }
 
 export function percentile(values, percentileValue) {
   if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const rank = (percentileValue / 100) * (sorted.length - 1);
-  const lower = Math.floor(rank);
-  const upper = Math.ceil(rank);
-  if (lower === upper) return sorted[lower];
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (rank - lower);
+  return ss.quantile([...values].sort((a, b) => a - b), percentileValue / 100);
 }
 
 export function binomialConfidenceInterval(successes, trials, confidence = 1.96) {
@@ -50,7 +48,7 @@ export function twoProportionZTest({ baselineSuccesses, baselineTrials, observed
   if (standardError === 0) return { zScore: 0, pValue: 1, delta: observedRate - baselineRate };
 
   const zScore = (observedRate - baselineRate) / standardError;
-  const pValue = 2 * (1 - normalCdf(Math.abs(zScore)));
+  const pValue = 2 * (1 - jStat.normal.cdf(Math.abs(zScore), 0, 1));
   return { zScore, pValue, delta: observedRate - baselineRate };
 }
 
@@ -102,7 +100,122 @@ export function minimumDetectableEffect({ baselineRate, sampleSize, alphaZ = 1.9
   return high;
 }
 
-export function buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions }) {
+export function chiSquareGoodness(rows) {
+  const totalSuccesses = rows.reduce((total, item) => total + item.successes, 0);
+  const totalFailures = rows.reduce((total, item) => total + item.trials - item.successes, 0);
+  const totalTrials = rows.reduce((total, item) => total + item.trials, 0);
+  if (totalTrials <= 0 || rows.length < 2) return { statistic: 0, degreesOfFreedom: 0, pValue: 1 };
+
+  const successRate = totalSuccesses / totalTrials;
+  const failureRate = totalFailures / totalTrials;
+  const statistic = rows.reduce((total, item) => {
+    const failures = item.trials - item.successes;
+    const expectedSuccesses = item.trials * successRate;
+    const expectedFailures = item.trials * failureRate;
+    return (
+      total +
+      ((item.successes - expectedSuccesses) ** 2) / expectedSuccesses +
+      ((failures - expectedFailures) ** 2) / expectedFailures
+    );
+  }, 0);
+  const degreesOfFreedom = rows.length - 1;
+
+  return {
+    statistic,
+    degreesOfFreedom,
+    pValue: 1 - jStat.chisquare.cdf(statistic, degreesOfFreedom),
+  };
+}
+
+export function analyzeTimeOfDay(hourlyBuckets) {
+  if (!hourlyBuckets?.length) {
+    return {
+      omnibus: { statistic: 0, degreesOfFreedom: 0, pValue: 1, verdict: "stable" },
+      hourly: [],
+      segments: [],
+      worstHours: [],
+      degradationWindows: [],
+      summary: { worstHour: null, worstSegment: null, affectedAttempts: 0 },
+    };
+  }
+
+  const rows = hourlyBuckets.map((item) => ({
+    ...item,
+    successes: Math.round(item.accuracy * item.attempts),
+    trials: item.attempts,
+  }));
+  const overallTrials = rows.reduce((total, item) => total + item.trials, 0);
+  const overallSuccesses = rows.reduce((total, item) => total + item.successes, 0);
+  const overallAccuracy = overallSuccesses / overallTrials;
+  const omnibus = chiSquareGoodness(rows);
+  const rawHourly = rows.map((item) => {
+    const test = twoProportionZTest({
+      baselineSuccesses: overallSuccesses - item.successes,
+      baselineTrials: overallTrials - item.trials,
+      observedSuccesses: item.successes,
+      observedTrials: item.trials,
+    });
+    const ci = binomialConfidenceInterval(item.successes, item.trials);
+    const posterior = betaPosteriorSummary(item.successes, item.trials);
+    return {
+      hour: item.hour,
+      label: `${String(item.hour).padStart(2, "0")}:00`,
+      attempts: item.trials,
+      submissions: item.submissions,
+      accuracy: item.successes / item.trials,
+      avgLatencySeconds: item.avgLatencySeconds,
+      ci95Low: ci.low,
+      ci95High: ci.high,
+      posteriorLow: posterior.low,
+      posteriorHigh: posterior.high,
+      deltaVsDay: test.delta,
+      zScore: test.zScore,
+      pValue: test.pValue,
+      adjustedPValue: test.pValue,
+      effectSize: cohenH(item.successes / item.trials, overallAccuracy),
+      riskScore: Math.max(0, -test.delta) * Math.sqrt(item.trials),
+      verdict: "pending",
+    };
+  });
+  const adjusted = holmAdjust(rawHourly.map((item) => item.pValue));
+  rawHourly.forEach((item, index) => {
+    item.adjustedPValue = adjusted[index];
+    item.verdict = item.adjustedPValue < 0.05 && item.deltaVsDay < 0 ? "degraded" : item.adjustedPValue < 0.05 ? "elevated" : "normal";
+  });
+
+  const hourly = rawHourly.map(formatHourlyResult);
+  const segments = buildTimeSegments(rows, overallSuccesses, overallTrials);
+  const worstHours = hourly
+    .filter((item) => item.verdict === "degraded")
+    .sort((a, b) => b.riskScore - a.riskScore)
+    .slice(0, 5);
+  const degradationWindows = buildDegradationWindows(hourly);
+  const worstSegment = [...segments].sort((a, b) => a.deltaVsDay - b.deltaVsDay)[0] || null;
+  const affectedAttempts = hourly
+    .filter((item) => item.verdict === "degraded")
+    .reduce((total, item) => total + item.attempts, 0);
+
+  return {
+    omnibus: {
+      statistic: round(omnibus.statistic, 2),
+      degreesOfFreedom: omnibus.degreesOfFreedom,
+      pValue: round(omnibus.pValue, 4),
+      verdict: omnibus.pValue < 0.05 ? "time_effect_detected" : "stable",
+    },
+    hourly,
+    segments,
+    worstHours,
+    degradationWindows,
+    summary: {
+      worstHour: worstHours[0] || null,
+      worstSegment,
+      affectedAttempts,
+      overallAccuracy: round(overallAccuracy, 3),
+    },
+  };
+}
+
+export function buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets }) {
   const modelTrials = modelBreakdown.map((item) => item.submissions * 150);
   const modelSuccesses = modelBreakdown.map((item, index) => Math.round(item.accuracy * modelTrials[index]));
   const totalTrials = modelTrials.reduce((total, value) => total + value, 0);
@@ -186,6 +299,7 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
     pairwiseTests,
     testCoverage,
     trendStability: buildTrendStability(trend),
+    timeOfDay: analyzeTimeOfDay(hourlyBuckets),
   };
 }
 
@@ -259,6 +373,113 @@ function holmAdjust(pValues) {
   return adjusted;
 }
 
+function buildTimeSegments(rows, overallSuccesses, overallTrials) {
+  const segmentDefs = [
+    { label: "深夜", startHour: 0, endHour: 5 },
+    { label: "上午", startHour: 6, endHour: 11 },
+    { label: "下午", startHour: 12, endHour: 17 },
+    { label: "晚间", startHour: 18, endHour: 23 },
+  ];
+
+  const raw = segmentDefs.map((segment) => {
+    const items = rows.filter((item) => item.hour >= segment.startHour && item.hour <= segment.endHour);
+    const successes = items.reduce((total, item) => total + item.successes, 0);
+    const trials = items.reduce((total, item) => total + item.trials, 0);
+    const latencyValues = items.map((item) => item.avgLatencySeconds);
+    const test = twoProportionZTest({
+      baselineSuccesses: overallSuccesses - successes,
+      baselineTrials: overallTrials - trials,
+      observedSuccesses: successes,
+      observedTrials: trials,
+    });
+    return {
+      ...segment,
+      attempts: trials,
+      accuracy: successes / trials,
+      avgLatencySeconds: mean(latencyValues),
+      deltaVsDay: test.delta,
+      zScore: test.zScore,
+      pValue: test.pValue,
+      adjustedPValue: test.pValue,
+      verdict: "pending",
+    };
+  });
+
+  const adjusted = holmAdjust(raw.map((item) => item.pValue));
+  raw.forEach((item, index) => {
+    item.adjustedPValue = adjusted[index];
+    item.verdict = item.adjustedPValue < 0.05 && item.deltaVsDay < 0 ? "degraded" : item.adjustedPValue < 0.05 ? "elevated" : "normal";
+  });
+
+  return raw.map((item) => ({
+    ...item,
+    accuracy: round(item.accuracy, 3),
+    avgLatencySeconds: round(item.avgLatencySeconds, 1),
+    deltaVsDay: round(item.deltaVsDay, 3),
+    zScore: round(item.zScore, 2),
+    pValue: round(item.pValue, 4),
+    adjustedPValue: round(item.adjustedPValue, 4),
+  }));
+}
+
+function buildDegradationWindows(hourly) {
+  const windows = [];
+  let current = null;
+
+  hourly.forEach((item) => {
+    if (item.verdict !== "degraded") {
+      if (current) windows.push(current);
+      current = null;
+      return;
+    }
+
+    if (!current) {
+      current = {
+        startHour: item.hour,
+        endHour: item.hour,
+        attempts: item.attempts,
+        riskScore: item.riskScore,
+        minDelta: item.deltaVsDay,
+      };
+      return;
+    }
+
+    current.endHour = item.hour;
+    current.attempts += item.attempts;
+    current.riskScore += item.riskScore;
+    current.minDelta = Math.min(current.minDelta, item.deltaVsDay);
+  });
+
+  if (current) windows.push(current);
+
+  return windows
+    .map((item) => ({
+      ...item,
+      label: `${String(item.startHour).padStart(2, "0")}:00-${String(item.endHour + 1).padStart(2, "0")}:00`,
+      riskScore: round(item.riskScore, 2),
+      minDelta: round(item.minDelta, 3),
+    }))
+    .sort((a, b) => b.riskScore - a.riskScore);
+}
+
+function formatHourlyResult(item) {
+  return {
+    ...item,
+    accuracy: round(item.accuracy, 3),
+    avgLatencySeconds: round(item.avgLatencySeconds, 1),
+    ci95Low: round(item.ci95Low, 3),
+    ci95High: round(item.ci95High, 3),
+    posteriorLow: round(item.posteriorLow, 3),
+    posteriorHigh: round(item.posteriorHigh, 3),
+    deltaVsDay: round(item.deltaVsDay, 3),
+    zScore: round(item.zScore, 2),
+    pValue: round(item.pValue, 4),
+    adjustedPValue: round(item.adjustedPValue, 4),
+    effectSize: round(item.effectSize, 3),
+    riskScore: round(item.riskScore, 2),
+  };
+}
+
 function buildTrendStability(trend) {
   const accuracyValues = trend.map((item) => item.accuracy);
   const submissionValues = trend.map((item) => item.submissions);
@@ -308,24 +529,6 @@ function buildTestCoverage(questionQuality, recentSubmissions) {
     watchCount,
     flakyQuestions,
   };
-}
-
-function normalCdf(value) {
-  return 0.5 * (1 + erf(value / Math.sqrt(2)));
-}
-
-function erf(value) {
-  const sign = value < 0 ? -1 : 1;
-  const x = Math.abs(value);
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-  const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return sign * y;
 }
 
 function round(value, decimals) {
