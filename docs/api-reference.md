@@ -145,8 +145,11 @@ grader 类型：
 
 - `GET /admin`：查看管理后台入口。
 - `GET /admin/questions`：查看当前题库 JSON 编辑页。
+- `GET /admin/bridges`：查看中转站 base URL 映射管理页。
 - `GET /api/v1/admin/questions`：读取当前可编辑题库，要求管理员 Web session。
 - `POST /api/v1/admin/questions`：保存题库到 D1 表 `question_banks.questions_json`，要求管理员 Web session 和同源请求。
+- `GET /api/v1/admin/bridges`：读取全局中转站和 base URL 映射。
+- `POST /api/v1/admin/bridges`：保存一个中转站及其多个 base URL；服务端会规范化 URL 并阻止同一 base URL 归属多个中转站。
 
 ## POST /api/device/start
 
@@ -399,7 +402,7 @@ Query 参数：
 ```json
 {
   "upload_id": "upl_0123456789abcdef0123456789abcdef",
-  "upload_schema_version": 3,
+  "upload_schema_version": 4,
   "client_version": "0.1.0",
   "model": "gpt-5.5",
   "reasoning_effort": "xhigh",
@@ -424,6 +427,7 @@ Query 参数：
   "codex_model_source": "explicit",
   "codex_model_provider": "openai",
   "codex_provider_host": "api.openai.com",
+  "codex_provider_base_url": "https://api.openai.com/v1",
   "codex_sandbox": "read-only",
   "codex_ephemeral": true,
   "codex_skip_git_repo_check": true,
@@ -496,7 +500,7 @@ Query 参数：
 | `model` | string | Codex 使用的模型名 |
 | `reasoning_effort` | string | 推理强度，如 `low`、`medium`、`high`、`xhigh` |
 | `upload_id` | string | CLI 生成的幂等上传 ID，同一用户重复提交会返回同一 submission |
-| `upload_schema_version` | integer | 上传 payload 版本；当前 Go CLI 使用 `3`，服务端兼容旧 v2 |
+| `upload_schema_version` | integer | 上传 payload 版本；当前 Go CLI 使用 `4`，服务端要求 v4 及以上 |
 | `question_count` | integer | 本次包含的问题数量 |
 | `attempt_count` | integer | 本次总尝试次数 |
 | `correct` | integer | 正确尝试次数 |
@@ -517,6 +521,9 @@ Query 参数：
 | `codex_model_source` | string | 模型来源：`explicit`、`codex_config` 或 `unknown` |
 | `codex_model_provider` | string | Codex 配置中的 provider 名称，可能为空 |
 | `codex_provider_host` | string | provider `base_url` 的 host，不含协议、路径或 query |
+| `codex_provider_base_url` | string | 规范化后的 HTTPS provider base URL，保留 path，去除 query/fragment；用于区分官方渠道、中转站和未知中转站 |
+| `codex_channel` | string | 服务端落库分类：`official`、`bridge`、`unknown_bridge`；上传方无需传入 |
+| `codex_bridge_name` | string | 命中管理员配置的中转站映射时返回的中转站名称 |
 | `codex_sandbox` | string | CLI 本次实际使用的 Codex sandbox，当前为 `read-only` |
 | `codex_disabled_features` | array | 本次禁用的 Codex 功能摘要，当前包含 `memories` |
 | `questions` | array | 每道题的汇总结果 |
@@ -569,6 +576,10 @@ Query 参数：
       "accuracy": 100,
       "avg_time_seconds": 2.4,
       "avg_tps": 5,
+      "codex_provider_base_url": "https://api.openai.com/v1",
+      "codex_channel": "official",
+      "codex_bridge_id": "",
+      "codex_bridge_name": "",
       "anonymous": true,
       "user": {
         "anonymous": true,
