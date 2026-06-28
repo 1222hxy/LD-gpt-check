@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 const apiBaseURL = process.env.VITE_PUBLIC_API_BASE_URL || "https://codexgo.yhklab.com";
 
 export default defineConfig({
+  base: "/dashboard/",
   plugins: [react()],
   build: {
     rollupOptions: {
