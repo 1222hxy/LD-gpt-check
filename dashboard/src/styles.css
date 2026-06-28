@@ -40,6 +40,29 @@
     @apply min-w-0 rounded-md border border-stone-200 bg-white p-4 shadow-soft;
   }
 
+  .stat-card,
+  .mini-stat {
+    @apply min-w-0 rounded-md border border-stone-200 bg-stone-50 p-3;
+  }
+
+  .stat-card span,
+  .mini-stat span {
+    @apply block truncate text-xs font-medium text-stone-500;
+  }
+
+  .stat-card strong,
+  .mini-stat strong {
+    @apply mt-1 block truncate text-lg font-semibold tabular-nums text-stone-950;
+  }
+
+  .stat-card em {
+    @apply mt-2 block truncate text-xs not-italic text-stone-400;
+  }
+
+  .mini-stat strong {
+    @apply text-xl;
+  }
+
   .metric-icon {
     @apply grid h-9 w-9 place-items-center rounded-md;
   }
@@ -116,8 +139,24 @@
     @apply h-2.5 w-2.5 rounded-full;
   }
 
+  .test-row {
+    @apply grid min-h-12 grid-cols-[minmax(0,1fr)_150px_56px] items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm;
+  }
+
+  .test-row strong {
+    @apply block truncate font-semibold text-stone-900;
+  }
+
+  .test-row span {
+    @apply mt-1 block truncate text-xs text-stone-400;
+  }
+
   .data-table {
     @apply w-full min-w-[760px] border-collapse text-left text-sm;
+  }
+
+  .stats-table {
+    @apply min-w-[840px];
   }
 
   .data-table th {

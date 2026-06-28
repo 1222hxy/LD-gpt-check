@@ -1,3 +1,5 @@
+import { buildStatistics } from "../statistics.js";
+
 const MODELS = ["gpt-5.5", "gpt-5.5-mini", "o4-mini", "deepseek-r1"];
 const MODEL_PROFILES = {
   "gpt-5.5": { accuracy: 0.885, tps: 39.4, latency: 7.8, share: 0.36 },
@@ -28,6 +30,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
   const recentSubmissions = buildRecentSubmissions(selectedModels);
   const segments = buildSegments(selectedModels.length);
   const summary = summarize(trend, modelBreakdown, segments);
+  const statistics = buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions });
 
   return {
     updatedAt: new Date().toISOString(),
@@ -42,6 +45,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
     questionQuality,
     recentSubmissions,
     segments,
+    statistics,
   };
 }
 

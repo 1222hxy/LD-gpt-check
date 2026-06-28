@@ -85,9 +85,73 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
       "count": 612,
       "accuracy": 0.861
     }
-  ]
+  ],
+  "statistics": {
+    "accuracy": {
+      "mean": 0.842,
+      "stdDev": 0.032,
+      "ci95Low": 0.836,
+      "ci95High": 0.848,
+      "marginOfError": 0.006,
+      "sampleSize": 192600
+    },
+    "latency": {
+      "mean": 8.7,
+      "median": 8.1,
+      "p90": 12.4,
+      "p95": 13.8,
+      "stdDev": 2.1
+    },
+    "regression": {
+      "baselineAccuracy": 0.835,
+      "observedAccuracy": 0.842,
+      "delta": 0.007,
+      "zScore": 2.9,
+      "pValue": 0.0037,
+      "verdict": "improved"
+    },
+    "modelComparisons": [
+      {
+        "model": "gpt-5.5",
+        "sampleSize": 76650,
+        "accuracy": 0.882,
+        "ci95Low": 0.88,
+        "ci95High": 0.884,
+        "marginOfError": 0.002,
+        "deltaVsBest": 0,
+        "verdict": "leader"
+      }
+    ],
+    "testCoverage": {
+      "suites": [
+        {
+          "label": "API contract",
+          "passed": 18,
+          "total": 18,
+          "status": "pass"
+        }
+      ],
+      "totalAttempts": 6120,
+      "passRate": 0.78,
+      "regressionCount": 1,
+      "watchCount": 4,
+      "flakyQuestions": 2
+    },
+    "trendStability": {
+      "submissionStdDev": 8.4,
+      "accuracyStdDev": 0.021
+    }
+  }
 }
 ```
+
+## Statistical Fields
+
+- `accuracy.ci95Low` and `accuracy.ci95High` use a Wilson score interval for binomial pass/fail attempts.
+- `latency.p90` and `latency.p95` are percentile values from recent submissions.
+- `regression` compares the current window against a baseline using a two-proportion z-test.
+- `modelComparisons` gives per-model confidence intervals and whether the interval overlaps with the best model.
+- `testCoverage` summarizes automated checks, regression samples, and visual smoke checks shown in the dashboard.
 
 Recommended Worker behavior:
 

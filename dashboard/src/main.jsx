@@ -58,6 +58,10 @@ function App() {
         <Sidebar filters={filters} models={data.filters.models} onChange={setFilters} />
         <div className="grid min-w-0 gap-5">
           <SummaryGrid summary={data.summary} />
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <StatisticsPanel statistics={data.statistics} />
+            <TestPanel coverage={data.statistics.testCoverage} />
+          </div>
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
             <TrendPanel trend={data.trend} />
             <ModelPanel models={data.modelBreakdown} />
@@ -169,6 +173,110 @@ function SummaryGrid({ summary }) {
         </article>
       ))}
     </section>
+  );
+}
+
+function StatisticsPanel({ statistics }) {
+  const cards = [
+    {
+      label: "准确率 95% CI",
+      value: `${percent(statistics.accuracy.ci95Low)} - ${percent(statistics.accuracy.ci95High)}`,
+      meta: `n=${statistics.accuracy.sampleSize.toLocaleString("zh-CN")}，误差 ${percent(statistics.accuracy.marginOfError)}`,
+    },
+    {
+      label: "准确率标准差",
+      value: percent(statistics.accuracy.stdDev),
+      meta: "模型间离散度",
+    },
+    {
+      label: "P95 耗时",
+      value: `${statistics.latency.p95}s`,
+      meta: `中位数 ${statistics.latency.median}s，标准差 ${statistics.latency.stdDev}s`,
+    },
+    {
+      label: "回归 z 检验",
+      value: `z=${statistics.regression.zScore}`,
+      meta: `p=${formatPValue(statistics.regression.pValue)}，${verdictLabel(statistics.regression.verdict)}`,
+    },
+  ];
+
+  return (
+    <Panel title="统计置信度" icon={ShieldCheck} action="95% CI / z-test">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => (
+          <div className="stat-card" key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <em>{card.meta}</em>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 min-w-0 overflow-x-auto">
+        <table className="data-table stats-table">
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>样本量</th>
+              <th>准确率</th>
+              <th>95% CI</th>
+              <th>相对最佳</th>
+              <th>判断</th>
+            </tr>
+          </thead>
+          <tbody>
+            {statistics.modelComparisons.map((item) => (
+              <tr key={item.model}>
+                <td>{item.model}</td>
+                <td>{item.sampleSize.toLocaleString("zh-CN")}</td>
+                <td>{percent(item.accuracy)}</td>
+                <td>
+                  {percent(item.ci95Low)} - {percent(item.ci95High)}
+                </td>
+                <td>{signedPercent(item.deltaVsBest)}</td>
+                <td>
+                  <StatusBadge status={modelVerdictStatus(item.verdict)} label={modelVerdictLabel(item.verdict)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+function TestPanel({ coverage }) {
+  return (
+    <Panel title="测试矩阵" icon={Activity} action={percent(coverage.passRate)}>
+      <div className="grid gap-2">
+        {coverage.suites.map((suite) => (
+          <div className="test-row" key={suite.label}>
+            <div>
+              <strong>{suite.label}</strong>
+              <span>
+                {suite.passed.toLocaleString("zh-CN")} / {suite.total.toLocaleString("zh-CN")}
+              </span>
+            </div>
+            <Progress value={suite.passed / suite.total} />
+            <StatusBadge status={suite.status === "pass" ? "healthy" : "watch"} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mini-stat">
+          <span>观察项</span>
+          <strong>{coverage.watchCount}</strong>
+        </div>
+        <div className="mini-stat">
+          <span>回退项</span>
+          <strong>{coverage.regressionCount}</strong>
+        </div>
+        <div className="mini-stat">
+          <span>波动题</span>
+          <strong>{coverage.flakyQuestions}</strong>
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -363,8 +471,8 @@ function Progress({ value }) {
   );
 }
 
-function StatusBadge({ status }) {
-  const label = status === "healthy" ? "稳定" : status === "watch" ? "观察" : "回退";
+function StatusBadge({ status, label }) {
+  label = label || (status === "healthy" ? "稳定" : status === "watch" ? "观察" : "回退");
   return <span className={`status-badge status-${status}`}>{label}</span>;
 }
 
@@ -415,6 +523,34 @@ function formatTooltipValue(item) {
 
 function percent(value) {
   return `${Math.round(value * 1000) / 10}%`;
+}
+
+function signedPercent(value) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${percent(value)}`;
+}
+
+function formatPValue(value) {
+  if (value < 0.0001) return "<0.0001";
+  return String(value);
+}
+
+function verdictLabel(value) {
+  if (value === "improved") return "显著提升";
+  if (value === "regression") return "显著回退";
+  return "未见显著差异";
+}
+
+function modelVerdictLabel(value) {
+  if (value === "leader") return "最佳";
+  if (value === "overlap") return "区间重叠";
+  return "低于最佳";
+}
+
+function modelVerdictStatus(value) {
+  if (value === "leader") return "healthy";
+  if (value === "overlap") return "watch";
+  return "regression";
 }
 
 function compact(value) {
