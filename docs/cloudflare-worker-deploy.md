@@ -66,7 +66,7 @@ compatibility_date = "2026-06-28"
 directory = "../frontend/dist"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/account", "/health", "/api/*", "/device", "/auth/*", "/logout"]
+run_worker_first = ["/account", "/admin", "/health", "/api/*", "/device", "/auth/*", "/logout"]
 
 [vars]
 BASE_URL = "https://YOUR_WORKER_DOMAIN"
@@ -88,7 +88,7 @@ database_id = "YOUR_DATABASE_ID"
 - `[assets]` 让 Worker 同时服务产品首页；`run_worker_first` 中的路径继续交给后端逻辑处理。
 - Linux.do OAuth URL 请以你的 Linux.do 开发者后台为准。
 - `ALLOWED_ORIGINS` 是可选 CORS 白名单，多个 origin 用英文逗号分隔；`BASE_URL` 的 origin 会自动允许。
-- `ADMIN_LINUXDO_IDS` 是允许进入题目管理后台的 Linux.do 用户 UID，多个 UID 用英文逗号分隔。当前默认管理员 UID 是 `29368`。
+- `ADMIN_LINUXDO_IDS` 是允许进入 `/admin` 管理后台的 Linux.do 用户 UID，多个 UID 用英文逗号分隔。当前默认管理员 UID 是 `29368`。
 - `wrangler.toml` 可能包含环境差异，生产项目可不提交该文件，只提交 `wrangler.toml.example`。
 
 ## 4. 设置 secrets
@@ -222,15 +222,15 @@ bin/ld-gpt-check run -m gpt-5.5 -r xhigh -n 1 --upload
 ```text
 https://YOUR_WORKER_DOMAIN/
 https://YOUR_WORKER_DOMAIN/account
-https://YOUR_WORKER_DOMAIN/admin/questions
+https://YOUR_WORKER_DOMAIN/admin
 ```
 
 ## 8. 远程题目管理
 
-题目管理后台是静态前端页面，后端只提供 JSON API。访问：
+管理后台入口是 Worker 渲染页面，题目管理是后台中的一个静态前端模块，读写通过受保护 JSON API 完成。访问：
 
 ```text
-https://YOUR_WORKER_DOMAIN/admin/questions
+https://YOUR_WORKER_DOMAIN/admin
 ```
 
 要求：

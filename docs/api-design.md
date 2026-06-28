@@ -36,7 +36,8 @@ API 服务承担三类职责：
 | 轮询设备登录 | `POST /api/device/poll` | `POST /api/v1/device-authorizations/token` |
 | 授权页面 | `GET /device` | `GET /device` |
 | 获取当前题库 | `GET /api/questions` | `GET /api/v1/questions` |
-| 题目管理后台 | `GET/POST /admin/questions` | 浏览器 HTML 路由 |
+| 管理后台入口 | `GET /admin` | 浏览器 HTML 路由 |
+| 题目管理页面 | `GET /admin/questions` | 浏览器 HTML 路由 |
 | 提交页面授权 | `POST /api/device/approve` | `POST /api/v1/device-authorizations/approve` 或保留 HTML 表单路由 |
 | Linux.do OAuth 开始 | `GET /auth/linuxdo/start` | `GET /auth/linuxdo/start` |
 | Linux.do OAuth 回调 | `GET /auth/linuxdo/callback` | `GET /auth/linuxdo/callback` |
@@ -86,7 +87,7 @@ Cookie 要求：
 - HTTPS 环境启用 `Secure`
 - 设置明确过期时间
 
-题目管理后台 `/admin/questions` 也使用该 Web session。用户必须已通过 Linux.do 登录，且 Linux.do UID 命中 Worker 的管理员列表 `ADMIN_LINUXDO_IDS`。当前默认管理员 UID 是 `29368`。
+管理后台 `/admin` 和题目管理页面 `/admin/questions` 也使用该 Web session。用户必须已通过 Linux.do 登录，且 Linux.do UID 命中 Worker 的管理员列表 `ADMIN_LINUXDO_IDS`。当前默认管理员 UID 是 `29368`。账号页 `/account` 只在当前用户是管理员时显示管理后台入口。
 
 ### OAuth State
 

@@ -124,9 +124,15 @@ grader 类型：
 
 - `404 not_found`：指定的 `slug` 不存在或未启用。
 
+## GET /admin
+
+管理后台入口页。只有管理员可访问；管理员登录后也会在 `/account` 页面看到该入口，非管理员隐藏入口。
+
+认证：Web session cookie。未登录会显示 Linux.do 登录入口；已登录但不在管理员列表时返回 `403`。
+
 ## GET /admin/questions
 
-题目管理后台静态页面。该页面和 API Worker 同源，但页面文件由 `frontend/public/admin/questions/index.html` 构建到静态资源；Worker 只提供 JSON API。
+题目管理页面。该页面和 API Worker 同源，页面文件由 `frontend/public/admin/questions/index.html` 构建到静态资源；具体读写通过受保护 JSON API 完成。
 
 认证：Web session cookie。未登录会跳转 Linux.do OAuth；已登录但不在管理员列表时返回 `403`。
 
@@ -137,6 +143,7 @@ grader 类型：
 
 功能：
 
+- `GET /admin`：查看管理后台入口。
 - `GET /admin/questions`：查看当前题库 JSON 编辑页。
 - `GET /api/v1/admin/questions`：读取当前可编辑题库，要求管理员 Web session。
 - `POST /api/v1/admin/questions`：保存题库到 D1 表 `question_banks.questions_json`，要求管理员 Web session 和同源请求。

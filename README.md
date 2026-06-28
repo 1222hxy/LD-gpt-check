@@ -130,7 +130,7 @@ bin/ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite custom_
 Remote admin workflow:
 
 1. Log in at `https://codexgo.yhklab.com/account` with Linux.do.
-2. Open `https://codexgo.yhklab.com/admin/questions`.
+2. Open `https://codexgo.yhklab.com/admin`.
 3. Paste the question bank JSON and save it.
 4. Users run `bin/ld-gpt-check run --list-suites` or `bin/ld-gpt-check run --suite custom_1`.
 
