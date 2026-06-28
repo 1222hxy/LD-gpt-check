@@ -127,6 +127,65 @@ export function chiSquareGoodness(rows) {
   };
 }
 
+export function correlationTest(pairs) {
+  const clean = pairs.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  if (clean.length < 3) return { r: 0, pValue: 1, sampleSize: clean.length, strength: "insufficient" };
+  const xs = clean.map(([x]) => x);
+  const ys = clean.map(([, y]) => y);
+  const r = ss.sampleCorrelation(xs, ys);
+  const degreesOfFreedom = clean.length - 2;
+  const t = Math.abs(r) >= 1 ? Infinity : r * Math.sqrt(degreesOfFreedom / (1 - r ** 2));
+  const pValue = Number.isFinite(t) ? 2 * (1 - jStat.studentt.cdf(Math.abs(t), degreesOfFreedom)) : 0;
+  return {
+    r,
+    pValue,
+    sampleSize: clean.length,
+    strength: correlationStrength(r),
+  };
+}
+
+export function linearTrendForecast(points, horizon = 7) {
+  if (points.length < 3) {
+    return {
+      slope: 0,
+      intercept: points[0]?.[1] ?? 0,
+      rSquared: 0,
+      pValue: 1,
+      residualStdDev: 0,
+      forecast: [],
+      verdict: "insufficient",
+    };
+  }
+
+  const regression = ss.linearRegression(points);
+  const line = ss.linearRegressionLine(regression);
+  const residuals = points.map(([x, y]) => y - line(x));
+  const residualStdDev = standardDeviation(residuals);
+  const rSquared = ss.rSquared(points, line);
+  const slopeTest = slopePValue(points, regression.m);
+  const lastX = points[points.length - 1][0];
+  const forecast = Array.from({ length: horizon }, (_, index) => {
+    const x = lastX + index + 1;
+    const predicted = line(x);
+    return {
+      step: index + 1,
+      value: predicted,
+      low: predicted - 1.96 * residualStdDev,
+      high: predicted + 1.96 * residualStdDev,
+    };
+  });
+
+  return {
+    slope: regression.m,
+    intercept: regression.b,
+    rSquared,
+    pValue: slopeTest.pValue,
+    residualStdDev,
+    forecast,
+    verdict: slopeTest.pValue < 0.05 ? (regression.m >= 0 ? "rising" : "falling") : "flat",
+  };
+}
+
 export function analyzeTimeOfDay(hourlyBuckets) {
   if (!hourlyBuckets?.length) {
     return {
@@ -300,6 +359,164 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
     testCoverage,
     trendStability: buildTrendStability(trend),
     timeOfDay: analyzeTimeOfDay(hourlyBuckets),
+    forecast: buildForecast(trend),
+    correlations: buildCorrelations({ trend, questionQuality, hourlyBuckets }),
+    questionDiagnostics: buildQuestionDiagnostics(questionQuality),
+    modelRanking: buildModelRanking(modelBreakdown, modelSuccesses, modelTrials),
+    robustness: buildRobustness({ recentSubmissions, questionQuality }),
+  };
+}
+
+function buildForecast(trend) {
+  const accuracyTrend = linearTrendForecast(trend.map((item, index) => [index, item.accuracy]), 7);
+  const submissionTrend = linearTrendForecast(trend.map((item, index) => [index, item.submissions]), 7);
+  return {
+    accuracy: formatForecast(accuracyTrend, 3),
+    submissions: formatForecast(submissionTrend, 0),
+  };
+}
+
+function buildCorrelations({ trend, questionQuality, hourlyBuckets }) {
+  const rows = [
+    {
+      metric: "小时耗时 vs 准确率",
+      x: "avgLatencySeconds",
+      y: "accuracy",
+      expectedDirection: "negative",
+      ...correlationTest(hourlyBuckets.map((item) => [item.avgLatencySeconds, item.accuracy])),
+    },
+    {
+      metric: "小时流量 vs 准确率",
+      x: "attempts",
+      y: "accuracy",
+      expectedDirection: "neutral",
+      ...correlationTest(hourlyBuckets.map((item) => [item.attempts, item.accuracy])),
+    },
+    {
+      metric: "提交量 vs 准确率",
+      x: "submissions",
+      y: "accuracy",
+      expectedDirection: "neutral",
+      ...correlationTest(trend.map((item) => [item.submissions, item.accuracy])),
+    },
+    {
+      metric: "题目耗时 vs 失败率",
+      x: "avgTimeSeconds",
+      y: "failureRate",
+      expectedDirection: "positive",
+      ...correlationTest(questionQuality.map((item) => [item.avgTimeSeconds, item.failureRate])),
+    },
+  ];
+
+  return rows.map((item) => ({
+    ...item,
+    r: round(item.r, 3),
+    pValue: round(item.pValue, 4),
+    verdict: item.pValue < 0.05 ? "significant" : "not_significant",
+  }));
+}
+
+function buildQuestionDiagnostics(questionQuality) {
+  const failureRates = questionQuality.map((item) => item.failureRate);
+  const avgTimes = questionQuality.map((item) => item.avgTimeSeconds);
+  const failureMean = mean(failureRates);
+  const failureStd = standardDeviation(failureRates);
+  const timeMedian = ss.median(avgTimes);
+
+  return questionQuality
+    .map((item) => {
+      const successes = Math.round(item.attempts * item.accuracy);
+      const ci = binomialConfidenceInterval(successes, item.attempts);
+      const difficultyZ = failureStd ? (item.failureRate - failureMean) / failureStd : 0;
+      const timePenalty = item.avgTimeSeconds / timeMedian;
+      const priorityScore = item.failureRate * Math.sqrt(item.attempts) * timePenalty;
+      return {
+        questionId: item.questionId,
+        title: item.title,
+        attempts: item.attempts,
+        accuracy: item.accuracy,
+        failureRate: item.failureRate,
+        ci95Low: round(ci.low, 3),
+        ci95High: round(ci.high, 3),
+        difficultyZ: round(difficultyZ, 2),
+        priorityScore: round(priorityScore, 2),
+        verdict: priorityScore > 12 || difficultyZ > 1 ? "audit" : priorityScore > 7 ? "watch" : "normal",
+      };
+    })
+    .sort((a, b) => b.priorityScore - a.priorityScore);
+}
+
+function buildModelRanking(modelBreakdown, modelSuccesses, modelTrials) {
+  const posterior = modelBreakdown.map((item, index) => {
+    const successes = modelSuccesses[index];
+    const trials = modelTrials[index];
+    const alpha = successes + 1;
+    const beta = trials - successes + 1;
+    const meanValue = alpha / (alpha + beta);
+    const variance = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1));
+    return {
+      model: item.model,
+      posteriorMean: meanValue,
+      posteriorStdDev: Math.sqrt(variance),
+      expectedLoss: Math.max(...modelBreakdown.map((model) => model.accuracy)) - item.accuracy,
+      probabilityBest: 0,
+    };
+  });
+
+  posterior.forEach((item) => {
+    const probability = posterior
+      .filter((candidate) => candidate.model !== item.model)
+      .reduce((product, candidate) => {
+        const variance = item.posteriorStdDev ** 2 + candidate.posteriorStdDev ** 2;
+        const z = variance ? (item.posteriorMean - candidate.posteriorMean) / Math.sqrt(variance) : 0;
+        return product * jStat.normal.cdf(z, 0, 1);
+      }, 1);
+    item.probabilityBest = probability;
+  });
+
+  const totalProbability = posterior.reduce((total, item) => total + item.probabilityBest, 0) || 1;
+
+  return posterior
+    .map((item) => ({
+      model: item.model,
+      posteriorMean: round(item.posteriorMean, 3),
+      posteriorStdDev: round(item.posteriorStdDev, 4),
+      probabilityBest: round(item.probabilityBest / totalProbability, 3),
+      expectedLoss: round(item.expectedLoss, 3),
+      verdict: item.expectedLoss <= 0.005 ? "ship" : item.expectedLoss <= 0.03 ? "candidate" : "avoid",
+    }))
+    .sort((a, b) => b.probabilityBest - a.probabilityBest);
+}
+
+function buildRobustness({ recentSubmissions, questionQuality }) {
+  const submissionAccuracy = recentSubmissions.map((item) => item.accuracy);
+  const submissionLatency = recentSubmissions.map((item) => item.avgTimeSeconds);
+  const questionFailures = questionQuality.map((item) => item.failureRate);
+
+  return {
+    recentOutliers: recentSubmissions
+      .map((item) => ({
+        id: item.id,
+        model: item.model,
+        accuracy: item.accuracy,
+        latency: item.avgTimeSeconds,
+        accuracyRobustZ: round(robustZ(item.accuracy, submissionAccuracy), 2),
+        latencyRobustZ: round(robustZ(item.avgTimeSeconds, submissionLatency), 2),
+      }))
+      .filter((item) => item.accuracyRobustZ <= -1.5 || item.latencyRobustZ >= 1.5),
+    questionOutliers: questionQuality
+      .map((item) => ({
+        questionId: item.questionId,
+        title: item.title,
+        failureRate: item.failureRate,
+        failureRobustZ: round(robustZ(item.failureRate, questionFailures), 2),
+      }))
+      .filter((item) => item.failureRobustZ >= 1.5),
+    baselines: {
+      submissionAccuracyMedian: round(ss.median(submissionAccuracy), 3),
+      submissionLatencyMedian: round(ss.median(submissionLatency), 1),
+      questionFailureMedian: round(ss.median(questionFailures), 3),
+    },
   };
 }
 
@@ -529,6 +746,57 @@ function buildTestCoverage(questionQuality, recentSubmissions) {
     watchCount,
     flakyQuestions,
   };
+}
+
+function formatForecast(trend, decimals) {
+  return {
+    slope: round(trend.slope, decimals === 0 ? 2 : 4),
+    intercept: round(trend.intercept, decimals),
+    rSquared: round(trend.rSquared, 3),
+    pValue: round(trend.pValue, 4),
+    residualStdDev: round(trend.residualStdDev, decimals === 0 ? 1 : 4),
+    verdict: trend.verdict,
+    forecast: trend.forecast.map((item) => ({
+      step: item.step,
+      value: round(item.value, decimals),
+      low: round(item.low, decimals),
+      high: round(item.high, decimals),
+    })),
+  };
+}
+
+function slopePValue(points, slope) {
+  const n = points.length;
+  if (n < 3) return { t: 0, pValue: 1 };
+  const xs = points.map(([x]) => x);
+  const xMean = mean(xs);
+  const line = ss.linearRegressionLine(ss.linearRegression(points));
+  const residuals = points.map(([x, y]) => y - line(x));
+  const sxx = xs.reduce((total, x) => total + (x - xMean) ** 2, 0);
+  const residualVariance = residuals.reduce((total, value) => total + value ** 2, 0) / (n - 2);
+  const standardError = Math.sqrt(residualVariance / sxx);
+  if (!standardError) return { t: 0, pValue: 1 };
+  const t = slope / standardError;
+  return {
+    t,
+    pValue: 2 * (1 - jStat.studentt.cdf(Math.abs(t), n - 2)),
+  };
+}
+
+function correlationStrength(r) {
+  const abs = Math.abs(r);
+  if (abs >= 0.7) return "strong";
+  if (abs >= 0.4) return "moderate";
+  if (abs >= 0.2) return "weak";
+  return "none";
+}
+
+function robustZ(value, values) {
+  if (values.length < 3) return 0;
+  const median = ss.median(values);
+  const mad = ss.medianAbsoluteDeviation(values);
+  if (!mad) return 0;
+  return (value - median) / (mad * 1.4826);
 }
 
 function round(value, decimals) {

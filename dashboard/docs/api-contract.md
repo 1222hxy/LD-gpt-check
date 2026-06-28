@@ -241,6 +241,95 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
         "affectedAttempts": 26400,
         "overallAccuracy": 0.842
       }
+    },
+    "forecast": {
+      "accuracy": {
+        "slope": 0.0018,
+        "intercept": 0.82,
+        "rSquared": 0.61,
+        "pValue": 0.004,
+        "residualStdDev": 0.012,
+        "verdict": "rising",
+        "forecast": [
+          {
+            "step": 1,
+            "value": 0.861,
+            "low": 0.837,
+            "high": 0.885
+          }
+        ]
+      },
+      "submissions": {
+        "slope": 1.42,
+        "intercept": 45,
+        "rSquared": 0.73,
+        "pValue": 0.001,
+        "residualStdDev": 4.8,
+        "verdict": "rising",
+        "forecast": []
+      }
+    },
+    "correlations": [
+      {
+        "metric": "小时耗时 vs 准确率",
+        "x": "avgLatencySeconds",
+        "y": "accuracy",
+        "expectedDirection": "negative",
+        "r": -0.63,
+        "pValue": 0.0012,
+        "sampleSize": 24,
+        "strength": "moderate",
+        "verdict": "significant"
+      }
+    ],
+    "questionDiagnostics": [
+      {
+        "questionId": "judge-011",
+        "title": "反例识别",
+        "attempts": 1380,
+        "accuracy": 0.691,
+        "failureRate": 0.309,
+        "ci95Low": 0.666,
+        "ci95High": 0.715,
+        "difficultyZ": 1.42,
+        "priorityScore": 14.2,
+        "verdict": "audit"
+      }
+    ],
+    "modelRanking": [
+      {
+        "model": "gpt-5.5",
+        "posteriorMean": 0.882,
+        "posteriorStdDev": 0.0012,
+        "probabilityBest": 0.97,
+        "expectedLoss": 0,
+        "verdict": "ship"
+      }
+    ],
+    "robustness": {
+      "recentOutliers": [
+        {
+          "id": "sub_008",
+          "model": "o4-mini",
+          "accuracy": 0.742,
+          "latency": 13.2,
+          "accuracyRobustZ": -1.8,
+          "latencyRobustZ": 1.9
+        }
+      ],
+      "questionOutliers": [
+        {
+          "questionId": "judge-011",
+          "title": "反例识别",
+          "failureRate": 0.309,
+          "failureRobustZ": 1.7
+        }
+      ],
+      "baselines": {
+        "submissionAccuracyMedian": 0.846,
+        "submissionLatencyMedian": 8.4,
+        "questionFailureMedian": 0.211
+      }
     }
   }
 }
@@ -258,6 +347,11 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
 - `trendStability` provides control-chart style limits and recent z-scores for trend monitoring.
 - `hourlyBuckets` groups attempts by local hour of day. Production should derive it from `benchmark_submissions.created_at` or the attempt timestamp if stored.
 - `timeOfDay.omnibus` uses a chi-square test across hourly pass/fail buckets to detect whether time of day matters overall.
+- `forecast` runs an ordinary least squares trend for accuracy and submission volume, returning slope tests, R-squared, residual standard deviation, and seven forward points.
+- `correlations` runs Pearson correlation tests for latency, volume, and question difficulty relationships. `pValue` is derived from a Student t distribution.
+- `questionDiagnostics` ranks questions by Wilson interval, failure-rate z-score, sample size, and time penalty so review work starts with the highest risk items.
+- `modelRanking` estimates beta posterior means and an approximate probability of being the best model; use it for release candidate ranking, not as a sole promotion gate.
+- `robustness` uses median and median absolute deviation baselines to surface recent submission and question outliers.
 - `timeOfDay.hourly` compares each hour against the rest of the day with two-proportion z-tests, Holm-adjusted p-values, Wilson intervals, beta-posterior ranges, and Cohen's h effect size.
 - `timeOfDay.degradationWindows` merges adjacent significantly degraded hours into human-readable risk windows such as `02:00-06:00`.
 

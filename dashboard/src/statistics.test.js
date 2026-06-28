@@ -6,6 +6,8 @@ import {
   analyzeTimeOfDay,
   chiSquareGoodness,
   cohenH,
+  correlationTest,
+  linearTrendForecast,
   mean,
   minimumDetectableEffect,
   percentile,
@@ -92,6 +94,38 @@ describe("statistics helpers", () => {
     expect(result.degreesOfFreedom).toBe(2);
     expect(result.pValue).toBeLessThan(0.01);
   });
+
+  it("tests Pearson correlation with a Student t p-value", () => {
+    const result = correlationTest([
+      [1, 2],
+      [2, 4],
+      [3, 6],
+      [4, 8],
+      [5, 10],
+    ]);
+
+    expect(result.r).toBeCloseTo(1, 6);
+    expect(result.pValue).toBeLessThan(0.001);
+    expect(result.strength).toBe("strong");
+  });
+
+  it("forecasts a linear trend with residual bounds", () => {
+    const result = linearTrendForecast(
+      [
+        [0, 10],
+        [1, 12],
+        [2, 14],
+        [3, 16],
+        [4, 18],
+      ],
+      3,
+    );
+
+    expect(result.slope).toBeCloseTo(2, 6);
+    expect(result.rSquared).toBeCloseTo(1, 6);
+    expect(result.forecast).toHaveLength(3);
+    expect(result.forecast[0].value).toBeCloseTo(20, 6);
+  });
 });
 
 describe("dashboard statistics payload", () => {
@@ -111,6 +145,11 @@ describe("dashboard statistics payload", () => {
     expect(payload.statistics.timeOfDay.hourly).toHaveLength(24);
     expect(payload.statistics.timeOfDay.omnibus.verdict).toMatch(/stable|time_effect_detected/);
     expect(payload.statistics.testCoverage.suites).toHaveLength(4);
+    expect(payload.statistics.forecast.accuracy.forecast).toHaveLength(7);
+    expect(payload.statistics.correlations).toHaveLength(4);
+    expect(payload.statistics.modelRanking).toHaveLength(payload.modelBreakdown.length);
+    expect(payload.statistics.questionDiagnostics).toHaveLength(payload.questionQuality.length);
+    expect(payload.statistics.robustness.baselines.submissionAccuracyMedian).toBeGreaterThan(0);
   });
 
   it("keeps model comparison scoped to the selected model", () => {

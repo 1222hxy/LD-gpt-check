@@ -89,6 +89,15 @@ function App() {
             <PowerPanel statistics={data.statistics} />
           </div>
           <TimeOfDayPanel analysis={data.statistics.timeOfDay} />
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+            <ForecastPanel forecast={data.statistics.forecast} />
+            <CorrelationPanel correlations={data.statistics.correlations} />
+          </div>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)]">
+            <ModelRankingPanel ranking={data.statistics.modelRanking} />
+            <RobustnessPanel robustness={data.statistics.robustness} />
+          </div>
+          <QuestionDiagnosticsPanel diagnostics={data.statistics.questionDiagnostics} />
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
             <TrendPanel trend={data.trend} />
             <ModelPanel models={data.modelBreakdown} />
@@ -474,6 +483,235 @@ function TimeOfDayPanel({ analysis }) {
   );
 }
 
+function ForecastPanel({ forecast }) {
+  const chartData = useMemo(
+    () =>
+      forecast.accuracy.forecast.map((item, index) => ({
+        step: `+${item.step}`,
+        accuracyPct: Math.round(item.value * 1000) / 10,
+        accuracyLowPct: Math.round(item.low * 1000) / 10,
+        accuracyHighPct: Math.round(item.high * 1000) / 10,
+        submissions: forecast.submissions.forecast[index]?.value ?? 0,
+      })),
+    [forecast],
+  );
+
+  return (
+    <Panel title="趋势预测" icon={TrendingUp} action="OLS forecast">
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="stat-card">
+          <span>准确率斜率</span>
+          <strong>{signedPercentagePoints(forecast.accuracy.slope)}/日</strong>
+          <em>p={formatPValue(forecast.accuracy.pValue)}，R2={forecast.accuracy.rSquared}</em>
+        </div>
+        <div className="stat-card">
+          <span>准确率判断</span>
+          <strong>{forecastLabel(forecast.accuracy.verdict)}</strong>
+          <em>残差 SD {percent(forecast.accuracy.residualStdDev)}</em>
+        </div>
+        <div className="stat-card">
+          <span>提交量斜率</span>
+          <strong>{forecast.submissions.slope}/日</strong>
+          <em>p={formatPValue(forecast.submissions.pValue)}，R2={forecast.submissions.rSquared}</em>
+        </div>
+        <div className="stat-card">
+          <span>7 日预测</span>
+          <strong>{Math.round(forecast.submissions.forecast.at(-1)?.value ?? 0).toLocaleString("zh-CN")}</strong>
+          <em>第 7 天提交量点预测</em>
+        </div>
+      </div>
+      <div className="chart-h-md mt-4">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 12, right: 10, left: -18, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke="#e7e5e4" />
+            <XAxis dataKey="step" tickLine={false} axisLine={false} tick={{ fill: "#78716c", fontSize: 12 }} />
+            <YAxis yAxisId="left" domain={[60, 100]} tickLine={false} axisLine={false} tick={{ fill: "#78716c", fontSize: 12 }} />
+            <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} tick={{ fill: "#78716c", fontSize: 12 }} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend iconType="circle" />
+            <Line yAxisId="left" type="monotone" dataKey="accuracyPct" name="准确率 %" stroke="#0f766e" strokeWidth={2.5} dot />
+            <Line yAxisId="right" type="monotone" dataKey="submissions" name="提交量" stroke="#2563eb" strokeWidth={2.5} dot />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-3 min-w-0 overflow-x-auto">
+        <table className="data-table forecast-table">
+          <thead>
+            <tr>
+              <th>步长</th>
+              <th>准确率</th>
+              <th>95% 区间</th>
+              <th>提交量</th>
+            </tr>
+          </thead>
+          <tbody>
+            {forecast.accuracy.forecast.map((item, index) => {
+              const submissions = forecast.submissions.forecast[index];
+              return (
+                <tr key={item.step}>
+                  <td>+{item.step} 天</td>
+                  <td>{percent(item.value)}</td>
+                  <td>
+                    {percent(item.low)} - {percent(item.high)}
+                  </td>
+                  <td>{Math.round(submissions?.value ?? 0).toLocaleString("zh-CN")}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+function CorrelationPanel({ correlations }) {
+  return (
+    <Panel title="相关性扫描" icon={BarChart3} action="Pearson r">
+      <div className="grid gap-2">
+        {correlations.map((item) => (
+          <div className="correlation-row" key={item.metric}>
+            <div>
+              <strong>{item.metric}</strong>
+              <span>
+                n={item.sampleSize}，{correlationStrengthLabel(item.strength)}
+              </span>
+            </div>
+            <b>{item.r}</b>
+            <em>p={formatPValue(item.pValue)}</em>
+            <StatusBadge status={correlationStatus(item.verdict, item.r)} label={correlationLabel(item.verdict)} />
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function ModelRankingPanel({ ranking }) {
+  return (
+    <Panel title="贝叶斯模型排名" icon={ShieldCheck} action="posterior">
+      <div className="grid gap-2">
+        {ranking.map((item, index) => (
+          <div className="ranking-row" key={item.model}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{item.model}</strong>
+              <em>
+                mean {percent(item.posteriorMean)}，loss {percent(item.expectedLoss)}
+              </em>
+            </div>
+            <b>{percent(item.probabilityBest)}</b>
+            <StatusBadge status={modelRankingStatus(item.verdict)} label={modelRankingLabel(item.verdict)} />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3 text-xs leading-5 text-stone-500">
+        这里用 beta 后验正态近似估算“成为最佳”的概率，适合排序和发布候选判断，不替代离线评审。
+      </div>
+    </Panel>
+  );
+}
+
+function RobustnessPanel({ robustness }) {
+  const recentOutliers = robustness.recentOutliers.slice(0, 5);
+  const questionOutliers = robustness.questionOutliers.slice(0, 5);
+
+  return (
+    <Panel title="鲁棒异常检测" icon={Gauge} action="MAD z-score">
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="mini-stat">
+          <span>准确率中位数</span>
+          <strong>{percent(robustness.baselines.submissionAccuracyMedian)}</strong>
+        </div>
+        <div className="mini-stat">
+          <span>耗时中位数</span>
+          <strong>{robustness.baselines.submissionLatencyMedian}s</strong>
+        </div>
+        <div className="mini-stat">
+          <span>失败率中位数</span>
+          <strong>{percent(robustness.baselines.questionFailureMedian)}</strong>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3">
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-stone-800">提交异常</h3>
+          <div className="grid gap-2">
+            {(recentOutliers.length ? recentOutliers : [{ id: "无异常提交", model: "MAD 阈值内", accuracyRobustZ: 0, latencyRobustZ: 0 }]).map((item) => (
+              <div className="outlier-row" key={item.id}>
+                <div>
+                  <strong>{item.id}</strong>
+                  <span>{item.model}</span>
+                </div>
+                <b>{item.accuracyRobustZ}</b>
+                <em>{item.latencyRobustZ}</em>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-stone-800">题目异常</h3>
+          <div className="grid gap-2">
+            {(questionOutliers.length ? questionOutliers : [{ questionId: "无异常题目", title: "MAD 阈值内", failureRate: 0, failureRobustZ: 0 }]).map((item) => (
+              <div className="outlier-row" key={item.questionId}>
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{item.questionId}</span>
+                </div>
+                <b>{percent(item.failureRate)}</b>
+                <em>{item.failureRobustZ}</em>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function QuestionDiagnosticsPanel({ diagnostics }) {
+  return (
+    <Panel title="题目诊断优先级" icon={Activity} action="Wilson + z-score">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="data-table diagnostic-table">
+          <thead>
+            <tr>
+              <th>题目</th>
+              <th>准确率</th>
+              <th>95% CI</th>
+              <th>难度 z</th>
+              <th>优先级</th>
+              <th>判断</th>
+            </tr>
+          </thead>
+          <tbody>
+            {diagnostics.map((item) => (
+              <tr key={item.questionId}>
+                <td>
+                  <div className="min-w-[190px]">
+                    <strong>{item.title}</strong>
+                    <span>
+                      {item.questionId}，n={item.attempts}
+                    </span>
+                  </div>
+                </td>
+                <td>{percent(item.accuracy)}</td>
+                <td>
+                  {percent(item.ci95Low)} - {percent(item.ci95High)}
+                </td>
+                <td>{item.difficultyZ}</td>
+                <td>{item.priorityScore}</td>
+                <td>
+                  <StatusBadge status={questionDiagnosticStatus(item.verdict)} label={questionDiagnosticLabel(item.verdict)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function TrendPanel({ trend }) {
   const chartData = useMemo(
     () =>
@@ -724,6 +962,11 @@ function signedPercent(value) {
   return `${sign}${percent(value)}`;
 }
 
+function signedPercentagePoints(value) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${Math.round(value * 10_000) / 100}pp`;
+}
+
 function formatPValue(value) {
   if (value < 0.0001) return "<0.0001";
   return String(value);
@@ -773,6 +1016,54 @@ function timeStatus(value) {
   if (value === "degraded") return "regression";
   if (value === "elevated") return "healthy";
   return "watch";
+}
+
+function forecastLabel(value) {
+  if (value === "rising") return "上升";
+  if (value === "falling") return "下降";
+  if (value === "insufficient") return "样本不足";
+  return "平稳";
+}
+
+function correlationStrengthLabel(value) {
+  if (value === "strong") return "强相关";
+  if (value === "moderate") return "中等相关";
+  if (value === "weak") return "弱相关";
+  if (value === "insufficient") return "样本不足";
+  return "近似无关";
+}
+
+function correlationLabel(value) {
+  return value === "significant" ? "显著" : "不显著";
+}
+
+function correlationStatus(value, r) {
+  if (value !== "significant") return "watch";
+  return r < 0 ? "regression" : "healthy";
+}
+
+function modelRankingLabel(value) {
+  if (value === "ship") return "可发布";
+  if (value === "candidate") return "候选";
+  return "规避";
+}
+
+function modelRankingStatus(value) {
+  if (value === "ship") return "healthy";
+  if (value === "candidate") return "watch";
+  return "regression";
+}
+
+function questionDiagnosticLabel(value) {
+  if (value === "audit") return "审计";
+  if (value === "watch") return "观察";
+  return "正常";
+}
+
+function questionDiagnosticStatus(value) {
+  if (value === "audit") return "regression";
+  if (value === "watch") return "watch";
+  return "healthy";
 }
 
 function compact(value) {

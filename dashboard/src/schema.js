@@ -209,6 +209,76 @@ const TimeOfDaySchema = z.object({
   }),
 });
 
+const ForecastSeriesSchema = z.object({
+  slope: z.number(),
+  intercept: z.number(),
+  rSquared: z.number(),
+  pValue: z.number(),
+  residualStdDev: z.number(),
+  verdict: VerdictSchema,
+  forecast: z.array(z.object({ step: z.number(), value: z.number(), low: z.number(), high: z.number() })),
+});
+
+const CorrelationSchema = z.object({
+  metric: z.string(),
+  x: z.string(),
+  y: z.string(),
+  expectedDirection: z.string(),
+  r: z.number(),
+  pValue: z.number(),
+  sampleSize: z.number(),
+  strength: z.string(),
+  verdict: VerdictSchema,
+});
+
+const QuestionDiagnosticSchema = z.object({
+  questionId: z.string(),
+  title: z.string(),
+  attempts: z.number(),
+  accuracy: z.number(),
+  failureRate: z.number(),
+  ci95Low: z.number(),
+  ci95High: z.number(),
+  difficultyZ: z.number(),
+  priorityScore: z.number(),
+  verdict: VerdictSchema,
+});
+
+const ModelRankingSchema = z.object({
+  model: z.string(),
+  posteriorMean: z.number(),
+  posteriorStdDev: z.number(),
+  probabilityBest: z.number(),
+  expectedLoss: z.number(),
+  verdict: VerdictSchema,
+});
+
+const RobustnessSchema = z.object({
+  recentOutliers: z.array(
+    z.object({
+      id: z.string(),
+      model: z.string(),
+      accuracy: z.number(),
+      latency: z.number(),
+      accuracyRobustZ: z.number(),
+      latencyRobustZ: z.number(),
+    }),
+  ),
+  questionOutliers: z.array(
+    z.object({
+      questionId: z.string(),
+      title: z.string(),
+      failureRate: z.number(),
+      failureRobustZ: z.number(),
+    }),
+  ),
+  baselines: z.object({
+    submissionAccuracyMedian: z.number(),
+    submissionLatencyMedian: z.number(),
+    questionFailureMedian: z.number(),
+  }),
+});
+
 const StatisticsSchema = z.object({
   accuracy: StatisticalAccuracySchema,
   latency: LatencySchema,
@@ -219,6 +289,14 @@ const StatisticsSchema = z.object({
   testCoverage: TestCoverageSchema,
   trendStability: TrendStabilitySchema,
   timeOfDay: TimeOfDaySchema,
+  forecast: z.object({
+    accuracy: ForecastSeriesSchema,
+    submissions: ForecastSeriesSchema,
+  }),
+  correlations: z.array(CorrelationSchema),
+  questionDiagnostics: z.array(QuestionDiagnosticSchema),
+  modelRanking: z.array(ModelRankingSchema),
+  robustness: RobustnessSchema,
 });
 
 export const DashboardOverviewSchema = z.object({
