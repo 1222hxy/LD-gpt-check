@@ -6,13 +6,13 @@ main = "src/index.ts"
 compatibility_date = "2026-06-28"
 
 [vars]
-BASE_URL = "https://ld-gpt-check.example.workers.dev"
+BASE_URL = "https://codexgo.yhklab.com"
 LINUXDO_AUTH_URL = "https://connect.linux.do/oauth2/authorize"
 LINUXDO_TOKEN_URL = "https://connect.linux.do/oauth2/token"
 LINUXDO_USERINFO_URL = "https://connect.linux.do/api/user"
 # Optional comma-separated browser origins allowed to call JSON API endpoints.
 # BASE_URL origin is allowed automatically.
-ALLOWED_ORIGINS = "https://ld-gpt-check.example.workers.dev"
+ALLOWED_ORIGINS = "https://codexgo.yhklab.com"
 # Optional Cloudflare Turnstile site key for the browser device approval page.
 # Also set TURNSTILE_SECRET_KEY as a secret when enabling this.
 TURNSTILE_SITE_KEY = "0x4AAAAAADsUKm1bX7W6SgT8"

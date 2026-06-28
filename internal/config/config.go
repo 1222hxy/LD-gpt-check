@@ -14,7 +14,7 @@ import (
 
 const (
 	AppName          = "ld-gpt-check"
-	DefaultAPIBase   = "http://127.0.0.1:8787"
+	DefaultAPIBase   = "https://codexgo.yhklab.com"
 	ConfigFileName   = "ld-gpt-check.toml"
 	ConfigEnvVarName = "LD_GPT_CHECK_CONFIG"
 )

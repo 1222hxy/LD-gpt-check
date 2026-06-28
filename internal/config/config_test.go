@@ -54,6 +54,20 @@ func TestSaveAndLoadTOML(t *testing.T) {
 	}
 }
 
+func TestLoadMissingConfigUsesProductionAPI(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ConfigFileName)
+	t.Setenv(ConfigEnvVarName, path)
+	t.Setenv("LD_GPT_CHECK_API_BASE_URL", "")
+
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.APIBaseURL != DefaultAPIBase {
+		t.Fatalf("APIBaseURL = %q, want %q", got.APIBaseURL, DefaultAPIBase)
+	}
+}
+
 func TestLoadTOMLWithComments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ConfigFileName)
 	t.Setenv(ConfigEnvVarName, path)

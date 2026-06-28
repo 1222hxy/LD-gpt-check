@@ -23,6 +23,8 @@ import (
 
 const version = "0.1.0"
 
+var runWizard = wizard.Run
+
 func main() {
 	lang := currentLang()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -40,8 +42,7 @@ func main() {
 func run(ctx context.Context, args []string, lang i18n.Lang) error {
 	l := i18n.New(lang)
 	if len(args) == 0 {
-		usage(l)
-		return nil
+		return runWizard(ctx, wizard.Options{Version: version, Lang: lang})
 	}
 	switch args[0] {
 	case "setup", "wizard":
@@ -78,7 +79,7 @@ func wizardCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%s", l.S("unexpected_args", fs.Args()))
 	}
-	return wizard.Run(ctx, wizard.Options{Version: version, Lang: i18n.Normalize(*langFlag)})
+	return runWizard(ctx, wizard.Options{Version: version, Lang: i18n.Normalize(*langFlag)})
 }
 
 func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {

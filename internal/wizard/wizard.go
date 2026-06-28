@@ -54,22 +54,13 @@ func Run(ctx context.Context, opts Options) error {
 	fmt.Fprintf(out, l.S("config_path")+"\n\n", configPath)
 
 	oldAPIBase := cfg.APIBaseURL
-	langInput, err := promptString(reader, out, l, l.S("wizard_language"), string(lang))
-	if err != nil {
-		return err
-	}
-	lang = i18n.Normalize(langInput)
-	l = i18n.New(lang)
 	cfg.Language = string(lang)
-
-	apiBase, err := promptString(reader, out, l, l.S("wizard_api_base"), firstNonEmpty(cfg.APIBaseURL, config.DefaultAPIBaseURL()))
-	if err != nil {
-		return err
-	}
+	apiBase := config.DefaultAPIBaseURL()
 	cfg.APIBaseURL = apiBase
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
+	fmt.Fprintf(out, l.S("wizard_api_using")+"\n", apiBase)
 
 	if cfg.AccessToken != "" {
 		name := cfg.User.Username

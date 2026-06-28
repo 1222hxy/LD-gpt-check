@@ -7,7 +7,7 @@
 Base URL 示例：
 
 ```text
-https://YOUR_WORKER_DOMAIN
+https://codexgo.yhklab.com
 ```
 
 公共 JSON API 使用：
@@ -62,7 +62,7 @@ Authorization: Bearer ldgc_...
 常见用途：
 
 ```bash
-curl https://YOUR_WORKER_DOMAIN/health
+curl https://codexgo.yhklab.com/health
 ```
 
 ## POST /api/device/start
@@ -81,8 +81,8 @@ curl https://YOUR_WORKER_DOMAIN/health
 {
   "device_code": "dc_xxx",
   "user_code": "123-456-789",
-  "verification_uri": "https://YOUR_WORKER_DOMAIN/device",
-  "verification_uri_complete": "https://YOUR_WORKER_DOMAIN/device?code=123-456-789",
+  "verification_uri": "https://codexgo.yhklab.com/device",
+  "verification_uri_complete": "https://codexgo.yhklab.com/device?code=123-456-789",
   "expires_in": 600,
   "interval": 3
 }

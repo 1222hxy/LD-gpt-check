@@ -6,8 +6,8 @@ LD-gpt-check is a minimal Go CLI for checking whether the local Codex CLI can so
 
 - Go 1.22+ for local builds.
 - Codex CLI installed and available as `codex` on macOS/Linux or `codex.cmd` on Windows.
-- A Cloudflare account with Workers and D1 enabled for upload/login features.
-- A Linux.do OAuth application. Set its callback URL to:
+- Upload/login uses the hosted backend at `https://codexgo.yhklab.com` by default.
+- For self-hosting only: a Cloudflare account with Workers/D1 and a Linux.do OAuth application. Set its callback URL to:
 
 ```text
 https://YOUR_WORKER_DOMAIN/auth/linuxdo/callback
@@ -24,10 +24,16 @@ go build -o bin/ld-gpt-check ./cmd/ld-gpt-check
 For first-time use, run the guided setup:
 
 ```bash
+bin/ld-gpt-check
+```
+
+This is equivalent to:
+
+```bash
 bin/ld-gpt-check setup
 ```
 
-The wizard asks for the Worker API URL, helps complete Linux.do login, stores the returned platform token in `ld-gpt-check.toml`, and can run/upload a test result.
+The wizard uses the hosted API by default, helps complete Linux.do login, stores the returned platform token in `ld-gpt-check.toml`, and can run/upload a test result.
 
 The CLI uses Chinese by default. To use English for the current process:
 
@@ -78,11 +84,16 @@ Reasoning effort supports `low`, `medium`, `high`, and `xhigh`. The default effo
 
 ## Login and Upload
 
-Set the Worker API URL before the first login, or pass it with `--api-base-url`:
+Log in with the hosted API:
 
 ```bash
-export LD_GPT_CHECK_API_BASE_URL="https://YOUR_WORKER_DOMAIN"
 bin/ld-gpt-check login
+```
+
+For a self-hosted backend, override the API URL:
+
+```bash
+LD_GPT_CHECK_API_BASE_URL="https://YOUR_WORKER_DOMAIN" bin/ld-gpt-check login
 ```
 
 The CLI opens a browser for Linux.do login. On SSH, WSL, or remote servers, copy the printed URL and 9-digit code manually.
@@ -123,10 +134,10 @@ Override the path when needed:
 LD_GPT_CHECK_CONFIG=/path/to/ld-gpt-check.toml bin/ld-gpt-check config
 ```
 
-Use `ld-gpt-check.example.toml` as the template. The real config stores the Worker API URL, selected language, access token, and basic user profile:
+Use `ld-gpt-check.example.toml` as the template. The real config stores the API URL, selected language, access token, and basic user profile:
 
 ```toml
-api_base_url = "https://YOUR_WORKER_DOMAIN"
+api_base_url = "https://codexgo.yhklab.com"
 access_token = "..."
 language = "zh-CN"
 

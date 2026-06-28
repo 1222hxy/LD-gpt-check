@@ -7,8 +7,8 @@ info:
     This OpenAPI document describes the target /api/v1 contract. The current
     Worker implementation still exposes legacy /api paths for the JSON API.
 servers:
-  - url: https://YOUR_WORKER_DOMAIN
-    description: Production Worker
+  - url: https://codexgo.yhklab.com
+    description: Hosted production Worker
   - url: http://localhost:8787
     description: Local Wrangler dev server
 tags:
