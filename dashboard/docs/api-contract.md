@@ -118,10 +118,36 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
         "ci95Low": 0.88,
         "ci95High": 0.884,
         "marginOfError": 0.002,
+        "posteriorMean": 0.882,
+        "posteriorLow": 0.88,
+        "posteriorHigh": 0.884,
         "deltaVsBest": 0,
         "verdict": "leader"
       }
     ],
+    "pairwiseTests": [
+      {
+        "model": "gpt-5.5-mini",
+        "comparedTo": "gpt-5.5",
+        "delta": -0.064,
+        "zScore": -12.8,
+        "pValue": 0.0001,
+        "adjustedPValue": 0.0003,
+        "effectSize": -0.15,
+        "verdict": "significant"
+      }
+    ],
+    "power": {
+      "baselineAccuracy": 0.835,
+      "averageModelSampleSize": 48150,
+      "minimumDetectableEffect": 0.006,
+      "requiredSamples": [
+        {
+          "delta": 0.02,
+          "perGroup": 6742
+        }
+      ]
+    },
     "testCoverage": {
       "suites": [
         {
@@ -139,7 +165,12 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
     },
     "trendStability": {
       "submissionStdDev": 8.4,
-      "accuracyStdDev": 0.021
+      "accuracyStdDev": 0.021,
+      "accuracyMean": 0.842,
+      "upperControlLimit": 0.905,
+      "lowerControlLimit": 0.779,
+      "latestZScore": -0.42,
+      "anomalies": []
     }
   }
 }
@@ -150,8 +181,11 @@ For local development, `dashboard/vite.config.js` serves this endpoint with mock
 - `accuracy.ci95Low` and `accuracy.ci95High` use a Wilson score interval for binomial pass/fail attempts.
 - `latency.p90` and `latency.p95` are percentile values from recent submissions.
 - `regression` compares the current window against a baseline using a two-proportion z-test.
-- `modelComparisons` gives per-model confidence intervals and whether the interval overlaps with the best model.
+- `modelComparisons` gives per-model Wilson intervals, approximate beta-posterior credible ranges, and whether the interval overlaps with the best model.
+- `pairwiseTests` compares each model with the best observed model using a two-proportion z-test, Holm-adjusted p-values, and Cohen's h effect size.
+- `power` estimates the minimum detectable effect and per-group sample requirements for common accuracy deltas at 80% power.
 - `testCoverage` summarizes automated checks, regression samples, and visual smoke checks shown in the dashboard.
+- `trendStability` provides control-chart style limits and recent z-scores for trend monitoring.
 
 Recommended Worker behavior:
 

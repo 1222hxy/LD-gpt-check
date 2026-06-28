@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   binomialConfidenceInterval,
+  betaPosteriorSummary,
   buildStatistics,
+  cohenH,
   mean,
+  minimumDetectableEffect,
   percentile,
+  requiredSampleSizeForProportionDelta,
   standardDeviation,
   twoProportionZTest,
 } from "./statistics.js";
@@ -38,6 +42,26 @@ describe("statistics helpers", () => {
     expect(result.delta).toBeCloseTo(-0.05, 3);
     expect(result.pValue).toBeLessThan(0.05);
   });
+
+  it("summarizes a beta posterior with a bounded credible interval", () => {
+    const posterior = betaPosteriorSummary(84, 100);
+
+    expect(posterior.mean).toBeCloseTo(85 / 102, 4);
+    expect(posterior.low).toBeGreaterThan(0.75);
+    expect(posterior.high).toBeLessThan(0.91);
+    expect(posterior.low).toBeLessThan(posterior.mean);
+    expect(posterior.high).toBeGreaterThan(posterior.mean);
+  });
+
+  it("computes practical effect size and sample-size requirements", () => {
+    const effect = cohenH(0.79, 0.84);
+    const sampleSize = requiredSampleSizeForProportionDelta({ baselineRate: 0.84, delta: 0.02 });
+    const mde = minimumDetectableEffect({ baselineRate: 0.84, sampleSize });
+
+    expect(effect).toBeLessThan(0);
+    expect(sampleSize).toBeGreaterThan(1000);
+    expect(mde).toBeLessThanOrEqual(0.021);
+  });
 });
 
 describe("dashboard statistics payload", () => {
@@ -48,6 +72,11 @@ describe("dashboard statistics payload", () => {
     expect(payload.statistics.accuracy.ci95Low).toBeLessThan(payload.statistics.accuracy.ci95High);
     expect(payload.statistics.latency.p95).toBeGreaterThanOrEqual(payload.statistics.latency.median);
     expect(payload.statistics.regression.verdict).toMatch(/stable|improved|regression/);
+    expect(payload.statistics.power.minimumDetectableEffect).toBeGreaterThan(0);
+    expect(payload.statistics.pairwiseTests.length).toBe(payload.modelBreakdown.length);
+    expect(payload.statistics.trendStability.upperControlLimit).toBeGreaterThan(
+      payload.statistics.trendStability.lowerControlLimit,
+    );
     expect(payload.statistics.testCoverage.suites).toHaveLength(4);
   });
 

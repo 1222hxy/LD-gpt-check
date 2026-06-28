@@ -62,6 +62,10 @@ function App() {
             <StatisticsPanel statistics={data.statistics} />
             <TestPanel coverage={data.statistics.testCoverage} />
           </div>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <PairwisePanel tests={data.statistics.pairwiseTests} />
+            <PowerPanel statistics={data.statistics} />
+          </div>
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.9fr)]">
             <TrendPanel trend={data.trend} />
             <ModelPanel models={data.modelBreakdown} />
@@ -275,6 +279,78 @@ function TestPanel({ coverage }) {
           <span>波动题</span>
           <strong>{coverage.flakyQuestions}</strong>
         </div>
+      </div>
+    </Panel>
+  );
+}
+
+function PairwisePanel({ tests }) {
+  return (
+    <Panel title="模型显著性" icon={BarChart3} action="Holm 校正">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="data-table pairwise-table">
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>对照</th>
+              <th>差值</th>
+              <th>z</th>
+              <th>p</th>
+              <th>Holm p</th>
+              <th>效应量 h</th>
+              <th>判断</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tests.map((item) => (
+              <tr key={item.model}>
+                <td>{item.model}</td>
+                <td>{item.comparedTo}</td>
+                <td>{signedPercent(item.delta)}</td>
+                <td>{item.zScore}</td>
+                <td>{formatPValue(item.pValue)}</td>
+                <td>{formatPValue(item.adjustedPValue)}</td>
+                <td>{item.effectSize}</td>
+                <td>
+                  <StatusBadge status={pairwiseStatus(item.verdict)} label={pairwiseLabel(item.verdict)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+function PowerPanel({ statistics }) {
+  const stability = statistics.trendStability;
+  return (
+    <Panel title="检验效能" icon={Gauge} action="power 80%">
+      <div className="grid gap-2">
+        <div className="power-row">
+          <span>最小可检测差异</span>
+          <strong>{percent(statistics.power.minimumDetectableEffect)}</strong>
+        </div>
+        <div className="power-row">
+          <span>平均模型样本量</span>
+          <strong>{statistics.power.averageModelSampleSize.toLocaleString("zh-CN")}</strong>
+        </div>
+        <div className="power-row">
+          <span>最新准确率 z-score</span>
+          <strong>{stability.latestZScore}</strong>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2">
+        {statistics.power.requiredSamples.map((item) => (
+          <div className="sample-row" key={item.delta}>
+            <span>检测 {percent(item.delta)} 差异</span>
+            <strong>{item.perGroup.toLocaleString("zh-CN")} / 组</strong>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3 text-xs leading-5 text-stone-500">
+        控制线：{percent(stability.lowerControlLimit)} - {percent(stability.upperControlLimit)}；异常点 {stability.anomalies.length} 个。
       </div>
     </Panel>
   );
@@ -551,6 +627,18 @@ function modelVerdictStatus(value) {
   if (value === "leader") return "healthy";
   if (value === "overlap") return "watch";
   return "regression";
+}
+
+function pairwiseLabel(value) {
+  if (value === "leader") return "对照";
+  if (value === "significant") return "显著";
+  return "不显著";
+}
+
+function pairwiseStatus(value) {
+  if (value === "leader") return "healthy";
+  if (value === "significant") return "regression";
+  return "watch";
 }
 
 function compact(value) {
