@@ -1,0 +1,4 @@
+interface:
+  display_name: "LD GPT Check Binary Test"
+  short_description: "Download and smoke-test LD-gpt-check binaries"
+  default_prompt: "Use $ld-gpt-check-binary-test to download the right LD-gpt-check binary and run one test pass."

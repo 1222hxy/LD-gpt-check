@@ -4,6 +4,7 @@ Thumbs.db
 # Go
 /bin/
 /dist/
+.ld-gpt-check-bin/
 *.test
 coverage.out
 
