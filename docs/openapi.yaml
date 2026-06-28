@@ -126,6 +126,44 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Submissions]
+      summary: Delete all benchmark submissions for current user
+      operationId: deleteAllSubmissions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSubmissionsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/submissions/{id}:
+    delete:
+      tags: [Submissions]
+      summary: Delete one benchmark submission owned by current user
+      operationId: deleteSubmission
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted count. Non-owned or missing ids return deleted 0.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteSubmissionsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "413":
@@ -487,6 +525,11 @@ components:
           type: string
           maxLength: 128
           examples: [upl_0123456789abcdef0123456789abcdef]
+        upload_schema_version:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 2
         client_version:
           type: string
           maxLength: 128
@@ -536,6 +579,31 @@ components:
         codex_version:
           type: string
           maxLength: 128
+        codex_model_source:
+          type: string
+          enum: [explicit, codex_config, unknown]
+        codex_model_provider:
+          type: string
+          maxLength: 128
+        codex_provider_host:
+          type: string
+          maxLength: 128
+        codex_sandbox:
+          type: string
+          maxLength: 128
+        codex_ephemeral:
+          type: boolean
+        codex_skip_git_repo_check:
+          type: boolean
+        codex_disabled_features:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 64
+        codex_invocation:
+          type: string
+          maxLength: 2048
         questions:
           type: array
           maxItems: 50
@@ -652,7 +720,12 @@ components:
         answer_preview:
           type: string
           maxLength: 300
+        answer_preview_truncated:
+          type: boolean
         input_tokens:
+          type: integer
+          minimum: 0
+        cached_input_tokens:
           type: integer
           minimum: 0
         output_tokens:
@@ -661,11 +734,31 @@ components:
         reasoning_tokens:
           type: integer
           minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
         time_seconds:
           type: number
           minimum: 0
         tps:
           type: number
+          minimum: 0
+        codex_thread_id:
+          type: string
+          maxLength: 128
+        event_count:
+          type: integer
+          minimum: 0
+        event_types:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 128
+        tool_event_detected:
+          type: boolean
+        answer_chars:
+          type: integer
           minimum: 0
 
     CreateSubmissionResponse:
@@ -728,3 +821,13 @@ components:
           type:
             - string
             - "null"
+
+    DeleteSubmissionsResponse:
+      type: object
+      required: [ok, deleted]
+      properties:
+        ok:
+          type: boolean
+        deleted:
+          type: integer
+          minimum: 0

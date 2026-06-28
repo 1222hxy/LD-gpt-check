@@ -20,6 +20,7 @@ const MAX_QUESTIONS = 50;
 const MAX_ATTEMPTS = 500;
 const MAX_STRING_LENGTH = 128;
 const MAX_PREVIEW_LENGTH = 300;
+const MAX_METADATA_LENGTH = 2048;
 const MAX_JSON_BYTES = 256 * 1024;
 
 class APIError extends Error {
@@ -52,9 +53,13 @@ export default {
       if (request.method === "GET" && matches(path, "/api/me", "/api/v1/me")) return withCommonHeaders(await apiMe(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/submissions") return withCommonHeaders(await createSubmission(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/api/v1/submissions") return withCommonHeaders(await listSubmissions(request, env), request, env, requestID);
+      if (request.method === "DELETE" && path === "/api/v1/submissions") return withCommonHeaders(await deleteAllSubmissions(request, env), request, env, requestID);
+      if (request.method === "DELETE" && submissionItemPath(path)) return withCommonHeaders(await deleteSubmission(request, env), request, env, requestID);
       if (matches(path, "/api/runs", "/api/v1/runs")) return withCommonHeaders(jsonError("runs API is gone; use /api/v1/submissions", 410, "gone", requestID), request, env, requestID);
       if (request.method === "POST" && matches(path, "/api/logout", "/api/v1/sessions/logout")) return withCommonHeaders(await apiLogout(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/logout") return withCommonHeaders(await webLogout(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/account/submissions/delete") return withCommonHeaders(await webDeleteSubmission(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/account/submissions/delete-all") return withCommonHeaders(await webDeleteAllSubmissions(request, env), request, env, requestID);
 
       if (knownPath(path)) return withCommonHeaders(jsonError("method not allowed", 405, "method_not_allowed", requestID), request, env, requestID);
       return withCommonHeaders(jsonError("not found", 404, "not_found", requestID), request, env, requestID);
@@ -268,8 +273,13 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
       <section class="hero">
         <span class="badge">Linux.do OAuth</span>
         <h1>登录 LD-gpt-check</h1>
-        <p>登录后可以授权 CLI 设备，并查看当前网页会话状态。</p>
-        <div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div>
+        <p>登录后可以授权 CLI 设备，查看账号状态和最近上传记录。</p>
+        <div class="login-actions">
+          <a class="linuxdo-button" href="${loginURL}" aria-label="使用 Linux.do 登录">
+            ${linuxdoIcon()}
+            <span><strong>使用 Linux.do 登录</strong><small>OAuth 授权，不会把密码交给本站</small></span>
+          </a>
+        </div>
       </section>
     `));
   }
@@ -284,8 +294,8 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     .bind(user.id)
     .first<any>();
   const recent = await env.DB.prepare(
-    `SELECT model, reasoning_effort, attempt_count, correct_count, accuracy, created_at
-     FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`
+    `SELECT id, model, reasoning_effort, attempt_count, correct_count, accuracy, created_at
+     FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`
   )
     .bind(user.id)
     .all<any>();
@@ -298,6 +308,12 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
         <td>${int(r.correct_count)}/${int(r.attempt_count)}</td>
         <td>${formatPercent(num(r.accuracy))}</td>
         <td>${escapeHTML(formatDate(r.created_at))}</td>
+        <td>
+          <form method="post" action="/account/submissions/delete">
+            <input type="hidden" name="submission_id" value="${escapeHTML(str(r.id, MAX_STRING_LENGTH))}">
+            <button class="danger small" type="submit">删除</button>
+          </form>
+        </td>
       </tr>`
     )
     .join("");
@@ -324,7 +340,12 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     </section>
     <section class="panel">
       <h2>最近上传</h2>
-      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>时间</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
+      <p>这里只展示最后 10 条记录。删除操作只会删除你的测试数据，不会删除账号、网页会话或 CLI token。</p>
+      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
+      ${rows ? `<form class="delete-all" method="post" action="/account/submissions/delete-all">
+        <label>清空全部测试数据：输入 <strong>DELETE</strong> 确认</label>
+        <div class="actions"><input name="confirm" autocomplete="off" placeholder="DELETE"><button class="danger" type="submit">清空我的测试数据</button></div>
+      </form>` : ""}
     </section>
   `));
 }
@@ -462,8 +483,8 @@ async function apiMe(request: Request, env: Env): Promise<Response> {
 }
 
 async function createSubmission(request: Request, env: Env): Promise<Response> {
- const auth = await getBearerUser(request, env);
- if (!auth) return jsonError("unauthorized", 401, "unauthorized");
+  const auth = await getBearerUser(request, env);
+  if (!auth) return jsonError("unauthorized", 401, "unauthorized");
   await enforceUserRateLimit(env, auth.user.id, "create_submission", 60, 3600);
   const p = await readJson<any>(request);
   const validationError = validateSubmissionPayload(p);
@@ -483,15 +504,17 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
   const statements = [
     env.DB.prepare(
       `INSERT INTO benchmark_submissions
-       (id, user_id, upload_id, client_version, model, reasoning_effort, question_count,
+       (id, user_id, upload_id, upload_schema_version, client_version, model, reasoning_effort, question_count,
         attempt_count, correct_count, accuracy,
         avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps,
-        os, arch, codex_version, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        os, arch, codex_version, codex_model_source, codex_model_provider, codex_provider_host,
+        codex_sandbox, codex_ephemeral, codex_skip_git_repo_check, codex_disabled_features, codex_invocation, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       submissionID,
       auth.user.id,
       str(p.upload_id, MAX_STRING_LENGTH),
+      int(p.upload_schema_version || 1),
       str(p.client_version, MAX_STRING_LENGTH),
       str(p.model, MAX_STRING_LENGTH),
       str(p.reasoning_effort, MAX_STRING_LENGTH),
@@ -507,6 +530,14 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       str(p.os, MAX_STRING_LENGTH),
       str(p.arch, MAX_STRING_LENGTH),
       str(p.codex_version, MAX_STRING_LENGTH),
+      str(p.codex_model_source, 32),
+      str(p.codex_model_provider, MAX_STRING_LENGTH),
+      str(p.codex_provider_host, MAX_STRING_LENGTH),
+      str(p.codex_sandbox, 32),
+      p.codex_ephemeral ? 1 : 0,
+      p.codex_skip_git_repo_check ? 1 : 0,
+      jsonArrayString(p.codex_disabled_features, MAX_METADATA_LENGTH),
+      str(p.codex_invocation, MAX_METADATA_LENGTH),
       now
     ),
   ];
@@ -544,9 +575,10 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       env.DB.prepare(
         `INSERT INTO benchmark_attempts
          (id, submission_id, question_id, question_version, case_index, status, is_correct,
-          expected_answer, extracted_answer, failure_reason, answer_preview, input_tokens, output_tokens,
-          reasoning_tokens, time_seconds, tps, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          expected_answer, extracted_answer, failure_reason, answer_preview, answer_preview_truncated,
+          input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens, time_seconds, tps,
+          codex_thread_id, event_count, event_types, tool_event_detected, answer_chars, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         crypto.randomUUID(),
         submissionID,
@@ -559,11 +591,19 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
         str(a.extracted_answer, MAX_STRING_LENGTH),
         str(a.failure_reason, 64),
         str(a.answer_preview, MAX_PREVIEW_LENGTH),
+        a.answer_preview_truncated ? 1 : 0,
         int(a.input_tokens),
+        int(a.cached_input_tokens),
         int(a.output_tokens),
         int(a.reasoning_tokens),
+        int(a.total_tokens),
         num(a.time_seconds),
         num(a.tps),
+        str(a.codex_thread_id, MAX_STRING_LENGTH),
+        int(a.event_count),
+        jsonArrayString(a.event_types, MAX_METADATA_LENGTH),
+        a.tool_event_detected ? 1 : 0,
+        int(a.answer_chars),
         now
       )
     );
@@ -597,6 +637,24 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
   return json({ submissions: rows.results ?? [] });
 }
 
+async function deleteSubmission(request: Request, env: Env): Promise<Response> {
+  const auth = await getBearerUser(request, env);
+  if (!auth) return jsonError("unauthorized", 401, "unauthorized");
+  await enforceUserRateLimit(env, auth.user.id, "delete_submission", 120, 3600);
+  const id = decodeURIComponent(new URL(request.url).pathname.split("/").pop() || "");
+  if (!id) return jsonError("submission id is required", 400, "bad_request");
+  const deleted = await deleteOwnSubmission(env, auth.user.id, id);
+  return json({ ok: true, deleted });
+}
+
+async function deleteAllSubmissions(request: Request, env: Env): Promise<Response> {
+  const auth = await getBearerUser(request, env);
+  if (!auth) return jsonError("unauthorized", 401, "unauthorized");
+  await enforceUserRateLimit(env, auth.user.id, "delete_all_submissions", 20, 3600);
+  const deleted = await deleteOwnSubmissions(env, auth.user.id);
+  return json({ ok: true, deleted });
+}
+
 async function apiLogout(request: Request, env: Env): Promise<Response> {
   const auth = await getBearerUser(request, env);
   if (auth) {
@@ -614,6 +672,54 @@ async function webLogout(request: Request, env: Env): Promise<Response> {
       .run();
   }
   return redirect("/account", cookie("ldgc_session", "", env, 0));
+}
+
+async function webDeleteSubmission(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return html(resultPage("需要登录", "请先登录后再删除测试数据。"), 401);
+  const form = await request.formData();
+  const id = String(form.get("submission_id") || "");
+  if (!id) return html(resultPage("缺少记录 ID", "请回到账号页重试。"), 400);
+  await deleteOwnSubmission(env, user.id, id);
+  return redirect("/account");
+}
+
+async function webDeleteAllSubmissions(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return html(resultPage("需要登录", "请先登录后再删除测试数据。"), 401);
+  const form = await request.formData();
+  if (String(form.get("confirm") || "") !== "DELETE") {
+    return html(resultPage("确认文本不匹配", "请输入 DELETE 后再清空全部测试数据。"), 400);
+  }
+  await deleteOwnSubmissions(env, user.id);
+  return redirect("/account");
+}
+
+async function deleteOwnSubmission(env: Env, userID: string, submissionID: string): Promise<number> {
+  const row = await env.DB.prepare(`SELECT id FROM benchmark_submissions WHERE id = ? AND user_id = ?`)
+    .bind(submissionID, userID)
+    .first<any>();
+  if (!row?.id) return 0;
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM benchmark_attempts WHERE submission_id = ?`).bind(submissionID),
+    env.DB.prepare(`DELETE FROM benchmark_question_results WHERE submission_id = ?`).bind(submissionID),
+    env.DB.prepare(`DELETE FROM benchmark_submissions WHERE id = ? AND user_id = ?`).bind(submissionID, userID),
+  ]);
+  return 1;
+}
+
+async function deleteOwnSubmissions(env: Env, userID: string): Promise<number> {
+  const countRow = await env.DB.prepare(`SELECT COUNT(*) AS count FROM benchmark_submissions WHERE user_id = ?`)
+    .bind(userID)
+    .first<any>();
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM benchmark_attempts WHERE submission_id IN (SELECT id FROM benchmark_submissions WHERE user_id = ?)`).bind(userID),
+    env.DB.prepare(`DELETE FROM benchmark_question_results WHERE submission_id IN (SELECT id FROM benchmark_submissions WHERE user_id = ?)`).bind(userID),
+    env.DB.prepare(`DELETE FROM benchmark_submissions WHERE user_id = ?`).bind(userID),
+  ]);
+  return int(countRow?.count);
 }
 
 async function getBearerUser(request: Request, env: Env): Promise<{ user: any; tokenID: string } | null> {
@@ -729,7 +835,7 @@ function withCommonHeaders(response: Response, request: Request, env: Env, reque
   if (corsOrigin) {
     headers.set("access-control-allow-origin", corsOrigin);
     headers.set("vary", appendVary(headers.get("vary"), "Origin"));
-    headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+    headers.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
     headers.set("access-control-allow-headers", "Authorization, Content-Type, Accept, Idempotency-Key");
     headers.set("access-control-max-age", "600");
   }
@@ -769,8 +875,12 @@ function matches(path: string, ...paths: string[]): boolean {
   return paths.includes(path);
 }
 
+function submissionItemPath(path: string): boolean {
+  return /^\/api\/v1\/submissions\/[^/]+$/.test(path);
+}
+
 function knownPath(path: string): boolean {
-  return matches(
+  return submissionItemPath(path) || matches(
     path,
     "/",
     "/account",
@@ -787,6 +897,8 @@ function knownPath(path: string): boolean {
     "/api/me",
     "/api/v1/me",
     "/api/v1/submissions",
+    "/account/submissions/delete",
+    "/account/submissions/delete-all",
     "/api/runs",
     "/api/v1/runs",
     "/api/logout",
@@ -799,6 +911,14 @@ function resultPage(title: string, message: string): string {
   return layoutPage(`${title} - LD-gpt-check`, `<section class="hero"><h1>${escapeHTML(title)}</h1><p>${escapeHTML(message)}</p><div class="actions"><a class="button" href="/account">返回账号页</a></div></section>`);
 }
 
+function linuxdoIcon(): string {
+  return `<svg class="linuxdo-icon" viewBox="0 0 40 40" role="img" aria-label="Linux.do" focusable="false">
+    <rect width="40" height="40" rx="10" fill="#1d4ed8"></rect>
+    <path d="M10 12.5h20v5.5H18.1v3.3h9.9v5.1h-9.9V32H10V12.5Z" fill="#fff"></path>
+    <circle cx="30" cy="30" r="3" fill="#67e8f9"></circle>
+  </svg>`;
+}
+
 function layoutPage(title: string, content: string): string {
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -807,8 +927,9 @@ function layoutPage(title: string, content: string): string {
 :root{color-scheme:light;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--brand2:#06b6d4;--bg:#f7fbff}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.1),transparent 34%),linear-gradient(225deg,rgba(6,182,212,.14),transparent 38%),var(--bg);padding:24px;line-height:1.5}
 main{width:min(100%,920px);margin:0 auto}.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.86);border-radius:14px;padding:12px 14px;box-shadow:0 16px 50px rgba(37,99,235,.12)}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav a{color:#334155;text-decoration:none;font-size:14px}
-.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}
-@media(max-width:680px){body{padding:12px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button{width:100%}.actions form{width:100%}}
+.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.danger{border-color:#dc2626;background:#dc2626;color:#fff}.small{min-height:32px;padding:6px 10px;font-size:12px}.delete-all{margin-top:16px;border-top:1px solid #e2e8f0;padding-top:16px}.delete-all label{display:block;color:#64748b;font-size:14px}.delete-all input{min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font:600 14px system-ui,sans-serif}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}td form{margin:0}
+.login-actions{margin-top:22px}.linuxdo-button{display:inline-flex;align-items:center;gap:12px;min-height:58px;border:1px solid #1d4ed8;border-radius:14px;background:linear-gradient(135deg,#1d4ed8,#06b6d4);box-shadow:0 18px 45px rgba(37,99,235,.24);color:#fff;padding:10px 16px;text-decoration:none;transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}.linuxdo-button:hover{transform:translateY(-1px);box-shadow:0 22px 56px rgba(37,99,235,.3);filter:saturate(1.08)}.linuxdo-button span{display:grid;gap:2px;text-align:left}.linuxdo-button strong{color:#fff;font-size:15px;line-height:1.2}.linuxdo-button small{color:rgba(255,255,255,.78);font-size:12px;line-height:1.3}.linuxdo-icon{width:38px;height:38px;flex:0 0 auto;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22)}
+@media(max-width:680px){body{padding:12px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button,.linuxdo-button{width:100%}.actions form{width:100%}.linuxdo-button{justify-content:flex-start}}
 </style></head>
 <body><main><nav class="nav"><a class="brand" href="/account">LD-gpt-check</a><a href="/device">授权 CLI</a></nav>${content}</main></body></html>`;
 }
@@ -971,6 +1092,7 @@ function validateSubmissionPayload(p: any): string | null {
   if (!requiredString(p.client_version)) return "client_version is required";
   if (!requiredString(p.model)) return "model is required";
   if (!requiredString(p.reasoning_effort)) return "reasoning_effort is required";
+  if (p.upload_schema_version != null && !validInt(p.upload_schema_version, 1, 10)) return "upload_schema_version must be an integer between 1 and 10";
   if (!validInt(p.question_count, 1, MAX_QUESTIONS)) return `question_count must be an integer between 1 and ${MAX_QUESTIONS}`;
   if (!validInt(p.attempt_count, 1, MAX_ATTEMPTS)) return `attempt_count must be an integer between 1 and ${MAX_ATTEMPTS}`;
   if (!validInt(p.correct, 0, int(p.attempt_count))) return "correct must be an integer between 0 and attempt_count";
@@ -981,6 +1103,15 @@ function validateSubmissionPayload(p: any): string | null {
   if (!requiredString(p.os)) return "os is required";
   if (!requiredString(p.arch)) return "arch is required";
   if (!requiredString(p.codex_version)) return "codex_version is required";
+  if (p.codex_model_source != null && !["explicit", "codex_config", "unknown"].includes(String(p.codex_model_source))) return "codex_model_source is invalid";
+  for (const key of ["codex_model_provider", "codex_provider_host", "codex_sandbox"]) {
+    if (p[key] != null && (typeof p[key] !== "string" || p[key].length > MAX_STRING_LENGTH)) return `${key} must be a short string`;
+  }
+  for (const key of ["codex_ephemeral", "codex_skip_git_repo_check"]) {
+    if (p[key] != null && typeof p[key] !== "boolean") return `${key} must be a boolean`;
+  }
+  if (p.codex_disabled_features != null && !stringArray(p.codex_disabled_features, 20, 64)) return "codex_disabled_features must be a short string array";
+  if (p.codex_invocation != null && (typeof p.codex_invocation !== "string" || p.codex_invocation.length > MAX_METADATA_LENGTH)) return "codex_invocation must be a short string";
   if (!Array.isArray(p.questions)) return "questions must be an array";
   if (p.questions.length !== int(p.question_count)) return "questions length must equal question_count";
   for (const q of p.questions) {
@@ -1015,9 +1146,16 @@ function validateSubmissionPayload(p: any): string | null {
     }
     if (typeof a.answer_preview !== "string") return "attempt answer_preview must be a string";
     if ("full_answer" in a || "prompt" in a || "prompt_text" in a) return "attempt must not include full answer or prompt";
+    if (a.answer_preview_truncated != null && typeof a.answer_preview_truncated !== "boolean") return "answer_preview_truncated must be a boolean";
     for (const key of ["input_tokens", "output_tokens", "reasoning_tokens"]) {
       if (!validInt(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative integer`;
     }
+    for (const key of ["cached_input_tokens", "total_tokens", "event_count", "answer_chars"]) {
+      if (a[key] != null && !validInt(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative integer`;
+    }
+    if (a.codex_thread_id != null && (typeof a.codex_thread_id !== "string" || a.codex_thread_id.length > MAX_STRING_LENGTH)) return "codex_thread_id must be a short string";
+    if (a.event_types != null && !stringArray(a.event_types, 100, 128)) return "event_types must be a short string array";
+    if (a.tool_event_detected != null && typeof a.tool_event_detected !== "boolean") return "tool_event_detected must be a boolean";
     for (const key of ["time_seconds", "tps"]) {
       if (!validNumber(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative number`;
     }
@@ -1037,6 +1175,10 @@ function validNumber(v: unknown, min: number, max: number): boolean {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
 }
 
+function stringArray(v: unknown, maxItems: number, maxItemLength: number): boolean {
+  return Array.isArray(v) && v.length <= maxItems && v.every((item) => typeof item === "string" && item.length <= maxItemLength);
+}
+
 function clampInt(v: string | null, min: number, max: number, fallback: number): number {
   const n = Number(v);
   if (!Number.isInteger(n)) return fallback;
@@ -1046,6 +1188,17 @@ function clampInt(v: string | null, min: number, max: number, fallback: number):
 function str(v: unknown, maxLength = MAX_STRING_LENGTH): string {
   const s = typeof v === "string" ? v : v == null ? "" : String(v);
   return s.slice(0, maxLength);
+}
+
+function jsonArrayString(v: unknown, maxLength: number): string {
+  if (!Array.isArray(v)) return "[]";
+  const items = v.map((item) => str(item, 128));
+  while (items.length > 0) {
+    const encoded = JSON.stringify(items);
+    if (encoded.length <= maxLength) return encoded;
+    items.pop();
+  }
+  return "[]";
 }
 
 function int(v: unknown): number {

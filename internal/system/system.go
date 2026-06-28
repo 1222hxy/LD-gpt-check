@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,12 @@ import (
 	"strings"
 	"time"
 )
+
+type CodexConfig struct {
+	Model         string
+	ModelProvider string
+	ProviderHost  string
+}
 
 func CodexPath() (string, error) {
 	if runtime.GOOS == "windows" {
@@ -51,25 +58,42 @@ func CodexConfigPath() string {
 }
 
 func CodexConfiguredModel() (string, error) {
+	info, err := CodexConfigInfo()
+	if err != nil {
+		return "", err
+	}
+	if !ConcreteCodexModel(info.Model) {
+		return "", nil
+	}
+	return info.Model, nil
+}
+
+func CodexConfigInfo() (CodexConfig, error) {
 	path := CodexConfigPath()
 	if path == "" {
-		return "", nil
+		return CodexConfig{}, nil
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil
+			return CodexConfig{}, nil
 		}
-		return "", err
+		return CodexConfig{}, err
 	}
-	model, err := rootTOMLString(b, "model")
+	values, err := parseSimpleTOMLStrings(b)
 	if err != nil {
-		return "", err
+		return CodexConfig{}, err
 	}
-	if !ConcreteCodexModel(model) {
-		return "", nil
+	model := strings.TrimSpace(values["model"])
+	provider := strings.TrimSpace(values["model_provider"])
+	if provider == "" {
+		provider = strings.TrimSpace(values["provider"])
 	}
-	return model, nil
+	host := ""
+	if provider != "" {
+		host = providerHost(values, provider)
+	}
+	return CodexConfig{Model: model, ModelProvider: provider, ProviderHost: host}, nil
 }
 
 func ConcreteCodexModel(model string) bool {
@@ -82,11 +106,18 @@ func ConcreteCodexModel(model string) bool {
 }
 
 func rootTOMLString(b []byte, want string) (string, error) {
+	values, err := parseSimpleTOMLStrings(b)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(values[want]), nil
+}
+
+func parseSimpleTOMLStrings(b []byte) (map[string]string, error) {
+	values := make(map[string]string)
 	section := ""
 	scanner := bufio.NewScanner(strings.NewReader(string(b)))
-	lineNo := 0
 	for scanner.Scan() {
-		lineNo++
 		line := stripTOMLComment(strings.TrimSpace(scanner.Text()))
 		if line == "" {
 			continue
@@ -95,20 +126,69 @@ func rootTOMLString(b []byte, want string) (string, error) {
 			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
 			continue
 		}
-		if section != "" {
-			continue
-		}
 		key, value, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != want {
+		if !ok {
 			continue
 		}
-		s, err := strconv.Unquote(strings.TrimSpace(value))
-		if err != nil {
-			return "", err
+		s, ok := parseTOMLStringValue(strings.TrimSpace(value))
+		if !ok {
+			continue
 		}
-		return strings.TrimSpace(s), nil
+		normalizedKey := strings.TrimSpace(key)
+		if section != "" {
+			normalizedKey = section + "." + normalizedKey
+		}
+		values[normalizedKey] = strings.TrimSpace(s)
 	}
-	return "", scanner.Err()
+	return values, scanner.Err()
+}
+
+func parseTOMLStringValue(value string) (string, bool) {
+	if value == "" {
+		return "", false
+	}
+	if strings.HasPrefix(value, `"`) {
+		s, err := strconv.Unquote(value)
+		if err != nil {
+			return "", false
+		}
+		return strings.TrimSpace(s), true
+	}
+	if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") && len(value) >= 2 {
+		return strings.TrimSpace(strings.Trim(value, "'")), true
+	}
+	return "", false
+}
+
+func providerHost(values map[string]string, provider string) string {
+	for _, key := range providerBaseURLKeys(provider) {
+		if host := hostFromURL(values[key]); host != "" {
+			return host
+		}
+	}
+	return ""
+}
+
+func providerBaseURLKeys(provider string) []string {
+	provider = strings.Trim(strings.TrimSpace(provider), `"`)
+	return []string{
+		"model_providers." + provider + ".base_url",
+		"model_providers.\"" + provider + "\".base_url",
+		"providers." + provider + ".base_url",
+		"providers.\"" + provider + "\".base_url",
+	}
+}
+
+func hostFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Host
 }
 
 func stripTOMLComment(line string) string {

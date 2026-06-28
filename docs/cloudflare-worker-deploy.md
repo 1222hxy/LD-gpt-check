@@ -137,6 +137,12 @@ wrangler secret put TURNSTILE_SECRET_KEY
 wrangler d1 execute ld-gpt-check --file=./schema.sql --remote
 ```
 
+如果是在已有 submission 表的远程 D1 上升级，额外执行一次诊断字段迁移：
+
+```bash
+wrangler d1 execute ld-gpt-check --file=./migrations/0001_add_submission_diagnostics.sql --remote
+```
+
 验证表是否创建成功：
 
 ```bash
@@ -233,6 +239,7 @@ https://YOUR_WORKER_DOMAIN/account
 - `/account` 页面能正常打开，Linux.do 登录后能显示当前用户信息和退出登录按钮。
 - CLI 能完成 `login`、`whoami`、`logout`。
 - 上传后，D1 的 `benchmark_submissions`、`benchmark_question_results` 和 `benchmark_attempts` 表有数据。
+- `/account` 默认只展示最近 10 条上传记录，用户可以删除单条记录或清空自己的测试数据。
 - 浏览器响应包含 `x-request-id`、`x-content-type-options`、`content-security-policy` 等安全响应头。
 
 ## 9. 常见问题

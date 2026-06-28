@@ -19,20 +19,20 @@ func TestParseEventsExtractsMessageAndUsage(t *testing.T) {
 		`{"type":"turn.completed","usage":{"input_tokens":"10163","output_tokens":4873,"output_tokens_details":{"reasoning_tokens":4660}}}`,
 	}, "\n")
 
-	answer, in, out, reason, toolUsed, err := parseEvents(strings.NewReader(input), i18n.ZH)
+	parsed, err := parseEvents(strings.NewReader(input), i18n.ZH)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toolUsed {
+	if parsed.ToolUsed {
 		t.Fatal("did not expect tool use")
 	}
-	if answer != "最少需要取出 **21 个**。" {
-		t.Fatalf("answer = %q", answer)
+	if parsed.FinalAnswer != "最少需要取出 **21 个**。" {
+		t.Fatalf("answer = %q", parsed.FinalAnswer)
 	}
-	if in != 10163 || out != 4873 || reason != 4660 {
-		t.Fatalf("usage = %d %d %d", in, out, reason)
+	if parsed.InputTokens != 10163 || parsed.OutputTokens != 4873 || parsed.ReasoningTokens != 4660 {
+		t.Fatalf("usage = %d %d %d", parsed.InputTokens, parsed.OutputTokens, parsed.ReasoningTokens)
 	}
-	if !questions.Grade(questions.Builtin()[0], answer).OK {
+	if !questions.Grade(questions.Builtin()[0], parsed.FinalAnswer).OK {
 		t.Fatal("expected grader to match independent 21")
 	}
 }
@@ -43,15 +43,15 @@ func TestParseEventsHandlesNestedEventShapes(t *testing.T) {
 		`{"name":"codex.turn.completed","payload":{"usage":{"input_tokens":10,"output_tokens":20,"completion_tokens_details":{"reasoning_tokens":7}}}}`,
 	}, "\n")
 
-	answer, in, out, reason, _, err := parseEvents(strings.NewReader(input), i18n.ZH)
+	parsed, err := parseEvents(strings.NewReader(input), i18n.ZH)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "答案：121 不是。最终是 21。" {
-		t.Fatalf("answer = %q", answer)
+	if parsed.FinalAnswer != "答案：121 不是。最终是 21。" {
+		t.Fatalf("answer = %q", parsed.FinalAnswer)
 	}
-	if in != 10 || out != 20 || reason != 7 {
-		t.Fatalf("usage = %d %d %d", in, out, reason)
+	if parsed.InputTokens != 10 || parsed.OutputTokens != 20 || parsed.ReasoningTokens != 7 {
+		t.Fatalf("usage = %d %d %d", parsed.InputTokens, parsed.OutputTokens, parsed.ReasoningTokens)
 	}
 	if questions.Grade(questions.Builtin()[0], "121").OK {
 		t.Fatal("grader should not match 21 inside 121")
@@ -60,12 +60,30 @@ func TestParseEventsHandlesNestedEventShapes(t *testing.T) {
 
 func TestParseEventsDetectsToolUse(t *testing.T) {
 	input := `{"type":"item.completed","item":{"type":"tool_call","name":"shell_command"}}`
-	_, _, _, _, toolUsed, err := parseEvents(strings.NewReader(input), i18n.ZH)
+	parsed, err := parseEvents(strings.NewReader(input), i18n.ZH)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !toolUsed {
+	if !parsed.ToolUsed {
 		t.Fatal("expected tool use detection")
+	}
+}
+
+func TestParseEventsCapturesDiagnostics(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"thread_1"}`,
+		`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":25,"output_tokens":40,"reasoning_output_tokens":7}}`,
+	}, "\n")
+
+	parsed, err := parseEvents(strings.NewReader(input), i18n.ZH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ThreadID != "thread_1" || parsed.CachedInputTokens != 25 || parsed.EventCount != 2 {
+		t.Fatalf("diagnostics = %#v", parsed)
+	}
+	if !reflect.DeepEqual(parsed.EventTypes, []string{"thread.started", "turn.completed"}) {
+		t.Fatalf("event types = %#v", parsed.EventTypes)
 	}
 }
 

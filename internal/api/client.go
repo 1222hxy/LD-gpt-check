@@ -126,24 +126,33 @@ type MeResponse struct {
 }
 
 type UploadPayload struct {
-	UploadID        string                 `json:"upload_id"`
-	ClientVersion   string                 `json:"client_version"`
-	Model           string                 `json:"model"`
-	ReasoningEffort string                 `json:"reasoning_effort"`
-	QuestionCount   int                    `json:"question_count"`
-	AttemptCount    int                    `json:"attempt_count"`
-	Correct         int                    `json:"correct"`
-	Accuracy        float64                `json:"accuracy"`
-	AvgInputTokens  float64                `json:"avg_input_tokens"`
-	AvgOutputTokens float64                `json:"avg_output_tokens"`
-	AvgReasonTokens float64                `json:"avg_reason_tokens"`
-	AvgTimeSeconds  float64                `json:"avg_time_seconds"`
-	AvgTPS          float64                `json:"avg_tps"`
-	OS              string                 `json:"os"`
-	Arch            string                 `json:"arch"`
-	CodexVersion    string                 `json:"codex_version"`
-	Questions       []UploadQuestionResult `json:"questions"`
-	Attempts        []UploadAttempt        `json:"attempts"`
+	UploadID              string                 `json:"upload_id"`
+	UploadSchemaVersion   int                    `json:"upload_schema_version"`
+	ClientVersion         string                 `json:"client_version"`
+	Model                 string                 `json:"model"`
+	ReasoningEffort       string                 `json:"reasoning_effort"`
+	QuestionCount         int                    `json:"question_count"`
+	AttemptCount          int                    `json:"attempt_count"`
+	Correct               int                    `json:"correct"`
+	Accuracy              float64                `json:"accuracy"`
+	AvgInputTokens        float64                `json:"avg_input_tokens"`
+	AvgOutputTokens       float64                `json:"avg_output_tokens"`
+	AvgReasonTokens       float64                `json:"avg_reason_tokens"`
+	AvgTimeSeconds        float64                `json:"avg_time_seconds"`
+	AvgTPS                float64                `json:"avg_tps"`
+	OS                    string                 `json:"os"`
+	Arch                  string                 `json:"arch"`
+	CodexVersion          string                 `json:"codex_version"`
+	CodexModelSource      string                 `json:"codex_model_source"`
+	CodexModelProvider    string                 `json:"codex_model_provider,omitempty"`
+	CodexProviderHost     string                 `json:"codex_provider_host,omitempty"`
+	CodexSandbox          string                 `json:"codex_sandbox"`
+	CodexEphemeral        bool                   `json:"codex_ephemeral"`
+	CodexSkipGitRepoCheck bool                   `json:"codex_skip_git_repo_check"`
+	CodexDisabledFeatures []string               `json:"codex_disabled_features,omitempty"`
+	CodexInvocation       string                 `json:"codex_invocation,omitempty"`
+	Questions             []UploadQuestionResult `json:"questions"`
+	Attempts              []UploadAttempt        `json:"attempts"`
 }
 
 type UploadQuestionResult struct {
@@ -164,40 +173,56 @@ type UploadQuestionResult struct {
 }
 
 type UploadAttempt struct {
-	QuestionID      string  `json:"question_id"`
-	QuestionVersion string  `json:"question_version"`
-	CaseIndex       int     `json:"case_index"`
-	Status          string  `json:"status"`
-	IsCorrect       bool    `json:"is_correct"`
-	ExpectedAnswer  string  `json:"expected_answer"`
-	ExtractedAnswer string  `json:"extracted_answer"`
-	FailureReason   string  `json:"failure_reason,omitempty"`
-	AnswerPreview   string  `json:"answer_preview"`
-	InputTokens     int     `json:"input_tokens"`
-	OutputTokens    int     `json:"output_tokens"`
-	ReasoningTokens int     `json:"reasoning_tokens"`
-	TimeSeconds     float64 `json:"time_seconds"`
-	TPS             float64 `json:"tps"`
+	QuestionID             string   `json:"question_id"`
+	QuestionVersion        string   `json:"question_version"`
+	CaseIndex              int      `json:"case_index"`
+	Status                 string   `json:"status"`
+	IsCorrect              bool     `json:"is_correct"`
+	ExpectedAnswer         string   `json:"expected_answer"`
+	ExtractedAnswer        string   `json:"extracted_answer"`
+	FailureReason          string   `json:"failure_reason,omitempty"`
+	AnswerPreview          string   `json:"answer_preview"`
+	AnswerPreviewTruncated bool     `json:"answer_preview_truncated"`
+	InputTokens            int      `json:"input_tokens"`
+	CachedInputTokens      int      `json:"cached_input_tokens"`
+	OutputTokens           int      `json:"output_tokens"`
+	ReasoningTokens        int      `json:"reasoning_tokens"`
+	TotalTokens            int      `json:"total_tokens"`
+	TimeSeconds            float64  `json:"time_seconds"`
+	TPS                    float64  `json:"tps"`
+	CodexThreadID          string   `json:"codex_thread_id,omitempty"`
+	EventCount             int      `json:"event_count"`
+	EventTypes             []string `json:"event_types,omitempty"`
+	ToolEventDetected      bool     `json:"tool_event_detected"`
+	AnswerChars            int      `json:"answer_chars"`
 }
 
 func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVersion string) UploadPayload {
 	attempts := make([]UploadAttempt, 0, len(s.Cases))
 	for _, c := range s.Cases {
 		attempts = append(attempts, UploadAttempt{
-			QuestionID:      c.QuestionID,
-			QuestionVersion: c.QuestionVersion,
-			CaseIndex:       c.Index,
-			Status:          firstNonEmpty(c.Status, "completed"),
-			IsCorrect:       c.OK,
-			ExpectedAnswer:  c.ExpectedAnswer,
-			ExtractedAnswer: c.ExtractedAnswer,
-			FailureReason:   c.FailureReason,
-			AnswerPreview:   runner.Preview(c.AnswerPreview, 160),
-			InputTokens:     c.InputTokens,
-			OutputTokens:    c.OutputTokens,
-			ReasoningTokens: c.ReasoningTokens,
-			TimeSeconds:     c.TimeSeconds,
-			TPS:             c.TPS,
+			QuestionID:             c.QuestionID,
+			QuestionVersion:        c.QuestionVersion,
+			CaseIndex:              c.Index,
+			Status:                 firstNonEmpty(c.Status, "completed"),
+			IsCorrect:              c.OK,
+			ExpectedAnswer:         c.ExpectedAnswer,
+			ExtractedAnswer:        c.ExtractedAnswer,
+			FailureReason:          c.FailureReason,
+			AnswerPreview:          runner.Preview(c.AnswerPreview, 300),
+			AnswerPreviewTruncated: c.AnswerPreviewTruncated,
+			InputTokens:            c.InputTokens,
+			CachedInputTokens:      c.CachedInputTokens,
+			OutputTokens:           c.OutputTokens,
+			ReasoningTokens:        c.ReasoningTokens,
+			TotalTokens:            c.TotalTokens,
+			TimeSeconds:            c.TimeSeconds,
+			TPS:                    c.TPS,
+			CodexThreadID:          c.CodexThreadID,
+			EventCount:             c.EventCount,
+			EventTypes:             append([]string(nil), c.EventTypes...),
+			ToolEventDetected:      c.ToolEventDetected,
+			AnswerChars:            c.AnswerChars,
 		})
 	}
 	questionResults := make([]UploadQuestionResult, 0, len(s.Questions))
@@ -205,24 +230,33 @@ func PayloadFromSummary(version string, s runner.Summary, osName, arch, codexVer
 		questionResults = append(questionResults, UploadQuestionResult(q))
 	}
 	return UploadPayload{
-		UploadID:        newUploadID(),
-		ClientVersion:   version,
-		Model:           strings.TrimSpace(s.Model),
-		ReasoningEffort: s.ReasoningEffort,
-		QuestionCount:   len(s.Questions),
-		AttemptCount:    len(s.Cases),
-		Correct:         s.Correct,
-		Accuracy:        s.Accuracy,
-		AvgInputTokens:  s.AvgInputTokens,
-		AvgOutputTokens: s.AvgOutputTokens,
-		AvgReasonTokens: s.AvgReasoningTokens,
-		AvgTimeSeconds:  s.AvgTimeSeconds,
-		AvgTPS:          s.AvgTPS,
-		OS:              osName,
-		Arch:            arch,
-		CodexVersion:    codexVersion,
-		Questions:       questionResults,
-		Attempts:        attempts,
+		UploadID:              newUploadID(),
+		UploadSchemaVersion:   firstPositive(s.UploadSchemaVersion, 2),
+		ClientVersion:         version,
+		Model:                 strings.TrimSpace(s.Model),
+		ReasoningEffort:       s.ReasoningEffort,
+		QuestionCount:         len(s.Questions),
+		AttemptCount:          len(s.Cases),
+		Correct:               s.Correct,
+		Accuracy:              s.Accuracy,
+		AvgInputTokens:        s.AvgInputTokens,
+		AvgOutputTokens:       s.AvgOutputTokens,
+		AvgReasonTokens:       s.AvgReasoningTokens,
+		AvgTimeSeconds:        s.AvgTimeSeconds,
+		AvgTPS:                s.AvgTPS,
+		OS:                    osName,
+		Arch:                  arch,
+		CodexVersion:          codexVersion,
+		CodexModelSource:      firstNonEmpty(s.CodexModelSource, "unknown"),
+		CodexModelProvider:    s.CodexModelProvider,
+		CodexProviderHost:     s.CodexProviderHost,
+		CodexSandbox:          firstNonEmpty(s.CodexSandbox, "read-only"),
+		CodexEphemeral:        s.CodexEphemeral,
+		CodexSkipGitRepoCheck: s.CodexSkipGitRepoCheck,
+		CodexDisabledFeatures: append([]string(nil), s.CodexDisabledFeatures...),
+		CodexInvocation:       s.CodexInvocation,
+		Questions:             questionResults,
+		Attempts:              attempts,
 	}
 }
 
@@ -259,6 +293,22 @@ func (c Client) UploadRun(ctx context.Context, payload UploadPayload) (map[strin
 	}
 	var out map[string]any
 	err := c.do(ctx, requestOptions{method: http.MethodPost, path: "/api/v1/submissions", body: payload, auth: true, out: &out})
+	return out, err
+}
+
+func (c Client) DeleteSubmission(ctx context.Context, id string) (map[string]any, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("submission id is required")
+	}
+	var out map[string]any
+	err := c.do(ctx, requestOptions{method: http.MethodDelete, path: "/api/v1/submissions/" + url.PathEscape(id), auth: true, out: &out, retrySafe: true})
+	return out, err
+}
+
+func (c Client) DeleteAllSubmissions(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(ctx, requestOptions{method: http.MethodDelete, path: "/api/v1/submissions", auth: true, out: &out})
 	return out, err
 }
 
@@ -526,6 +576,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func parseRetryAfter(v string) time.Duration {

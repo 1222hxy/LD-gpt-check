@@ -26,6 +26,47 @@ model = "other"
 	}
 }
 
+func TestCodexConfigInfoReadsProviderHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`
+model = "gpt-5.5"
+model_provider = "linuxdo"
+
+[model_providers.linuxdo]
+base_url = "https://api.example.com/v1"
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CodexConfigInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "gpt-5.5" || got.ModelProvider != "linuxdo" || got.ProviderHost != "api.example.com" {
+		t.Fatalf("config = %#v", got)
+	}
+}
+
+func TestCodexConfigInfoSkipsNonStringValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`
+model = "gpt-5.5"
+approval_policy = "never"
+disable_response_storage = true
+experimental = ["a", "b"]
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CodexConfigInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "gpt-5.5" {
+		t.Fatalf("config = %#v", got)
+	}
+}
+
 func TestCodexConfiguredModelIgnoresDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)

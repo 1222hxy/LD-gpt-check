@@ -306,6 +306,7 @@ Query 参数：
 ```json
 {
   "upload_id": "upl_0123456789abcdef0123456789abcdef",
+  "upload_schema_version": 2,
   "client_version": "0.1.0",
   "model": "gpt-5.5",
   "reasoning_effort": "xhigh",
@@ -321,6 +322,13 @@ Query 参数：
   "os": "linux",
   "arch": "amd64",
   "codex_version": "codex 0.1.0",
+  "codex_model_source": "explicit",
+  "codex_model_provider": "openai",
+  "codex_provider_host": "api.openai.com",
+  "codex_sandbox": "read-only",
+  "codex_ephemeral": true,
+  "codex_skip_git_repo_check": true,
+  "codex_disabled_features": ["memories"],
   "questions": [
     {
       "question_id": "candy_21",
@@ -349,11 +357,19 @@ Query 参数：
       "expected_answer": "21",
       "extracted_answer": "21",
       "answer_preview": "21",
+      "answer_preview_truncated": false,
       "input_tokens": 120,
+      "cached_input_tokens": 20,
       "output_tokens": 12,
       "reasoning_tokens": 30,
+      "total_tokens": 132,
       "time_seconds": 2.4,
-      "tps": 5
+      "tps": 5,
+      "codex_thread_id": "019f0e72-d150-7b31-85ae-da9c93f517bd",
+      "event_count": 4,
+      "event_types": ["thread.started", "turn.completed"],
+      "tool_event_detected": false,
+      "answer_chars": 2
     }
   ]
 }
@@ -376,6 +392,7 @@ Query 参数：
 | `model` | string | Codex 使用的模型名 |
 | `reasoning_effort` | string | 推理强度，如 `low`、`medium`、`high`、`xhigh` |
 | `upload_id` | string | CLI 生成的幂等上传 ID，同一用户重复提交会返回同一 submission |
+| `upload_schema_version` | integer | 上传 payload 版本；当前 Go CLI 使用 `2` |
 | `question_count` | integer | 本次包含的问题数量 |
 | `attempt_count` | integer | 本次总尝试次数 |
 | `correct` | integer | 正确尝试次数 |
@@ -388,6 +405,11 @@ Query 参数：
 | `os` | string | 客户端操作系统 |
 | `arch` | string | 客户端架构 |
 | `codex_version` | string | 本地 Codex CLI 版本 |
+| `codex_model_source` | string | 模型来源：`explicit`、`codex_config` 或 `unknown` |
+| `codex_model_provider` | string | Codex 配置中的 provider 名称，可能为空 |
+| `codex_provider_host` | string | provider `base_url` 的 host，不含协议、路径或 query |
+| `codex_sandbox` | string | CLI 本次实际使用的 Codex sandbox，当前为 `read-only` |
+| `codex_disabled_features` | array | 本次禁用的 Codex 功能摘要，当前包含 `memories` |
 | `questions` | array | 每道题的汇总结果 |
 | `attempts` | array | 每轮尝试结果，当前服务端最多保存 500 条 |
 
@@ -396,6 +418,7 @@ Query 参数：
 - 不上传 `full_answer`。
 - 不上传完整 prompt，只上传 `prompt_hash`。
 - `answer_preview` 用于调试和展示，服务端最多保存 300 字符。
+- 可上传 `thread_id`、event type 列表、cached input tokens 等诊断摘要，但不上传原始 JSONL event。
 - 不上传本地文件路径、环境变量、Codex 数据库或完整 prompt 历史。
 
 错误：
@@ -440,6 +463,38 @@ Query 参数：
 错误：
 
 - `401 unauthorized`：Bearer token 无效。
+
+## DELETE /api/v1/submissions/{id}
+
+删除当前用户自己的一条 benchmark submission，同时删除其 question results 和 attempts。不会删除账号、网页 session 或 CLI access token。
+
+认证：Bearer token。
+
+响应：
+
+```json
+{
+  "ok": true,
+  "deleted": 1
+}
+```
+
+如果记录不存在或不属于当前用户，返回 `deleted: 0`，避免泄露其他用户数据。
+
+## DELETE /api/v1/submissions
+
+删除当前用户自己的全部 benchmark submission 数据。不会删除账号、网页 session 或 CLI access token。
+
+认证：Bearer token。
+
+响应：
+
+```json
+{
+  "ok": true,
+  "deleted": 12
+}
+```
 
 ## POST /api/logout
 

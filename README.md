@@ -257,11 +257,11 @@ internal/questions/   Built-in and external benchmark question banks
 internal/runner/      Codex execution and JSON event parsing
 internal/report/      Terminal table rendering
 internal/system/      OS helpers
-frontend/             Vite static frontend, deployed to Cloudflare Pages
+frontend/             Vite static frontend source
 worker/src/           Cloudflare Worker TypeScript source
 worker/schema.sql     D1 database schema
 ```
 
 ## Privacy Notes
 
-Uploads include only summary metrics and answer previews. The CLI does not upload local Codex databases, full prompt history, or full model responses.
+Uploads include summary metrics, short answer previews, token/time/TPS fields, and bounded Codex diagnostics such as cached input tokens, event type names, and thread id. The CLI does not upload raw Codex JSONL events, local Codex databases, full prompt history, or full model responses. Users can delete their own uploaded benchmark data from the account page; account sessions and CLI tokens are kept unless they log out.

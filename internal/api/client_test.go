@@ -67,11 +67,22 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 			Tests:           1,
 		}},
 		Cases: []runner.CaseResult{{
-			Index:           1,
-			QuestionID:      questions.DefaultSuite,
-			QuestionVersion: "1",
-			AnswerPreview:   "short",
-			FullAnswer:      "full private answer",
+			Index:             1,
+			QuestionID:        questions.DefaultSuite,
+			QuestionVersion:   "1",
+			AnswerPreview:     "short",
+			FullAnswer:        "full private answer",
+			InputTokens:       101,
+			OutputTokens:      202,
+			ReasoningTokens:   303,
+			TimeSeconds:       4.5,
+			TPS:               44.8,
+			CachedInputTokens: 10,
+			TotalTokens:       303,
+			CodexThreadID:     "thread_1",
+			EventCount:        3,
+			EventTypes:        []string{"item.completed", "turn.completed"},
+			AnswerChars:       12,
 		}},
 	}
 	p := PayloadFromSummary("0.1.0", s, "linux", "amd64", "codex 1")
@@ -81,6 +92,16 @@ func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
 	}
 	if string(b) == "" || strings.Contains(string(b), "full private answer") {
 		t.Fatalf("payload leaked full answer: %s", string(b))
+	}
+	if len(p.Attempts) != 1 {
+		t.Fatalf("attempts = %d", len(p.Attempts))
+	}
+	a := p.Attempts[0]
+	if a.InputTokens != 101 || a.OutputTokens != 202 || a.ReasoningTokens != 303 || a.TimeSeconds != 4.5 || a.TPS != 44.8 {
+		t.Fatalf("table metrics not preserved: %#v", a)
+	}
+	if a.CachedInputTokens != 10 || a.TotalTokens != 303 || a.CodexThreadID != "thread_1" || a.EventCount != 3 || a.AnswerChars != 12 {
+		t.Fatalf("diagnostics not preserved: %#v", a)
 	}
 }
 

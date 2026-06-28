@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/haowang02/ld-gpt-check/internal/i18n"
 	"github.com/haowang02/ld-gpt-check/internal/questions"
@@ -54,38 +56,67 @@ const (
 )
 
 type CaseResult struct {
-	Index           int     `json:"index"`
-	QuestionID      string  `json:"question_id"`
-	QuestionVersion string  `json:"question_version"`
-	QuestionTitle   string  `json:"question_title"`
-	OK              bool    `json:"ok"`
-	Status          string  `json:"status"`
-	ExpectedAnswer  string  `json:"expected_answer"`
-	ExtractedAnswer string  `json:"extracted_answer"`
-	FailureReason   string  `json:"failure_reason,omitempty"`
-	AnswerPreview   string  `json:"answer_preview"`
-	FullAnswer      string  `json:"-"`
-	InputTokens     int     `json:"input_tokens"`
-	OutputTokens    int     `json:"output_tokens"`
-	ReasoningTokens int     `json:"reasoning_tokens"`
-	TimeSeconds     float64 `json:"time_seconds"`
-	TPS             float64 `json:"tps"`
-	Error           string  `json:"error,omitempty"`
+	Index                  int      `json:"index"`
+	QuestionID             string   `json:"question_id"`
+	QuestionVersion        string   `json:"question_version"`
+	QuestionTitle          string   `json:"question_title"`
+	OK                     bool     `json:"ok"`
+	Status                 string   `json:"status"`
+	ExpectedAnswer         string   `json:"expected_answer"`
+	ExtractedAnswer        string   `json:"extracted_answer"`
+	FailureReason          string   `json:"failure_reason,omitempty"`
+	AnswerPreview          string   `json:"answer_preview"`
+	AnswerPreviewTruncated bool     `json:"answer_preview_truncated"`
+	FullAnswer             string   `json:"-"`
+	InputTokens            int      `json:"input_tokens"`
+	CachedInputTokens      int      `json:"cached_input_tokens"`
+	OutputTokens           int      `json:"output_tokens"`
+	ReasoningTokens        int      `json:"reasoning_tokens"`
+	TotalTokens            int      `json:"total_tokens"`
+	TimeSeconds            float64  `json:"time_seconds"`
+	TPS                    float64  `json:"tps"`
+	CodexThreadID          string   `json:"codex_thread_id,omitempty"`
+	EventCount             int      `json:"event_count"`
+	EventTypes             []string `json:"event_types,omitempty"`
+	ToolEventDetected      bool     `json:"tool_event_detected"`
+	AnswerChars            int      `json:"answer_chars"`
+	Error                  string   `json:"error,omitempty"`
 }
 
 type Summary struct {
-	Model              string            `json:"model"`
-	ReasoningEffort    string            `json:"reasoning_effort"`
-	Tests              int               `json:"tests"`
-	Correct            int               `json:"correct"`
-	Accuracy           float64           `json:"accuracy"`
-	AvgInputTokens     float64           `json:"avg_input_tokens"`
-	AvgOutputTokens    float64           `json:"avg_output_tokens"`
-	AvgReasoningTokens float64           `json:"avg_reason_tokens"`
-	AvgTimeSeconds     float64           `json:"avg_time_seconds"`
-	AvgTPS             float64           `json:"avg_tps"`
-	Questions          []QuestionSummary `json:"questions"`
-	Cases              []CaseResult      `json:"cases"`
+	Model                 string            `json:"model"`
+	ReasoningEffort       string            `json:"reasoning_effort"`
+	Tests                 int               `json:"tests"`
+	Correct               int               `json:"correct"`
+	Accuracy              float64           `json:"accuracy"`
+	AvgInputTokens        float64           `json:"avg_input_tokens"`
+	AvgOutputTokens       float64           `json:"avg_output_tokens"`
+	AvgReasoningTokens    float64           `json:"avg_reason_tokens"`
+	AvgTimeSeconds        float64           `json:"avg_time_seconds"`
+	AvgTPS                float64           `json:"avg_tps"`
+	UploadSchemaVersion   int               `json:"upload_schema_version"`
+	CodexModelSource      string            `json:"codex_model_source"`
+	CodexModelProvider    string            `json:"codex_model_provider,omitempty"`
+	CodexProviderHost     string            `json:"codex_provider_host,omitempty"`
+	CodexSandbox          string            `json:"codex_sandbox"`
+	CodexEphemeral        bool              `json:"codex_ephemeral"`
+	CodexSkipGitRepoCheck bool              `json:"codex_skip_git_repo_check"`
+	CodexDisabledFeatures []string          `json:"codex_disabled_features,omitempty"`
+	CodexInvocation       string            `json:"codex_invocation,omitempty"`
+	Questions             []QuestionSummary `json:"questions"`
+	Cases                 []CaseResult      `json:"cases"`
+}
+
+type ParsedEvents struct {
+	FinalAnswer       string
+	InputTokens       int
+	CachedInputTokens int
+	OutputTokens      int
+	ReasoningTokens   int
+	ThreadID          string
+	EventCount        int
+	EventTypes        []string
+	ToolUsed          bool
 }
 
 type QuestionSummary struct {
@@ -195,14 +226,14 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		return CaseResult{}, err
 	}
 
-	finalAnswer, inputTokens, outputTokens, reasoningTokens, toolUsed, parseErr := parseEvents(stdout, opts.Lang)
+	parsed, parseErr := parseEvents(stdout, opts.Lang)
 	if parseErr != nil {
 		cancel()
 		_ = cmd.Wait()
 		return CaseResult{}, parseErr
 	}
 	waitErr := cmd.Wait()
-	if toolUsed {
+	if parsed.ToolUsed {
 		return CaseResult{}, errors.New(i18n.New(opts.Lang).S("runner_tool_used"))
 	}
 	if waitErr != nil {
@@ -222,29 +253,38 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 	elapsed := time.Since(start).Seconds()
 	tps := 0.0
 	if elapsed > 0 {
-		tps = float64(outputTokens) / elapsed
+		tps = float64(parsed.OutputTokens) / elapsed
 	}
-	if finalAnswer == "" {
-		finalAnswer = "(no final assistant message found)"
+	if parsed.FinalAnswer == "" {
+		parsed.FinalAnswer = "(no final assistant message found)"
 	}
-	grade := questions.Grade(q, finalAnswer)
+	previewMax := 300
+	grade := questions.Grade(q, parsed.FinalAnswer)
 	return CaseResult{
-		Index:           index,
-		QuestionID:      q.ID,
-		QuestionVersion: q.Version,
-		QuestionTitle:   q.Title,
-		OK:              grade.OK,
-		Status:          "completed",
-		ExpectedAnswer:  grade.ExpectedAnswer,
-		ExtractedAnswer: grade.ExtractedAnswer,
-		FailureReason:   grade.FailureReason,
-		AnswerPreview:   Preview(finalAnswer, 120),
-		FullAnswer:      finalAnswer,
-		InputTokens:     inputTokens,
-		OutputTokens:    outputTokens,
-		ReasoningTokens: reasoningTokens,
-		TimeSeconds:     elapsed,
-		TPS:             tps,
+		Index:                  index,
+		QuestionID:             q.ID,
+		QuestionVersion:        q.Version,
+		QuestionTitle:          q.Title,
+		OK:                     grade.OK,
+		Status:                 "completed",
+		ExpectedAnswer:         grade.ExpectedAnswer,
+		ExtractedAnswer:        grade.ExtractedAnswer,
+		FailureReason:          grade.FailureReason,
+		AnswerPreview:          Preview(parsed.FinalAnswer, previewMax),
+		AnswerPreviewTruncated: PreviewTruncated(parsed.FinalAnswer, previewMax),
+		FullAnswer:             parsed.FinalAnswer,
+		InputTokens:            parsed.InputTokens,
+		CachedInputTokens:      parsed.CachedInputTokens,
+		OutputTokens:           parsed.OutputTokens,
+		ReasoningTokens:        parsed.ReasoningTokens,
+		TotalTokens:            parsed.InputTokens + parsed.OutputTokens,
+		TimeSeconds:            elapsed,
+		TPS:                    tps,
+		CodexThreadID:          parsed.ThreadID,
+		EventCount:             parsed.EventCount,
+		EventTypes:             parsed.EventTypes,
+		ToolEventDetected:      parsed.ToolUsed,
+		AnswerChars:            utf8.RuneCountInString(parsed.FinalAnswer),
 	}, nil
 }
 
@@ -264,7 +304,9 @@ func codexArgs(model, effort string) []string {
 	return args
 }
 
-func parseEvents(r io.Reader, lang i18n.Lang) (finalAnswer string, inputTokens, outputTokens, reasoningTokens int, toolUsed bool, err error) {
+func parseEvents(r io.Reader, lang i18n.Lang) (ParsedEvents, error) {
+	var out ParsedEvents
+	eventTypes := make(map[string]struct{})
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
@@ -276,28 +318,36 @@ func parseEvents(r io.Reader, lang i18n.Lang) (finalAnswer string, inputTokens, 
 		if err != nil {
 			continue
 		}
+		out.EventCount++
+		if name := eventName(ev); name != "" {
+			eventTypes[name] = struct{}{}
+		}
+		if out.ThreadID == "" {
+			out.ThreadID = stringField(ev, "thread_id")
+		}
 		if eventUsesTool(ev) {
-			toolUsed = true
+			out.ToolUsed = true
 		}
 		if isEvent(ev, "item.completed") {
 			if msg := extractAgentMessage(ev); msg != "" {
-				finalAnswer = msg
+				out.FinalAnswer = msg
 			}
 		}
 		if isEvent(ev, "turn.completed") {
-			in, out, reason := extractUsage(ev)
-			if in > 0 || out > 0 || reason > 0 {
-				inputTokens, outputTokens, reasoningTokens = in, out, reason
+			in, cached, output, reason := extractUsage(ev)
+			if in > 0 || cached > 0 || output > 0 || reason > 0 {
+				out.InputTokens, out.CachedInputTokens, out.OutputTokens, out.ReasoningTokens = in, cached, output, reason
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
-			return "", 0, 0, 0, false, errors.New(i18n.New(lang).S("runner_event_too_large"))
+			return ParsedEvents{}, errors.New(i18n.New(lang).S("runner_event_too_large"))
 		}
-		return "", 0, 0, 0, false, err
+		return ParsedEvents{}, err
 	}
-	return finalAnswer, inputTokens, outputTokens, reasoningTokens, toolUsed, nil
+	out.EventTypes = sortedKeys(eventTypes)
+	return out, nil
 }
 
 func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
@@ -315,13 +365,20 @@ func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 	}
 	n := float64(len(cases))
 	s := Summary{
-		Model:           displayModel,
-		ReasoningEffort: opts.ReasoningEffort,
-		Tests:           len(cases),
-		Correct:         correct,
-		Questions:       summarizeQuestions(opts.Questions, cases),
-		Cases:           cases,
+		Model:                 displayModel,
+		ReasoningEffort:       opts.ReasoningEffort,
+		Tests:                 len(cases),
+		Correct:               correct,
+		UploadSchemaVersion:   2,
+		CodexSandbox:          "read-only",
+		CodexEphemeral:        true,
+		CodexSkipGitRepoCheck: true,
+		CodexDisabledFeatures: []string{"memories"},
+		CodexInvocation:       sanitizedInvocation(opts.Model, opts.ReasoningEffort),
+		Questions:             summarizeQuestions(opts.Questions, cases),
+		Cases:                 cases,
 	}
+	applyCodexConfigMetadata(&s, opts.Model)
 	if n > 0 {
 		s.Accuracy = float64(correct) * 100 / n
 		s.AvgInputTokens = float64(in) / n
@@ -331,6 +388,50 @@ func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 		s.AvgTPS = tps / n
 	}
 	return s
+}
+
+func applyCodexConfigMetadata(s *Summary, requestedModel string) {
+	info, err := system.CodexConfigInfo()
+	if err == nil {
+		s.CodexModelProvider = info.ModelProvider
+		s.CodexProviderHost = info.ProviderHost
+	}
+	switch {
+	case system.ConcreteCodexModel(requestedModel):
+		s.CodexModelSource = "explicit"
+	case system.ConcreteCodexModel(s.Model):
+		s.CodexModelSource = "codex_config"
+	default:
+		s.CodexModelSource = "unknown"
+	}
+}
+
+func sanitizedInvocation(model, effort string) string {
+	args := codexArgs(model, effort)
+	safe := struct {
+		Command              string   `json:"command"`
+		Args                 []string `json:"args"`
+		PromptFromStdin      bool     `json:"prompt_from_stdin"`
+		Sandbox              string   `json:"sandbox"`
+		Ephemeral            bool     `json:"ephemeral"`
+		SkipGitRepoCheck     bool     `json:"skip_git_repo_check"`
+		DisabledFeatures     []string `json:"disabled_features"`
+		ModelReasoningEffort string   `json:"model_reasoning_effort"`
+	}{
+		Command:              "codex",
+		Args:                 args,
+		PromptFromStdin:      true,
+		Sandbox:              "read-only",
+		Ephemeral:            true,
+		SkipGitRepoCheck:     true,
+		DisabledFeatures:     []string{"memories"},
+		ModelReasoningEffort: effort,
+	}
+	b, err := json.Marshal(safe)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func displayModelName(requested string) (string, error) {
@@ -402,6 +503,22 @@ func isEvent(ev map[string]any, want string) bool {
 	return false
 }
 
+func eventName(ev map[string]any) string {
+	for _, k := range []string{"type", "event", "name"} {
+		if s := stringField(ev, k); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func stringField(obj map[string]any, key string) string {
+	if s, _ := obj[key].(string); s != "" {
+		return s
+	}
+	return ""
+}
+
 func parseEventLine(line string) (map[string]any, error) {
 	dec := json.NewDecoder(strings.NewReader(line))
 	dec.UseNumber()
@@ -449,9 +566,10 @@ func toolMarker(s string) bool {
 	return false
 }
 
-func extractUsage(ev map[string]any) (int, int, int) {
+func extractUsage(ev map[string]any) (int, int, int, int) {
 	for _, obj := range candidateObjects(ev, "usage") {
 		in := intField(obj, "input_tokens")
+		cached := intField(obj, "cached_input_tokens")
 		out := intField(obj, "output_tokens")
 		reason := intField(obj, "reasoning_output_tokens")
 		if reason == 0 {
@@ -463,11 +581,11 @@ func extractUsage(ev map[string]any) (int, int, int) {
 		if reason == 0 {
 			reason = nestedIntField(obj, "completion_tokens_details", "reasoning_tokens")
 		}
-		if in > 0 || out > 0 || reason > 0 {
-			return in, out, reason
+		if in > 0 || cached > 0 || out > 0 || reason > 0 {
+			return in, cached, out, reason
 		}
 	}
-	return 0, 0, 0
+	return 0, 0, 0, 0
 }
 
 func extractAgentMessage(ev map[string]any) string {
@@ -587,4 +705,18 @@ func Preview(s string, maxRunes int) string {
 		return s
 	}
 	return string(r[:maxRunes]) + "..."
+}
+
+func PreviewTruncated(s string, maxRunes int) bool {
+	s = strings.Join(strings.Fields(s), " ")
+	return maxRunes > 0 && utf8.RuneCountInString(s) > maxRunes
+}
+
+func sortedKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

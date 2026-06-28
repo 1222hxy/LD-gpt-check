@@ -25,6 +25,7 @@
     "wrangler": "^4.105.0"
   },
   "dependencies": {
-    "@fontsource/noto-sans-sc": "^5.2.9"
+    "@fontsource/noto-sans-sc": "^5.2.9",
+    "shiki": "^4.3.0"
   }
 }

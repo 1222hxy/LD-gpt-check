@@ -67,40 +67,65 @@
             </div>
           </div>
 
-          <div class="terminal-card terminal-real" aria-label="LD-gpt-check 运行结果示例">
-            <div class="flex h-11 items-center justify-between border-b border-slate-800 bg-slate-950 px-4">
-              <div class="flex gap-2" aria-hidden="true">
-                <span class="size-3 rounded-full bg-[#ff5e66]"></span>
-                <span class="size-3 rounded-full bg-[#f5c460]"></span>
-                <span class="size-3 rounded-full bg-[#5beb95]"></span>
+          <div class="cli-preview" aria-label="LD-gpt-check 运行结果示例">
+            <div class="cli-titlebar">
+              <div class="flex items-center gap-2" aria-hidden="true">
+                <span class="cli-dot bg-[#ff5f57]"></span>
+                <span class="cli-dot bg-[#febc2e]"></span>
+                <span class="cli-dot bg-[#28c840]"></span>
               </div>
-              <span class="font-mono text-xs text-slate-400">~/bench/ld-gpt-check</span>
+              <div class="cli-title">LD-gpt-check / local benchmark</div>
+              <div class="cli-live">LIVE</div>
             </div>
-            <div class="terminal-screen">
-              <div class="terminal-command">
-                <span class="terminal-user">yhkun@linuxdo</span>
-                <span class="terminal-path">~/bench</span>
-                <span class="terminal-dollar">$</span>
-                <code>ld-gpt-check run -r xhigh -n 5 --upload</code>
-                <span class="terminal-cursor" aria-hidden="true"></span>
+            <div class="cli-body">
+              <div class="cli-command-line">
+                <span class="cli-prompt">~/bench</span>
+                <div class="shiki-code cli-command" data-shiki-code data-lang="bash">
+                  <pre><code>ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload</code></pre>
+                </div>
               </div>
-              <div class="terminal-output" aria-hidden="true">
-                <p><span class="term-info">开始运行</span> model=codex-default reasoning=xhigh 共 5 轮</p>
-                <p><span class="term-muted">▶ [1/5]</span> 正在运行 candy_21 #1</p>
-                <p><span class="term-pass">PASS</span> 耗时 18.7s TPS 39.4</p>
-                <p><span class="term-muted">▶ [2/5]</span> 正在运行 candy_21 #2</p>
-                <p><span class="term-fail">FAIL</span> extracted=27 expected=21</p>
+
+              <div class="cli-progress" aria-hidden="true">
+                <div class="cli-progress-head">
+                  <span>candy_21</span>
+                  <strong>5 / 5</strong>
+                </div>
+                <div class="cli-progress-bar"><span style="width: 100%"></span></div>
               </div>
-              <div class="terminal-table-wrap" aria-hidden="true">
-                <table class="terminal-table">
+
+              <div class="cli-status-list" aria-hidden="true">
+                <div class="cli-status-row">
+                  <span class="cli-status-index">01</span>
+                  <p>答案是 21 个...</p>
+                  <strong class="cli-pass">PASS</strong>
+                </div>
+                <div class="cli-status-row">
+                  <span class="cli-status-index">02</span>
+                  <p>最少需要取出 27 个...</p>
+                  <strong class="cli-fail">FAIL</strong>
+                </div>
+                <div class="cli-status-row">
+                  <span class="cli-status-index">05</span>
+                  <p>最少需要取出 21 个...</p>
+                  <strong class="cli-pass">PASS</strong>
+                </div>
+              </div>
+
+              <div class="cli-metrics" aria-hidden="true">
+                <div><span>Accuracy</span><strong>80.0%</strong></div>
+                <div><span>Avg TPS</span><strong>38.9</strong></div>
+                <div><span>Avg Time</span><strong>19.4s</strong></div>
+                <div><span>Reason Tok</span><strong>2.3k</strong></div>
+              </div>
+
+              <div class="cli-table-wrap" aria-hidden="true">
+                <table class="cli-table">
                   <thead>
                     <tr>
                       <th>Run</th>
-                      <th>Codex</th>
-                      <th>In</th>
-                      <th>Out</th>
+                      <th>In Tok</th>
+                      <th>Out Tok</th>
                       <th>Reason</th>
-                      <th>Time</th>
                       <th>TPS</th>
                       <th>OK</th>
                     </tr>
@@ -108,41 +133,30 @@
                   <tbody>
                     <tr>
                       <td>1</td>
-                      <td>答案是 21 个...</td>
                       <td>412</td>
                       <td>736</td>
-                      <td>2.1k</td>
-                      <td>18.7s</td>
+                      <td>2100</td>
                       <td>39.4</td>
-                      <td><span class="term-pass">yes</span></td>
+                      <td><span class="cli-check">✓</span></td>
                     </tr>
                     <tr>
                       <td>2</td>
-                      <td>最少需要取出 27 个...</td>
                       <td>412</td>
                       <td>812</td>
-                      <td>2.8k</td>
-                      <td>21.3s</td>
+                      <td>2800</td>
                       <td>38.1</td>
-                      <td><span class="term-fail">no</span></td>
+                      <td><span class="cli-cross">×</span></td>
                     </tr>
                     <tr>
                       <td>5</td>
-                      <td>最少需要取出 21 个...</td>
                       <td>412</td>
                       <td>690</td>
-                      <td>1.9k</td>
-                      <td>17.9s</td>
+                      <td>1900</td>
                       <td>38.5</td>
-                      <td><span class="term-pass">yes</span></td>
+                      <td><span class="cli-check">✓</span></td>
                     </tr>
                   </tbody>
                 </table>
-              </div>
-              <div class="terminal-summary">
-                <span>正确：4/5 (80.0%)</span>
-                <span>平均耗时 19.4s</span>
-                <span>平均 TPS 38.9</span>
               </div>
             </div>
           </div>
