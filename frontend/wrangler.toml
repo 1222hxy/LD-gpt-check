@@ -1,0 +1,7 @@
+# Static frontend only. This is Cloudflare Pages config, not the API Worker.
+# Do not put backend secrets, D1 bindings, OAuth client secrets, or API routes here.
+# Backend Worker config lives in ../worker/wrangler.toml.
+
+name = "ld-gpt-check-homepage"
+compatibility_date = "2026-06-28"
+pages_build_output_dir = "dist"

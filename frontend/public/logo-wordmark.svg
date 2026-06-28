@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="368" height="72" viewBox="0 0 368 72" role="img" aria-labelledby="title desc">
+  <title id="title">LD-gpt-check</title>
+  <desc id="desc">Minimal futuristic gradient wordmark for LD-gpt-check.</desc>
+  <defs>
+    <linearGradient id="ldGradient" x1="0" y1="10" x2="368" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="0.45" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <text
+    x="0"
+    y="51"
+    fill="url(#ldGradient)"
+    font-family="Inter Tight, Inter, Satoshi, Avenir Next, Geologica, Arial Rounded MT Bold, system-ui, -apple-system, sans-serif"
+    font-size="44"
+    font-weight="760"
+    letter-spacing="-2.2"
+    font-kerning="normal"
+    font-feature-settings="'kern' 1, 'ss01' 1, 'cv01' 1"
+  >LD-gpt-check</text>
+</svg>

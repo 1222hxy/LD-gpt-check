@@ -1,0 +1,25 @@
+.DS_Store
+Thumbs.db
+
+# Go
+/bin/
+/dist/
+*.test
+coverage.out
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+ld-gpt-check.toml
+!ld-gpt-check.example.toml
+
+# Cloudflare / Node tooling
+node_modules/
+.wrangler/
+worker/wrangler.toml
+
+# Editors
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,242 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/haowang02/ld-gpt-check/internal/questions"
+	"github.com/haowang02/ld-gpt-check/internal/runner"
+)
+
+func TestDoSendsAuthAndDecodesError(t *testing.T) {
+	client := New("https://example.com", "token")
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("User-Agent") == "" {
+			t.Fatal("missing User-Agent")
+		}
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"nope"}`)),
+		}, nil
+	})}
+
+	err := client.do(context.Background(), requestOptions{method: http.MethodGet, path: "/api/me", auth: true})
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("error = %v", err)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+	if apiErr.Status != http.StatusUnauthorized {
+		t.Fatalf("status = %d", apiErr.Status)
+	}
+}
+
+func TestClientRejectsInvalidBaseURL(t *testing.T) {
+	err := New("://bad", "").do(context.Background(), requestOptions{method: http.MethodGet, path: "/health"})
+	if err == nil {
+		t.Fatal("expected invalid URL error")
+	}
+}
+
+func TestPayloadFromSummaryStripsFullAnswer(t *testing.T) {
+	s := runner.Summary{
+		Model:           "gpt-5.5",
+		ReasoningEffort: "xhigh",
+		Tests:           1,
+		Questions: []runner.QuestionSummary{{
+			QuestionID:      questions.DefaultSuite,
+			QuestionVersion: "1",
+			QuestionTitle:   "糖果形状口味保证题",
+			GraderType:      "number",
+			ExpectedAnswer:  "21",
+			PromptHash:      "abc",
+			Tests:           1,
+		}},
+		Cases: []runner.CaseResult{{
+			Index:           1,
+			QuestionID:      questions.DefaultSuite,
+			QuestionVersion: "1",
+			AnswerPreview:   "short",
+			FullAnswer:      "full private answer",
+		}},
+	}
+	p := PayloadFromSummary("0.1.0", s, "linux", "amd64", "codex 1")
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) == "" || strings.Contains(string(b), "full private answer") {
+		t.Fatalf("payload leaked full answer: %s", string(b))
+	}
+}
+
+func TestRetrySafeRequestRetries503(t *testing.T) {
+	var calls atomic.Int32
+	client := New("https://example.com", "token")
+	client.Retry = RetryPolicy{MaxAttempts: 2, BaseDelay: time.Nanosecond, MaxDelay: time.Nanosecond}
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return response(http.StatusServiceUnavailable, `{"error":"try again"}`), nil
+		}
+		return response(http.StatusOK, `{"user":{"id":"u1","username":"alice"}}`), nil
+	})}
+
+	me, err := client.Me(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.User.ID != "u1" {
+		t.Fatalf("user = %#v", me.User)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+}
+
+func TestRetrySafeRequestRetriesTransportError(t *testing.T) {
+	var calls atomic.Int32
+	client := New("https://example.com", "token")
+	client.Retry = RetryPolicy{MaxAttempts: 2, BaseDelay: time.Nanosecond, MaxDelay: time.Nanosecond}
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return nil, errors.New("temporary network error")
+		}
+		return response(http.StatusOK, `{"user":{"id":"u1"}}`), nil
+	})}
+
+	if _, err := client.Me(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+}
+
+func TestRequestURLPreservesBasePath(t *testing.T) {
+	client := New("https://example.com/base", "")
+	got, err := client.requestURL("/api/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Path != "/base/api/me" {
+		t.Fatalf("path = %q, url = %s", u.Path, got)
+	}
+}
+
+func TestUnsafeUploadDoesNotRetry(t *testing.T) {
+	var calls atomic.Int32
+	client := New("https://example.com", "token")
+	client.Retry = RetryPolicy{MaxAttempts: 3, BaseDelay: time.Nanosecond, MaxDelay: time.Nanosecond}
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return response(http.StatusServiceUnavailable, `{"error":"busy"}`), nil
+	})}
+
+	payload := validUploadPayload()
+	payload.Model = "m"
+	payload.AttemptCount = 1
+	payload.Attempts = []UploadAttempt{{QuestionID: questions.DefaultSuite, QuestionVersion: "1", CaseIndex: 1, Status: "completed"}}
+	payload.Questions = []UploadQuestionResult{{QuestionID: questions.DefaultSuite, QuestionVersion: "1", QuestionTitle: "q", GraderType: "number", ExpectedAnswer: "21", PromptHash: "abc", Tests: 1}}
+	_, err := client.UploadRun(context.Background(), payload)
+	if err == nil {
+		t.Fatal("expected upload error")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("upload should not retry, calls = %d", calls.Load())
+	}
+}
+
+func TestDevicePollRejectsEmptyCode(t *testing.T) {
+	if _, err := New("https://example.com", "").DevicePoll(context.Background(), " "); err == nil {
+		t.Fatal("expected empty device code error")
+	}
+}
+
+func TestUploadPayloadValidation(t *testing.T) {
+	client := New("https://example.com", "token")
+	if _, err := client.UploadRun(context.Background(), UploadPayload{UploadID: "upl_x", AttemptCount: 1}); err == nil {
+		t.Fatal("expected missing model error")
+	}
+	if _, err := client.UploadRun(context.Background(), UploadPayload{UploadID: "upl_x", Model: "m"}); err == nil {
+		t.Fatal("expected invalid tests error")
+	}
+	payload := validUploadPayload()
+	payload.Attempts = append(payload.Attempts, UploadAttempt{QuestionID: questions.DefaultSuite, QuestionVersion: "1", CaseIndex: 2})
+	if _, err := client.UploadRun(context.Background(), payload); err == nil {
+		t.Fatal("expected attempts mismatch error")
+	}
+	payload = validUploadPayload()
+	payload.Questions = nil
+	if _, err := client.UploadRun(context.Background(), payload); err == nil {
+		t.Fatal("expected questions mismatch error")
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	if got := parseRetryAfter("2"); got != 2*time.Second {
+		t.Fatalf("retry-after seconds = %s", got)
+	}
+	if got := parseRetryAfter(""); got != 0 {
+		t.Fatalf("empty retry-after = %s", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func response(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func validUploadPayload() UploadPayload {
+	return UploadPayload{
+		UploadID:        "upl_test",
+		ClientVersion:   "0.1.0",
+		Model:           "m",
+		ReasoningEffort: "medium",
+		QuestionCount:   1,
+		AttemptCount:    1,
+		Correct:         1,
+		Questions: []UploadQuestionResult{{
+			QuestionID:      questions.DefaultSuite,
+			QuestionVersion: "1",
+			QuestionTitle:   "糖果形状口味保证题",
+			GraderType:      "number",
+			ExpectedAnswer:  "21",
+			PromptHash:      "abc",
+			Tests:           1,
+		}},
+		Attempts: []UploadAttempt{{
+			QuestionID:      questions.DefaultSuite,
+			QuestionVersion: "1",
+			CaseIndex:       1,
+			Status:          "completed",
+			IsCorrect:       true,
+		}},
+	}
+}

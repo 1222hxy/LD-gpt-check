@@ -1,0 +1,966 @@
+export interface Env {
+  DB: D1Database;
+  BASE_URL: string;
+  LINUXDO_CLIENT_ID: string;
+  LINUXDO_CLIENT_SECRET: string;
+  LINUXDO_AUTH_URL: string;
+  LINUXDO_TOKEN_URL: string;
+  LINUXDO_USERINFO_URL: string;
+  TOKEN_SECRET?: string;
+  SESSION_SECRET?: string;
+  ALLOWED_ORIGINS?: string;
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET_KEY?: string;
+}
+
+const DEVICE_EXPIRES_SECONDS = 600;
+const POLL_INTERVAL_SECONDS = 3;
+const ACCESS_TOKEN_EXPIRES_SECONDS = 180 * 86400;
+const MAX_QUESTIONS = 50;
+const MAX_ATTEMPTS = 500;
+const MAX_STRING_LENGTH = 128;
+const MAX_PREVIEW_LENGTH = 300;
+const MAX_JSON_BYTES = 256 * 1024;
+
+class APIError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    public publicMessage: string
+  ) {
+    super(publicMessage);
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const requestID = request.headers.get("cf-ray") || crypto.randomUUID();
+    try {
+      if (request.method === "OPTIONS") return withCommonHeaders(new Response(null, { status: 204 }), request, env, requestID);
+
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      if (request.method === "GET" && matches(path, "/", "/account")) return withCommonHeaders(await accountPage(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/health") return withCommonHeaders(json({ ok: true }), request, env, requestID);
+      if (request.method === "POST" && matches(path, "/api/device/start", "/api/v1/device-authorizations")) return withCommonHeaders(await deviceStart(request, env), request, env, requestID);
+      if (request.method === "POST" && matches(path, "/api/device/poll", "/api/v1/device-authorizations/token")) return withCommonHeaders(await devicePoll(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/device") return withCommonHeaders(await devicePage(request, env), request, env, requestID);
+      if (request.method === "POST" && matches(path, "/api/device/approve", "/api/v1/device-authorizations/approve")) return withCommonHeaders(await deviceApprove(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/auth/linuxdo/start") return withCommonHeaders(await oauthStart(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/auth/linuxdo/callback") return withCommonHeaders(await oauthCallback(request, env), request, env, requestID);
+      if (request.method === "GET" && matches(path, "/api/me", "/api/v1/me")) return withCommonHeaders(await apiMe(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/submissions") return withCommonHeaders(await createSubmission(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/api/v1/submissions") return withCommonHeaders(await listSubmissions(request, env), request, env, requestID);
+      if (matches(path, "/api/runs", "/api/v1/runs")) return withCommonHeaders(jsonError("runs API is gone; use /api/v1/submissions", 410, "gone", requestID), request, env, requestID);
+      if (request.method === "POST" && matches(path, "/api/logout", "/api/v1/sessions/logout")) return withCommonHeaders(await apiLogout(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/logout") return withCommonHeaders(await webLogout(request, env), request, env, requestID);
+
+      if (knownPath(path)) return withCommonHeaders(jsonError("method not allowed", 405, "method_not_allowed", requestID), request, env, requestID);
+      return withCommonHeaders(jsonError("not found", 404, "not_found", requestID), request, env, requestID);
+    } catch (err) {
+      if (err instanceof APIError) {
+        return withCommonHeaders(jsonError(err.publicMessage, err.status, err.code, requestID), request, env, requestID);
+      }
+      console.error("request failed", { requestID, error: err instanceof Error ? err.message : String(err) });
+      return withCommonHeaders(jsonError("internal error", 500, "internal_error", requestID), request, env, requestID);
+    }
+  },
+};
+
+async function deviceStart(request: Request, env: Env): Promise<Response> {
+  await enforceRateLimit(request, env, "device_start", 20, 600);
+  const now = new Date();
+  const deviceCode = await randomToken("dc");
+  const userCode = numericCode();
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO device_sessions
+      (id, device_code_hash, user_code_hash, status, expires_at, created_at)
+     VALUES (?, ?, ?, 'pending', ?, ?)`
+  )
+    .bind(
+      id,
+      await hashSecret(deviceCode, env),
+      await hashSecret(normalizeCode(userCode), env),
+      iso(addSeconds(now, DEVICE_EXPIRES_SECONDS)),
+      iso(now)
+    )
+    .run();
+
+  const verification = `${env.BASE_URL.replace(/\/$/, "")}/device`;
+  return json({
+    device_code: deviceCode,
+    user_code: userCode,
+    verification_uri: verification,
+    verification_uri_complete: `${verification}?code=${encodeURIComponent(userCode)}`,
+    expires_in: DEVICE_EXPIRES_SECONDS,
+    interval: POLL_INTERVAL_SECONDS,
+  });
+}
+
+async function devicePoll(request: Request, env: Env): Promise<Response> {
+  await enforceRateLimit(request, env, "device_poll", 120, 60);
+  const body = await readJson<{ device_code?: string }>(request);
+  if (!body.device_code) return jsonError("device_code is required", 400, "bad_request");
+
+  const now = new Date();
+  const row = await env.DB.prepare(`SELECT * FROM device_sessions WHERE device_code_hash = ?`)
+    .bind(await hashSecret(body.device_code, env))
+    .first<any>();
+  if (!row) return jsonError("invalid device_code", 400, "bad_request");
+  if (row.status === "consumed") return json({ status: "expired" });
+  if (row.expires_at <= iso(now)) {
+    await env.DB.prepare(`UPDATE device_sessions SET status = 'expired' WHERE id = ?`).bind(row.id).run();
+    return json({ status: "expired" });
+  }
+  if (row.last_polled_at && secondsBetween(row.last_polled_at, now) < POLL_INTERVAL_SECONDS) {
+    return json({ status: "slow_down" });
+  }
+  await env.DB.prepare(`UPDATE device_sessions SET last_polled_at = ? WHERE id = ?`).bind(iso(now), row.id).run();
+
+  if (row.status === "pending") return json({ status: "pending" });
+  if (row.status !== "approved" || !row.user_id) return json({ status: "expired" });
+
+  const consumed = await env.DB.prepare(
+    `UPDATE device_sessions SET status = 'consumed'
+     WHERE id = ? AND status = 'approved'`
+  )
+    .bind(row.id)
+    .run();
+  if ((consumed.meta?.changes ?? 0) !== 1) return json({ status: "expired" });
+
+  const token = await randomToken("ldgc");
+  const tokenID = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO access_tokens (id, user_id, token_hash, device_name, created_at, expires_at)
+     VALUES (?, ?, ?, 'CLI device login', ?, ?)`
+  )
+    .bind(tokenID, row.user_id, await hashSecret(token, env), iso(now), iso(addSeconds(now, ACCESS_TOKEN_EXPIRES_SECONDS)))
+    .run();
+
+  const user = await env.DB.prepare(`SELECT id, username FROM users WHERE id = ?`).bind(row.user_id).first<any>();
+  return json({
+    status: "authorized",
+    access_token: token,
+    user: { id: user?.id ?? row.user_id, username: user?.username ?? "" },
+  });
+}
+
+async function devicePage(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code") ?? "";
+  const user = await getWebUser(request, env);
+  const loginURL = `/auth/linuxdo/start?next=${encodeURIComponent(`/device${code ? `?code=${code}` : ""}`)}`;
+  const turnstile = env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
+    ? `<div class="turnstile"><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><div class="cf-turnstile" data-sitekey="${escapeHTML(env.TURNSTILE_SITE_KEY)}"></div></div>`
+    : "";
+  const body = `<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LD-gpt-check 登录</title>
+<style>
+:root{color-scheme:light;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--brand2:#06b6d4;--bg:#f7fbff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.1),transparent 34%),linear-gradient(225deg,rgba(6,182,212,.14),transparent 38%),var(--bg);display:grid;place-items:center;padding:24px;line-height:1.5}
+.shell{width:min(100%,560px);border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 24px 80px rgba(37,99,235,.16);backdrop-filter:blur(18px);border-radius:16px;overflow:hidden}
+.top{padding:22px 24px;border-bottom:1px solid #e2e8f0;background:rgba(255,255,255,.72)}.brand{font-weight:750;letter-spacing:0}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}
+.content{padding:24px}h1{margin:0;font-size:28px;line-height:1.15;letter-spacing:0}p{margin:12px 0 0;color:var(--muted)}.user{margin-top:18px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#334155}
+label{display:block;margin-top:20px;font-weight:650}input{margin-top:8px;width:100%;min-height:48px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;font:18px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;color:var(--text);background:#fff}input:focus{outline:3px solid rgba(37,99,235,.18);border-color:var(--brand)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:44px;padding:10px 14px;font:700 15px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}a.secondary{border-color:#cbd5e1;background:#fff;color:#334155}
+.turnstile{margin-top:18px}.hint{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:16px;font-size:14px}.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8}
+@media(max-width:520px){body{padding:12px}.content,.top{padding:18px}h1{font-size:24px}button,a.button{width:100%}}
+</style></head>
+<body>
+<main class="shell">
+<div class="top"><span class="badge">CLI device authorization</span><div class="brand">LD-gpt-check</div></div>
+<section class="content">
+<h1>授权命令行设备</h1>
+${user ? `<p class="user">当前登录用户：<strong>${escapeHTML(user.username || user.id)}</strong></p>
+<form method="post" action="/api/device/approve">
+  <label>终端显示的验证码<input name="user_code" value="${escapeHTML(code)}" placeholder="483-921-775" inputmode="numeric" autocomplete="one-time-code" maxlength="11" pattern="[0-9 -]{9,11}" required></label>
+  ${turnstile}
+  <div class="actions"><button type="submit">授权 CLI</button></div>
+</form>
+<p class="hint">确认验证码和终端中的 <span class="code">user_code</span> 一致后再授权。</p>` : `<p>请先使用 Linux.do 登录，然后回到这里授权命令行工具。登录完成后，页面会保留终端带来的验证码。</p><div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div><p class="hint">如果你在 SSH、WSL 或远程服务器上运行 CLI，可以复制终端打印的链接到浏览器打开。</p>`}
+</section>
+</main>
+</body></html>`;
+  return html(body);
+}
+
+async function accountPage(request: Request, env: Env): Promise<Response> {
+  const user = await getWebUser(request, env);
+  const loginURL = `/auth/linuxdo/start?next=${encodeURIComponent("/account")}`;
+  if (!user) {
+    return html(layoutPage("LD-gpt-check 账号", `
+      <section class="hero">
+        <span class="badge">Linux.do OAuth</span>
+        <h1>登录 LD-gpt-check</h1>
+        <p>登录后可以授权 CLI 设备，并查看当前网页会话状态。</p>
+        <div class="actions"><a class="button" href="${loginURL}">使用 Linux.do 登录</a></div>
+      </section>
+    `));
+  }
+
+  const stats = await env.DB.prepare(
+    `SELECT
+       COUNT(*) AS total_submissions,
+       MAX(created_at) AS last_submission_at,
+       AVG(accuracy) AS avg_accuracy
+     FROM benchmark_submissions WHERE user_id = ?`
+  )
+    .bind(user.id)
+    .first<any>();
+  const recent = await env.DB.prepare(
+    `SELECT model, reasoning_effort, attempt_count, correct_count, accuracy, created_at
+     FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 5`
+  )
+    .bind(user.id)
+    .all<any>();
+
+  const rows = (recent.results ?? [])
+    .map(
+      (r: any) => `<tr>
+        <td>${escapeHTML(str(r.model || "-", 80))}</td>
+        <td>${escapeHTML(str(r.reasoning_effort || "-", 32))}</td>
+        <td>${int(r.correct_count)}/${int(r.attempt_count)}</td>
+        <td>${formatPercent(num(r.accuracy))}</td>
+        <td>${escapeHTML(formatDate(r.created_at))}</td>
+      </tr>`
+    )
+    .join("");
+
+  return html(layoutPage("LD-gpt-check 账号", `
+    <section class="hero">
+      <span class="badge">已登录</span>
+      <h1>${escapeHTML(user.username || user.id)}</h1>
+      <p>当前网页会话已通过 Linux.do 登录。你可以继续授权 CLI，或退出当前浏览器登录。</p>
+      <div class="actions">
+        <a class="button" href="/device">授权 CLI 设备</a>
+        <form method="post" action="/logout"><button class="secondary" type="submit">退出登录</button></form>
+      </div>
+    </section>
+    <section class="grid">
+      <article><span>用户 ID</span><strong>${escapeHTML(user.id)}</strong></article>
+      <article><span>累计上传</span><strong>${int(stats?.total_submissions)} 次</strong></article>
+      <article><span>平均正确率</span><strong>${stats?.avg_accuracy == null ? "-" : formatPercent(num(stats.avg_accuracy))}</strong></article>
+    </section>
+    <section class="panel">
+      <h2>CLI 配置</h2>
+      <p>在本机终端使用下面的 API 地址登录。</p>
+      <pre>LD_GPT_CHECK_API_BASE_URL=${escapeHTML(env.BASE_URL.replace(/\/$/, ""))} bin/ld-gpt-check login</pre>
+    </section>
+    <section class="panel">
+      <h2>最近上传</h2>
+      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>时间</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
+    </section>
+  `));
+}
+
+async function deviceApprove(request: Request, env: Env): Promise<Response> {
+  const wantsHTML = (request.headers.get("content-type") || "").includes("application/x-www-form-urlencoded");
+  try {
+    enforceBodySize(request);
+    await enforceRateLimit(request, env, "device_approve", 30, 600);
+    enforceSameOrigin(request, env);
+  } catch (err) {
+    if (wantsHTML && err instanceof APIError) return html(resultPage("请求被拒绝", err.publicMessage), err.status);
+    throw err;
+  }
+  const user = await getWebUser(request, env);
+  if (!user) return wantsHTML ? html(resultPage("需要登录", "请先使用 Linux.do 登录后再授权 CLI。"), 401) : jsonError("login required", 401, "unauthorized");
+
+  const input = wantsHTML ? Object.fromEntries(await request.formData()) : await readJson<any>(request);
+  try {
+    await verifyTurnstileIfConfigured(request, env, input);
+  } catch (err) {
+    if (wantsHTML && err instanceof APIError) return html(resultPage("验证失败", err.publicMessage), err.status);
+    throw err;
+  }
+  const code = normalizeCode(String(input.user_code || ""));
+  if (!code) return wantsHTML ? html(resultPage("验证码缺失", "请回到终端复制完整验证码后重试。"), 400) : jsonError("user_code is required", 400, "bad_request");
+
+  const now = new Date();
+  const row = await env.DB.prepare(
+    `SELECT id, expires_at FROM device_sessions
+     WHERE user_code_hash = ? AND status = 'pending'`
+  )
+    .bind(await hashSecret(code, env))
+    .first<any>();
+  if (!row || row.expires_at <= iso(now)) {
+    return wantsHTML
+      ? html(resultPage("验证码无效或已过期", "请回到终端重新执行登录命令，生成新的验证码。"), 400)
+      : jsonError("device code is invalid or expired", 400, "bad_request");
+  }
+
+  await env.DB.prepare(
+    `UPDATE device_sessions SET status = 'approved', user_id = ?, approved_at = ? WHERE id = ?`
+  )
+    .bind(user.id, iso(now), row.id)
+    .run();
+
+  if (wantsHTML) return html(resultPage("已授权", "可以回到终端继续。"));
+  return json({ ok: true });
+}
+
+async function oauthStart(request: Request, env: Env): Promise<Response> {
+  await enforceRateLimit(request, env, "oauth_start", 20, 600);
+  const url = new URL(request.url);
+  const redirectPath = safeRedirect(url.searchParams.get("next") || "/account");
+  const state = await randomToken("st");
+  const now = new Date();
+  await env.DB.prepare(
+    `INSERT INTO oauth_states (id, state_hash, redirect_path, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(crypto.randomUUID(), await hashSecret(state, env), redirectPath, iso(addSeconds(now, 600)), iso(now))
+    .run();
+
+  const authURL = new URL(env.LINUXDO_AUTH_URL);
+  authURL.searchParams.set("response_type", "code");
+  authURL.searchParams.set("client_id", env.LINUXDO_CLIENT_ID);
+  authURL.searchParams.set("redirect_uri", `${env.BASE_URL.replace(/\/$/, "")}/auth/linuxdo/callback`);
+  authURL.searchParams.set("state", state);
+  return redirect(authURL.toString(), cookie("ldgc_oauth_state", state, env, 600));
+}
+
+async function oauthCallback(request: Request, env: Env): Promise<Response> {
+  await enforceRateLimit(request, env, "oauth_callback", 60, 600);
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const cookieState = parseCookies(request.headers.get("cookie")).ldgc_oauth_state;
+  if (!code || !state || state !== cookieState) return jsonError("invalid oauth state", 400, "bad_request");
+
+  const stateHash = await hashSecret(state, env);
+  const stateRow = await env.DB.prepare(`SELECT * FROM oauth_states WHERE state_hash = ? AND used_at IS NULL`)
+    .bind(stateHash)
+    .first<any>();
+  if (!stateRow || stateRow.expires_at <= iso(new Date())) return jsonError("oauth state expired", 400, "bad_request");
+  await env.DB.prepare(`UPDATE oauth_states SET used_at = ? WHERE id = ?`).bind(iso(new Date()), stateRow.id).run();
+
+  const tokenResp = await fetch(env.LINUXDO_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: `${env.BASE_URL.replace(/\/$/, "")}/auth/linuxdo/callback`,
+      client_id: env.LINUXDO_CLIENT_ID,
+      client_secret: env.LINUXDO_CLIENT_SECRET,
+    }),
+  });
+  if (!tokenResp.ok) return jsonError("oauth token exchange failed", 502, "upstream_error");
+  const tokenJSON: any = await tokenResp.json();
+  const oauthToken = tokenJSON.access_token;
+  if (!oauthToken) return jsonError("oauth access_token missing", 502, "upstream_error");
+
+  const userResp = await fetch(env.LINUXDO_USERINFO_URL, {
+    headers: { authorization: `Bearer ${oauthToken}` },
+  });
+  if (!userResp.ok) return jsonError("oauth userinfo failed", 502, "upstream_error");
+  const profile: any = await userResp.json();
+  const user = await upsertLinuxDoUser(profile, env);
+
+  const sessionToken = await randomToken("ws");
+  await env.DB.prepare(
+    `INSERT INTO web_sessions (id, user_id, session_hash, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(crypto.randomUUID(), user.id, await hashSecret(sessionToken, env), iso(new Date()), iso(addSeconds(new Date(), 30 * 86400)))
+    .run();
+  return redirect(stateRow.redirect_path || "/device", [
+    cookie("ldgc_session", sessionToken, env, 30 * 86400),
+    cookie("ldgc_oauth_state", "", env, 0),
+  ]);
+}
+
+async function apiMe(request: Request, env: Env): Promise<Response> {
+  const auth = await getBearerUser(request, env);
+  if (!auth) return jsonError("unauthorized", 401, "unauthorized");
+  return json({ user: { id: auth.user.id, username: auth.user.username } });
+}
+
+async function createSubmission(request: Request, env: Env): Promise<Response> {
+ const auth = await getBearerUser(request, env);
+ if (!auth) return jsonError("unauthorized", 401, "unauthorized");
+  await enforceUserRateLimit(env, auth.user.id, "create_submission", 60, 3600);
+  const p = await readJson<any>(request);
+  const validationError = validateSubmissionPayload(p);
+  if (validationError) return jsonError(validationError, 422, "validation_failed");
+
+  const existing = await env.DB.prepare(
+    `SELECT id FROM benchmark_submissions WHERE user_id = ? AND upload_id = ?`
+  )
+    .bind(auth.user.id, str(p.upload_id, MAX_STRING_LENGTH))
+    .first<any>();
+  if (existing?.id) return json({ id: existing.id, duplicate: true });
+
+  const now = iso(new Date());
+  const submissionID = crypto.randomUUID();
+  const questions = p.questions.slice(0, MAX_QUESTIONS);
+  const attempts = p.attempts.slice(0, MAX_ATTEMPTS);
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO benchmark_submissions
+       (id, user_id, upload_id, client_version, model, reasoning_effort, question_count,
+        attempt_count, correct_count, accuracy,
+        avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps,
+        os, arch, codex_version, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      submissionID,
+      auth.user.id,
+      str(p.upload_id, MAX_STRING_LENGTH),
+      str(p.client_version, MAX_STRING_LENGTH),
+      str(p.model, MAX_STRING_LENGTH),
+      str(p.reasoning_effort, MAX_STRING_LENGTH),
+      int(p.question_count),
+      int(p.attempt_count),
+      int(p.correct),
+      num(p.accuracy),
+      num(p.avg_input_tokens),
+      num(p.avg_output_tokens),
+      num(p.avg_reason_tokens),
+      num(p.avg_time_seconds),
+      num(p.avg_tps),
+      str(p.os, MAX_STRING_LENGTH),
+      str(p.arch, MAX_STRING_LENGTH),
+      str(p.codex_version, MAX_STRING_LENGTH),
+      now
+    ),
+  ];
+  for (const q of questions) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO benchmark_question_results
+         (id, submission_id, question_id, question_version, question_title, grader_type,
+          expected_answer, prompt_hash, test_count, correct_count, accuracy,
+          avg_input_tokens, avg_output_tokens, avg_reason_tokens, avg_time_seconds, avg_tps, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        crypto.randomUUID(),
+        submissionID,
+        str(q.question_id, MAX_STRING_LENGTH),
+        str(q.question_version, MAX_STRING_LENGTH),
+        str(q.question_title, MAX_STRING_LENGTH),
+        str(q.grader_type, 32),
+        str(q.expected_answer, MAX_STRING_LENGTH),
+        str(q.prompt_hash, 64),
+        int(q.tests),
+        int(q.correct),
+        num(q.accuracy),
+        num(q.avg_input_tokens),
+        num(q.avg_output_tokens),
+        num(q.avg_reason_tokens),
+        num(q.avg_time_seconds),
+        num(q.avg_tps),
+        now
+      )
+    );
+  }
+  for (const a of attempts) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO benchmark_attempts
+         (id, submission_id, question_id, question_version, case_index, status, is_correct,
+          expected_answer, extracted_answer, failure_reason, answer_preview, input_tokens, output_tokens,
+          reasoning_tokens, time_seconds, tps, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        crypto.randomUUID(),
+        submissionID,
+        str(a.question_id, MAX_STRING_LENGTH),
+        str(a.question_version, MAX_STRING_LENGTH),
+        int(a.case_index),
+        str(a.status, 32),
+        a.is_correct ? 1 : 0,
+        str(a.expected_answer, MAX_STRING_LENGTH),
+        str(a.extracted_answer, MAX_STRING_LENGTH),
+        str(a.failure_reason, 64),
+        str(a.answer_preview, MAX_PREVIEW_LENGTH),
+        int(a.input_tokens),
+        int(a.output_tokens),
+        int(a.reasoning_tokens),
+        num(a.time_seconds),
+        num(a.tps),
+        now
+      )
+    );
+  }
+  try {
+    await env.DB.batch(statements);
+  } catch (err) {
+    const duplicate = await env.DB.prepare(
+      `SELECT id FROM benchmark_submissions WHERE user_id = ? AND upload_id = ?`
+    )
+      .bind(auth.user.id, str(p.upload_id, MAX_STRING_LENGTH))
+      .first<any>();
+    if (duplicate?.id) return json({ id: duplicate.id, duplicate: true });
+    throw err;
+  }
+  return json({ id: submissionID, duplicate: false });
+}
+
+async function listSubmissions(request: Request, env: Env): Promise<Response> {
+  const auth = await getBearerUser(request, env);
+  if (!auth) return jsonError("unauthorized", 401, "unauthorized");
+  const url = new URL(request.url);
+  const limit = clampInt(url.searchParams.get("limit"), 1, 100, 50);
+  const rows = await env.DB.prepare(
+    `SELECT id, upload_id, model, reasoning_effort, question_count, attempt_count, correct_count,
+            accuracy, avg_time_seconds, avg_tps, created_at
+     FROM benchmark_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`
+  )
+    .bind(auth.user.id, limit)
+    .all();
+  return json({ submissions: rows.results ?? [] });
+}
+
+async function apiLogout(request: Request, env: Env): Promise<Response> {
+  const auth = await getBearerUser(request, env);
+  if (auth) {
+    await env.DB.prepare(`UPDATE access_tokens SET revoked_at = ? WHERE id = ?`).bind(iso(new Date()), auth.tokenID).run();
+  }
+  return json({ ok: true });
+}
+
+async function webLogout(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const token = parseCookies(request.headers.get("cookie")).ldgc_session;
+  if (token) {
+    await env.DB.prepare(`UPDATE web_sessions SET revoked_at = ? WHERE session_hash = ?`)
+      .bind(iso(new Date()), await hashSecret(token, env))
+      .run();
+  }
+  return redirect("/account", cookie("ldgc_session", "", env, 0));
+}
+
+async function getBearerUser(request: Request, env: Env): Promise<{ user: any; tokenID: string } | null> {
+  const h = request.headers.get("authorization") || "";
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  if (!m) return null;
+  const tokenHash = await hashSecret(m[1], env);
+  const row = await env.DB.prepare(
+    `SELECT access_tokens.id AS token_id, users.id, users.username
+     FROM access_tokens JOIN users ON users.id = access_tokens.user_id
+     WHERE access_tokens.token_hash = ? AND access_tokens.revoked_at IS NULL
+       AND (access_tokens.expires_at IS NULL OR access_tokens.expires_at > ?)`
+  )
+    .bind(tokenHash, iso(new Date()))
+    .first<any>();
+  if (!row) return null;
+  await env.DB.prepare(`UPDATE access_tokens SET last_used_at = ? WHERE id = ?`).bind(iso(new Date()), row.token_id).run();
+  return { tokenID: row.token_id, user: { id: row.id, username: row.username } };
+}
+
+async function getWebUser(request: Request, env: Env): Promise<any | null> {
+  const token = parseCookies(request.headers.get("cookie")).ldgc_session;
+  if (!token) return null;
+  const row = await env.DB.prepare(
+    `SELECT users.id, users.username
+     FROM web_sessions JOIN users ON users.id = web_sessions.user_id
+     WHERE web_sessions.session_hash = ? AND web_sessions.revoked_at IS NULL AND web_sessions.expires_at > ?`
+  )
+    .bind(await hashSecret(token, env), iso(new Date()))
+    .first<any>();
+  return row || null;
+}
+
+async function upsertLinuxDoUser(profile: any, env: Env): Promise<{ id: string; username: string }> {
+  // Linux.do userinfo fields may differ by OAuth configuration; adjust this mapping after checking the actual response.
+  const providerUserID = String(profile.id ?? profile.sub ?? profile.user_id ?? "");
+  if (!providerUserID) throw new Error("userinfo id missing");
+  const username = String(profile.username ?? profile.login ?? profile.name ?? providerUserID);
+  const avatarURL = String(profile.avatar_url ?? profile.avatar ?? "");
+  const existing = await env.DB.prepare(`SELECT id, username FROM users WHERE provider = 'linuxdo' AND provider_user_id = ?`)
+    .bind(providerUserID)
+    .first<any>();
+  if (existing) {
+    await env.DB.prepare(`UPDATE users SET username = ?, avatar_url = ?, updated_at = ? WHERE id = ?`)
+      .bind(username, avatarURL, iso(new Date()), existing.id)
+      .run();
+    return { id: existing.id, username };
+  }
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO users (id, provider, provider_user_id, username, avatar_url, created_at, updated_at)
+     VALUES (?, 'linuxdo', ?, ?, ?, ?, ?)`
+  )
+    .bind(id, providerUserID, username, avatarURL, iso(new Date()), iso(new Date()))
+    .run();
+  return { id, username };
+}
+
+async function readJson<T>(request: Request): Promise<T> {
+  enforceBodySize(request);
+  try {
+    const text = await request.text();
+    if (text.length > MAX_JSON_BYTES) throw new APIError(413, "payload_too_large", "request body is too large");
+    return JSON.parse(text) as T;
+  } catch (err) {
+    if (err instanceof APIError) throw err;
+    throw new APIError(400, "bad_request", "invalid JSON body");
+  }
+}
+
+function enforceBodySize(request: Request): void {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (contentLength > MAX_JSON_BYTES) {
+    throw new APIError(413, "payload_too_large", "request body is too large");
+  }
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+function jsonError(message: string, status: number, code = "bad_request", requestID?: string): Response {
+  return json({ error: message, code, request_id: requestID }, status);
+}
+
+function html(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+function redirect(location: string, setCookie?: string | string[]): Response {
+  const headers = new Headers({ location });
+  for (const c of Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : []) {
+    headers.append("set-cookie", c);
+  }
+  return new Response(null, { status: 302, headers });
+}
+
+function withCommonHeaders(response: Response, request: Request, env: Env, requestID: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-request-id", requestID);
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "same-origin");
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  headers.set("cross-origin-opener-policy", "same-origin");
+  headers.set("cross-origin-resource-policy", "same-origin");
+
+  const corsOrigin = allowedCORSOrigin(request, env);
+  if (corsOrigin) {
+    headers.set("access-control-allow-origin", corsOrigin);
+    headers.set("vary", appendVary(headers.get("vary"), "Origin"));
+    headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+    headers.set("access-control-allow-headers", "Authorization, Content-Type, Accept, Idempotency-Key");
+    headers.set("access-control-max-age", "600");
+  }
+
+  if ((headers.get("content-type") || "").includes("text/html")) {
+    headers.set(
+      "content-security-policy",
+      "default-src 'none'; script-src https://challenges.cloudflare.com; style-src 'unsafe-inline'; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    );
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function allowedCORSOrigin(request: Request, env: Env): string | null {
+  const origin = request.headers.get("origin");
+  if (!origin) return null;
+  const allowed = new Set([baseOrigin(env)]);
+  for (const value of (env.ALLOWED_ORIGINS || "").split(",")) {
+    const trimmed = value.trim();
+    if (trimmed) allowed.add(trimmed);
+  }
+  return allowed.has(origin) ? origin : null;
+}
+
+function appendVary(current: string | null, value: string): string {
+  if (!current) return value;
+  const parts = current.split(",").map((x) => x.trim().toLowerCase());
+  return parts.includes(value.toLowerCase()) ? current : `${current}, ${value}`;
+}
+
+function matches(path: string, ...paths: string[]): boolean {
+  return paths.includes(path);
+}
+
+function knownPath(path: string): boolean {
+  return matches(
+    path,
+    "/",
+    "/account",
+    "/health",
+    "/api/device/start",
+    "/api/v1/device-authorizations",
+    "/api/device/poll",
+    "/api/v1/device-authorizations/token",
+    "/device",
+    "/api/device/approve",
+    "/api/v1/device-authorizations/approve",
+    "/auth/linuxdo/start",
+    "/auth/linuxdo/callback",
+    "/api/me",
+    "/api/v1/me",
+    "/api/v1/submissions",
+    "/api/runs",
+    "/api/v1/runs",
+    "/api/logout",
+    "/api/v1/sessions/logout",
+    "/logout"
+  );
+}
+
+function resultPage(title: string, message: string): string {
+  return layoutPage(`${title} - LD-gpt-check`, `<section class="hero"><h1>${escapeHTML(title)}</h1><p>${escapeHTML(message)}</p><div class="actions"><a class="button" href="/account">返回账号页</a></div></section>`);
+}
+
+function layoutPage(title: string, content: string): string {
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHTML(title)}</title>
+<style>
+:root{color-scheme:light;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--brand2:#06b6d4;--bg:#f7fbff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.1),transparent 34%),linear-gradient(225deg,rgba(6,182,212,.14),transparent 38%),var(--bg);padding:24px;line-height:1.5}
+main{width:min(100%,920px);margin:0 auto}.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.86);border-radius:14px;padding:12px 14px;box-shadow:0 16px 50px rgba(37,99,235,.12)}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav a{color:#334155;text-decoration:none;font-size:14px}
+.hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}
+@media(max-width:680px){body{padding:12px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button{width:100%}.actions form{width:100%}}
+</style></head>
+<body><main><nav class="nav"><a class="brand" href="/account">LD-gpt-check</a><a href="/device">授权 CLI</a></nav>${content}</main></body></html>`;
+}
+
+function cookie(name: string, value: string, env: Env, maxAge: number): string {
+  const secure = env.BASE_URL.startsWith("https://") ? "; Secure" : "";
+  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+function parseCookies(header: string | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (header || "").split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(rest.join("="));
+    } catch {
+      out[k] = "";
+    }
+  }
+  return out;
+}
+
+async function hashSecret(value: string, env: Env): Promise<string> {
+  const pepper = env.TOKEN_SECRET || env.SESSION_SECRET || "";
+  if (!pepper) throw new APIError(500, "server_misconfigured", "server is not configured");
+  const data = new TextEncoder().encode(`${pepper}:${value}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function randomToken(prefix: string): Promise<string> {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const raw = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return `${prefix}_${raw}`;
+}
+
+function numericCode(): string {
+  const n = crypto.getRandomValues(new Uint32Array(3));
+  const parts = [...n].map((x) => String(x % 1000).padStart(3, "0"));
+  return parts.join("-");
+}
+
+function normalizeCode(code: string): string {
+  return code.replace(/\D/g, "");
+}
+
+function iso(d: Date): string {
+  return d.toISOString();
+}
+
+function addSeconds(d: Date, seconds: number): Date {
+  return new Date(d.getTime() + seconds * 1000);
+}
+
+function secondsBetween(thenISO: string, now: Date): number {
+  return (now.getTime() - new Date(thenISO).getTime()) / 1000;
+}
+
+function safeRedirect(path: string): string {
+  return path.startsWith("/") && !path.startsWith("//") ? path : "/device";
+}
+
+function baseOrigin(env: Env): string {
+  return new URL(env.BASE_URL.replace(/\/$/, "")).origin;
+}
+
+function enforceSameOrigin(request: Request, env: Env): void {
+  const expected = baseOrigin(env);
+  const origin = request.headers.get("origin");
+  if (origin && origin !== expected) throw new APIError(403, "forbidden", "cross-origin request denied");
+  const referer = request.headers.get("referer");
+  if (!origin && referer && safeOrigin(referer) !== expected) {
+    throw new APIError(403, "forbidden", "cross-origin request denied");
+  }
+}
+
+function safeOrigin(value: string): string {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return "";
+  }
+}
+
+async function verifyTurnstileIfConfigured(request: Request, env: Env, input: Record<string, any>): Promise<void> {
+  if (!env.TURNSTILE_SECRET_KEY) return;
+  const token = String(input["cf-turnstile-response"] || input.turnstile_token || "");
+  if (!token) throw new APIError(400, "turnstile_required", "human verification is required");
+
+  const resp = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      secret: env.TURNSTILE_SECRET_KEY,
+      response: token,
+      remoteip: clientIP(request),
+    }),
+  });
+  if (!resp.ok) throw new APIError(502, "upstream_error", "human verification failed");
+  const result: any = await resp.json();
+  if (!result.success) throw new APIError(400, "turnstile_failed", "human verification failed");
+}
+
+async function enforceRateLimit(request: Request, env: Env, action: string, limit: number, windowSeconds: number): Promise<void> {
+  await rateLimit(env, `${action}:ip:${clientIP(request)}`, limit, windowSeconds);
+}
+
+async function enforceUserRateLimit(env: Env, userID: string, action: string, limit: number, windowSeconds: number): Promise<void> {
+  await rateLimit(env, `${action}:user:${userID}`, limit, windowSeconds);
+}
+
+async function rateLimit(env: Env, key: string, limit: number, windowSeconds: number): Promise<void> {
+  const now = new Date();
+  const row = await env.DB.prepare(`SELECT window_start, count FROM rate_limits WHERE key = ?`).bind(key).first<any>();
+  if (!row || secondsBetween(row.window_start, now) >= windowSeconds) {
+    await env.DB.prepare(
+      `INSERT INTO rate_limits (key, window_start, count)
+       VALUES (?, ?, 1)
+       ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, count = 1`
+    )
+      .bind(key, iso(now))
+      .run();
+    return;
+  }
+  if (Number(row.count) >= limit) throw new APIError(429, "rate_limited", "too many requests");
+  await env.DB.prepare(`UPDATE rate_limits SET count = count + 1 WHERE key = ?`).bind(key).run();
+}
+
+function clientIP(request: Request): string {
+  return request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+}
+
+function escapeHTML(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
+}
+
+function formatPercent(v: number): string {
+  if (!Number.isFinite(v)) return "-";
+  return `${v.toFixed(1)}%`;
+}
+
+function formatDate(v: unknown): string {
+  if (typeof v !== "string" || !v) return "-";
+  const d = new Date(v);
+  if (!Number.isFinite(d.getTime())) return v;
+  return d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
+}
+
+function validateSubmissionPayload(p: any): string | null {
+  if (!p || typeof p !== "object" || Array.isArray(p)) return "request body must be a JSON object";
+  if (!requiredString(p.upload_id)) return "upload_id is required";
+  if (!requiredString(p.client_version)) return "client_version is required";
+  if (!requiredString(p.model)) return "model is required";
+  if (!requiredString(p.reasoning_effort)) return "reasoning_effort is required";
+  if (!validInt(p.question_count, 1, MAX_QUESTIONS)) return `question_count must be an integer between 1 and ${MAX_QUESTIONS}`;
+  if (!validInt(p.attempt_count, 1, MAX_ATTEMPTS)) return `attempt_count must be an integer between 1 and ${MAX_ATTEMPTS}`;
+  if (!validInt(p.correct, 0, int(p.attempt_count))) return "correct must be an integer between 0 and attempt_count";
+  if (!validNumber(p.accuracy, 0, 100)) return "accuracy must be a number between 0 and 100";
+  for (const key of ["avg_input_tokens", "avg_output_tokens", "avg_reason_tokens", "avg_time_seconds", "avg_tps"]) {
+    if (!validNumber(p[key], 0, Number.MAX_SAFE_INTEGER)) return `${key} must be a non-negative number`;
+  }
+  if (!requiredString(p.os)) return "os is required";
+  if (!requiredString(p.arch)) return "arch is required";
+  if (!requiredString(p.codex_version)) return "codex_version is required";
+  if (!Array.isArray(p.questions)) return "questions must be an array";
+  if (p.questions.length !== int(p.question_count)) return "questions length must equal question_count";
+  for (const q of p.questions) {
+    if (!q || typeof q !== "object" || Array.isArray(q)) return "each question must be an object";
+    if (!requiredString(q.question_id)) return "question_id is required";
+    if (!requiredString(q.question_version)) return "question_version is required";
+    if (!requiredString(q.question_title)) return "question_title is required";
+    if (!["number", "exact", "regex"].includes(String(q.grader_type))) return "grader_type must be number, exact, or regex";
+    if (!requiredString(q.expected_answer)) return "expected_answer is required";
+    if (!requiredString(q.prompt_hash)) return "prompt_hash is required";
+    if (!validInt(q.tests, 1, MAX_ATTEMPTS)) return "question tests must be a positive integer";
+    if (!validInt(q.correct, 0, int(q.tests))) return "question correct must be between 0 and tests";
+    if (!validNumber(q.accuracy, 0, 100)) return "question accuracy must be a number between 0 and 100";
+    for (const key of ["avg_input_tokens", "avg_output_tokens", "avg_reason_tokens", "avg_time_seconds", "avg_tps"]) {
+      if (!validNumber(q[key], 0, Number.MAX_SAFE_INTEGER)) return `question ${key} must be a non-negative number`;
+    }
+  }
+  if (!Array.isArray(p.attempts)) return "attempts must be an array";
+  if (p.attempts.length !== int(p.attempt_count)) return "attempts length must equal attempt_count";
+  for (const a of p.attempts) {
+    if (!a || typeof a !== "object" || Array.isArray(a)) return "each attempt must be an object";
+    if (!requiredString(a.question_id)) return "attempt question_id is required";
+    if (!requiredString(a.question_version)) return "attempt question_version is required";
+    if (!validInt(a.case_index, 1, MAX_ATTEMPTS)) return "case_index must be a positive integer";
+    if (!["completed", "failed"].includes(String(a.status || "completed"))) return "attempt status must be completed or failed";
+    if (typeof a.is_correct !== "boolean") return "attempt is_correct must be a boolean";
+    if (typeof a.expected_answer !== "string") return "attempt expected_answer must be a string";
+    if (typeof a.extracted_answer !== "string") return "attempt extracted_answer must be a string";
+    if (typeof a.failure_reason !== "undefined" && typeof a.failure_reason !== "string") return "attempt failure_reason must be a string";
+    if (a.failure_reason && !["no_answer", "wrong_answer", "parse_error", "tool_used", "codex_failed", "timeout", "unknown"].includes(String(a.failure_reason))) {
+      return "attempt failure_reason is invalid";
+    }
+    if (typeof a.answer_preview !== "string") return "attempt answer_preview must be a string";
+    if ("full_answer" in a || "prompt" in a || "prompt_text" in a) return "attempt must not include full answer or prompt";
+    for (const key of ["input_tokens", "output_tokens", "reasoning_tokens"]) {
+      if (!validInt(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative integer`;
+    }
+    for (const key of ["time_seconds", "tps"]) {
+      if (!validNumber(a[key], 0, Number.MAX_SAFE_INTEGER)) return `attempt ${key} must be a non-negative number`;
+    }
+  }
+  return null;
+}
+
+function requiredString(v: unknown): boolean {
+  return typeof v === "string" && v.trim() !== "" && v.length <= MAX_STRING_LENGTH;
+}
+
+function validInt(v: unknown, min: number, max: number): boolean {
+  return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+}
+
+function validNumber(v: unknown, min: number, max: number): boolean {
+  return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
+}
+
+function clampInt(v: string | null, min: number, max: number, fallback: number): number {
+  const n = Number(v);
+  if (!Number.isInteger(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function str(v: unknown, maxLength = MAX_STRING_LENGTH): string {
+  const s = typeof v === "string" ? v : v == null ? "" : String(v);
+  return s.slice(0, maxLength);
+}
+
+function int(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+function num(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}

@@ -1,0 +1,730 @@
+openapi: 3.1.0
+info:
+  title: LD-gpt-check API
+  version: 1.0.0
+  summary: Target v1 API contract for LD-gpt-check.
+  description: >
+    This OpenAPI document describes the target /api/v1 contract. The current
+    Worker implementation still exposes legacy /api paths for the JSON API.
+servers:
+  - url: https://YOUR_WORKER_DOMAIN
+    description: Production Worker
+  - url: http://localhost:8787
+    description: Local Wrangler dev server
+tags:
+  - name: Health
+  - name: DeviceAuthorization
+  - name: OAuth
+  - name: Users
+  - name: Submissions
+  - name: Sessions
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Worker is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/device-authorizations:
+    post:
+      tags: [DeviceAuthorization]
+      summary: Create a device authorization session
+      operationId: createDeviceAuthorization
+      responses:
+        "200":
+          description: Device authorization session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceAuthorizationStartResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/device-authorizations/token:
+    post:
+      tags: [DeviceAuthorization]
+      summary: Poll a device authorization session
+      operationId: pollDeviceAuthorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceAuthorizationPollRequest"
+      responses:
+        "200":
+          description: Current device authorization status.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/DeviceAuthorizationPendingResponse"
+                  - $ref: "#/components/schemas/DeviceAuthorizationAuthorizedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /device:
+    get:
+      tags: [DeviceAuthorization]
+      summary: Render browser device approval page
+      operationId: getDevicePage
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional user code to prefill.
+      responses:
+        "200":
+          description: HTML approval page.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/v1/device-authorizations/approve:
+    post:
+      tags: [DeviceAuthorization]
+      summary: Approve a pending device authorization from the browser session
+      operationId: approveDeviceAuthorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceAuthorizationApproveRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/DeviceAuthorizationApproveRequest"
+      responses:
+        "200":
+          description: Device authorization approved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /auth/linuxdo/start:
+    get:
+      tags: [OAuth]
+      summary: Start Linux.do OAuth login
+      operationId: startLinuxDoOAuth
+      parameters:
+        - name: next
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Site-local redirect path after OAuth completes.
+      responses:
+        "302":
+          description: Redirect to Linux.do authorization endpoint.
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /auth/linuxdo/callback:
+    get:
+      tags: [OAuth]
+      summary: Complete Linux.do OAuth login
+      operationId: completeLinuxDoOAuth
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: OAuth completed and web session cookie was set.
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+
+  /api/v1/me:
+    get:
+      tags: [Users]
+      summary: Get current user
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/submissions:
+    post:
+      tags: [Submissions]
+      summary: Upload a benchmark submission
+      operationId: createSubmission
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSubmissionRequest"
+      responses:
+        "200":
+          description: Submission created or already present.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSubmissionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Submissions]
+      summary: List current user's benchmark submissions
+      operationId: listSubmissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Recent submissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSubmissionsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/sessions/logout:
+    post:
+      tags: [Sessions]
+      summary: Revoke the current CLI access token
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Logout is idempotent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+
+  responses:
+    BadRequest:
+      description: Bad request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing, invalid, expired, or revoked token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Request is not allowed, for example cross-origin browser submission.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: State or idempotency conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PayloadTooLarge:
+      description: Request body is too large.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationFailed:
+      description: Request body is syntactically valid but semantically invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RateLimited:
+      description: Client exceeded the recommended request rate.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UpstreamError:
+      description: Upstream OAuth provider error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          examples: [unauthorized]
+        code:
+          type: string
+          examples: [unauthorized]
+        request_id:
+          type:
+            - string
+            - "null"
+
+    User:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+
+    MeResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+
+    DeviceAuthorizationStartResponse:
+      type: object
+      required:
+        - device_code
+        - user_code
+        - verification_uri
+        - verification_uri_complete
+        - expires_in
+        - interval
+      properties:
+        device_code:
+          type: string
+          examples: [dc_xxx]
+        user_code:
+          type: string
+          examples: ["123-456-789"]
+        verification_uri:
+          type: string
+          format: uri
+        verification_uri_complete:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+          minimum: 1
+          examples: [600]
+        interval:
+          type: integer
+          minimum: 1
+          examples: [3]
+
+    DeviceAuthorizationPollRequest:
+      type: object
+      required: [device_code]
+      properties:
+        device_code:
+          type: string
+
+    DeviceAuthorizationPendingResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, slow_down, expired]
+
+    DeviceAuthorizationAuthorizedResponse:
+      type: object
+      required: [status, access_token, user]
+      properties:
+        status:
+          type: string
+          const: authorized
+        access_token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+
+    DeviceAuthorizationApproveRequest:
+      type: object
+      required: [user_code]
+      properties:
+        user_code:
+          type: string
+          examples: ["123-456-789"]
+
+    CreateSubmissionRequest:
+      type: object
+      required:
+        - upload_id
+        - client_version
+        - model
+        - reasoning_effort
+        - question_count
+        - attempt_count
+        - correct
+        - accuracy
+        - avg_input_tokens
+        - avg_output_tokens
+        - avg_reason_tokens
+        - avg_time_seconds
+        - avg_tps
+        - os
+        - arch
+        - codex_version
+        - questions
+        - attempts
+      properties:
+        upload_id:
+          type: string
+          maxLength: 128
+          examples: [upl_0123456789abcdef0123456789abcdef]
+        client_version:
+          type: string
+          maxLength: 128
+        model:
+          type: string
+          maxLength: 128
+        reasoning_effort:
+          type: string
+          maxLength: 128
+          examples: [xhigh]
+        question_count:
+          type: integer
+          minimum: 1
+          maximum: 50
+        attempt_count:
+          type: integer
+          minimum: 1
+          maximum: 500
+        correct:
+          type: integer
+          minimum: 0
+        accuracy:
+          type: number
+          minimum: 0
+          maximum: 100
+        avg_input_tokens:
+          type: number
+          minimum: 0
+        avg_output_tokens:
+          type: number
+          minimum: 0
+        avg_reason_tokens:
+          type: number
+          minimum: 0
+        avg_time_seconds:
+          type: number
+          minimum: 0
+        avg_tps:
+          type: number
+          minimum: 0
+        os:
+          type: string
+          maxLength: 128
+        arch:
+          type: string
+          maxLength: 128
+        codex_version:
+          type: string
+          maxLength: 128
+        questions:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/SubmissionQuestionInput"
+        attempts:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/SubmissionAttemptInput"
+
+    SubmissionQuestionInput:
+      type: object
+      required:
+        - question_id
+        - question_version
+        - question_title
+        - grader_type
+        - expected_answer
+        - prompt_hash
+        - tests
+        - correct
+        - accuracy
+        - avg_input_tokens
+        - avg_output_tokens
+        - avg_reason_tokens
+        - avg_time_seconds
+        - avg_tps
+      properties:
+        question_id:
+          type: string
+          maxLength: 128
+        question_version:
+          type: string
+          maxLength: 128
+        question_title:
+          type: string
+          maxLength: 128
+        grader_type:
+          type: string
+          enum: [number, exact, regex]
+        expected_answer:
+          type: string
+          maxLength: 128
+        prompt_hash:
+          type: string
+          maxLength: 64
+        tests:
+          type: integer
+          minimum: 1
+        correct:
+          type: integer
+          minimum: 0
+        accuracy:
+          type: number
+          minimum: 0
+          maximum: 100
+        avg_input_tokens:
+          type: number
+          minimum: 0
+        avg_output_tokens:
+          type: number
+          minimum: 0
+        avg_reason_tokens:
+          type: number
+          minimum: 0
+        avg_time_seconds:
+          type: number
+          minimum: 0
+        avg_tps:
+          type: number
+          minimum: 0
+
+    SubmissionAttemptInput:
+      type: object
+      required:
+        - question_id
+        - question_version
+        - case_index
+        - status
+        - is_correct
+        - expected_answer
+        - extracted_answer
+        - answer_preview
+        - input_tokens
+        - output_tokens
+        - reasoning_tokens
+        - time_seconds
+        - tps
+      properties:
+        question_id:
+          type: string
+          maxLength: 128
+        question_version:
+          type: string
+          maxLength: 128
+        case_index:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [completed, failed]
+        is_correct:
+          type: boolean
+        expected_answer:
+          type: string
+          maxLength: 128
+        extracted_answer:
+          type: string
+          maxLength: 128
+        failure_reason:
+          type: string
+          enum: [no_answer, wrong_answer, parse_error, tool_used, codex_failed, timeout, unknown]
+        answer_preview:
+          type: string
+          maxLength: 300
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        reasoning_tokens:
+          type: integer
+          minimum: 0
+        time_seconds:
+          type: number
+          minimum: 0
+        tps:
+          type: number
+          minimum: 0
+
+    CreateSubmissionResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        duplicate:
+          type: boolean
+
+    SubmissionSummary:
+      type: object
+      required:
+        - id
+        - upload_id
+        - model
+        - reasoning_effort
+        - question_count
+        - attempt_count
+        - correct_count
+        - accuracy
+        - avg_time_seconds
+        - avg_tps
+        - created_at
+      properties:
+        id:
+          type: string
+        upload_id:
+          type: string
+        model:
+          type: string
+        reasoning_effort:
+          type: string
+        question_count:
+          type: integer
+        attempt_count:
+          type: integer
+        correct_count:
+          type: integer
+        accuracy:
+          type: number
+        avg_time_seconds:
+          type: number
+        avg_tps:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    ListSubmissionsResponse:
+      type: object
+      required: [submissions]
+      properties:
+        submissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubmissionSummary"
+        next_cursor:
+          type:
+            - string
+            - "null"

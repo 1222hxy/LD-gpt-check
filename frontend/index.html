@@ -7,351 +7,219 @@
       name="description"
       content="LD-gpt-check 是一个开源的 Codex / GPT 能力回归检测 CLI，把模型是否疑似变笨变成可记录、可对比、可分享的数据。"
     />
-    <title>LD-gpt-check - 给你的 Codex 做一次智商体检</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <title>LD-gpt-check - Codex 体检 CLI</title>
   </head>
-  <body>
-    <div class="page-shell">
-      <header class="site-header">
-        <a class="brand" href="#top" aria-label="LD-gpt-check 首页">
-          <span class="brand-mark">LD</span>
-          <span>LD-gpt-check</span>
+  <body class="min-w-[320px] overflow-x-hidden bg-[#f7fbff] text-slate-950 antialiased">
+    <div class="fixed inset-0 -z-20 bg-page"></div>
+    <div class="fixed inset-0 -z-10 bg-grid"></div>
+
+    <div class="mx-auto w-[min(1120px,calc(100%-2rem))] md:w-[min(1120px,calc(100%-3rem))]">
+      <header
+        class="sticky top-3 z-50 mt-3 flex min-h-14 items-center justify-between rounded-lg border border-slate-200/80 bg-white/82 px-3 shadow-xl shadow-blue-100/50 backdrop-blur-xl md:px-4"
+      >
+        <a class="flex items-center" href="#top" aria-label="LD-gpt-check 首页">
+          <img class="h-7 w-auto md:h-8" src="/logo-wordmark.svg" alt="LD-gpt-check" />
         </a>
-        <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false">
-          <span></span>
-          <span></span>
+        <button
+          class="nav-toggle grid size-10 place-items-center rounded-md border border-slate-200/80 bg-slate-100/80 md:hidden"
+          type="button"
+          aria-label="打开导航"
+          aria-expanded="false"
+        >
+          <span class="block h-0.5 w-5 rounded-full bg-slate-700"></span>
+          <span class="mt-1.5 block h-0.5 w-5 rounded-full bg-slate-700"></span>
         </button>
-        <nav class="site-nav" aria-label="主导航">
-          <a href="#features">功能</a>
-          <a href="#how">原理</a>
-          <a href="#privacy">隐私</a>
-          <a href="#install">安装</a>
-          <a href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">GitHub</a>
+        <nav
+          class="site-nav absolute left-0 right-0 top-[calc(100%+0.5rem)] hidden rounded-lg border border-slate-200/80 bg-white/95 p-2 shadow-2xl backdrop-blur-xl md:static md:flex md:items-center md:gap-1 md:border-0 md:bg-transparent md:p-0 md:shadow-none"
+          aria-label="主导航"
+        >
+          <a class="nav-link" href="#how">怎么跑</a>
+          <a class="nav-link" href="#features">功能</a>
+          <a class="nav-link" href="#privacy">隐私</a>
+          <a class="nav-link" href="#install">安装</a>
+          <a class="nav-link" href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">GitHub</a>
           <a class="nav-cta" href="#install">下载 CLI</a>
         </nav>
       </header>
 
       <main id="top">
-        <section class="hero section-pad">
-          <div class="hero-copy">
-            <div class="eyebrow">
-              <span class="status-dot"></span>
-              开源 CLI · 本地运行 · 只上传 summary
+        <section class="grid min-h-[calc(100vh-5rem)] items-center gap-10 py-12 md:py-16 lg:grid-cols-[0.92fr_1.08fr] lg:gap-14">
+          <div>
+            <div class="mb-5 inline-flex max-w-full items-center gap-2 rounded-full border border-blue-100 bg-white/80 px-3 py-1.5 font-mono text-xs text-blue-600 shadow-sm shadow-blue-100/60 sm:text-sm">
+              <span class="size-2 shrink-0 rounded-full bg-blue-600 shadow-glow"></span>
+              <span class="truncate">开源 CLI · 本地运行 · 只上传 summary</span>
             </div>
-            <h1>给你的 Codex 做一次「智商体检」</h1>
-            <p class="hero-lede">
-              LD-gpt-check 是一个开源的模型能力回归检测工具。它用一道可复现的糖果数学题，把“感觉模型变笨了”变成可以记录、对比和分享的数据。
+            <h1 class="bg-gradient-to-r from-blue-600 via-cyan-500 to-violet bg-clip-text text-[clamp(3.1rem,9vw,5.6rem)] font-semibold leading-none tracking-normal text-transparent">
+              LD-gpt-check
+            </h1>
+            <p class="mt-6 max-w-xl text-[clamp(1.6rem,4.4vw,2.7rem)] font-semibold leading-tight tracking-normal text-slate-950">
+              Codex 体检 CLI。
             </p>
-            <div class="hero-actions" aria-label="首屏操作">
-              <a class="button button-primary" href="#install">立即开始</a>
-              <a class="button button-secondary" href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">GitHub</a>
-              <a class="button button-ghost" href="#how">查看原理</a>
-            </div>
-            <div class="hero-metrics" aria-label="核心能力">
-              <span>正确率</span>
-              <span>Reasoning tokens</span>
-              <span>耗时 / TPS</span>
+            <p class="mt-5 max-w-xl text-base leading-8 text-slate-600 md:text-lg">
+              检测 Codex / GPT 是否疑似能力回退。运行固定糖果题，输出正确率、reasoning tokens、耗时和 TPS。
+            </p>
+            <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap" aria-label="首屏操作">
+              <a class="btn-primary" href="#install">立即开始</a>
+              <a class="btn-secondary" href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">GitHub</a>
+              <a class="btn-ghost" href="#how">怎么跑</a>
             </div>
           </div>
 
-          <div class="terminal-window hero-terminal" aria-label="LD-gpt-check 运行结果示例">
-            <div class="terminal-topbar">
-              <div class="traffic-lights" aria-hidden="true">
-                <span class="light red"></span>
-                <span class="light yellow"></span>
-                <span class="light green"></span>
+          <div class="terminal-card" aria-label="LD-gpt-check 运行结果示例">
+            <div class="flex h-11 items-center justify-between border-b border-slate-200/80 bg-white/70 px-4">
+              <div class="flex gap-2" aria-hidden="true">
+                <span class="size-3 rounded-full bg-[#ff5e66]"></span>
+                <span class="size-3 rounded-full bg-[#f5c460]"></span>
+                <span class="size-3 rounded-full bg-[#5beb95]"></span>
               </div>
-              <span class="terminal-title">ld-gpt-check run</span>
+              <span class="font-mono text-xs text-slate-400">ld-gpt-check run</span>
             </div>
-            <div class="terminal-body">
-              <p class="command"><span>$</span> ld-gpt-check run -m gpt-5.5 -r xhigh -n 5</p>
-              <div class="terminal-table-wrap">
-                <table class="terminal-table">
-                  <thead>
-                    <tr>
-                      <th>Run</th>
-                      <th>Codex</th>
-                      <th>In Tok</th>
-                      <th>Out Tok</th>
-                      <th class="reason-col">Reason Tok</th>
-                      <th>Time(s)</th>
-                      <th>TPS</th>
-                      <th>OK</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>1</td>
-                      <td>最少需要取出 <strong>27 个</strong>...</td>
-                      <td>10163</td>
-                      <td>720</td>
-                      <td class="reason-col">516</td>
-                      <td>17.0</td>
-                      <td>42.4</td>
-                      <td class="bad">✗</td>
-                    </tr>
-                    <tr>
-                      <td>2</td>
-                      <td>最少取出 <strong>30 个</strong>...</td>
-                      <td>10163</td>
-                      <td>855</td>
-                      <td class="reason-col">516</td>
-                      <td>21.3</td>
-                      <td>40.1</td>
-                      <td class="bad">✗</td>
-                    </tr>
-                    <tr>
-                      <td>3</td>
-                      <td>最少要取出 <strong>39 个</strong>...</td>
-                      <td>10163</td>
-                      <td>850</td>
-                      <td class="reason-col">516</td>
-                      <td>18.4</td>
-                      <td>46.3</td>
-                      <td class="bad">✗</td>
-                    </tr>
-                    <tr>
-                      <td>4</td>
-                      <td>答案是 <strong>21 个</strong>...</td>
-                      <td>10163</td>
-                      <td>4416</td>
-                      <td class="reason-col">4142</td>
-                      <td>82.8</td>
-                      <td>53.4</td>
-                      <td class="good">✓</td>
-                    </tr>
-                    <tr>
-                      <td>5</td>
-                      <td>最少需要取出 <strong>21 个</strong>...</td>
-                      <td>10163</td>
-                      <td>4873</td>
-                      <td class="reason-col">4660</td>
-                      <td>91.5</td>
-                      <td>53.3</td>
-                      <td class="good">✓</td>
-                    </tr>
-                  </tbody>
-                </table>
+            <div class="p-4 font-mono text-sm leading-7 text-slate-600 sm:p-6">
+              <div class="overflow-x-auto rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-slate-950">
+                <code class="whitespace-nowrap"><span class="text-blue-600">$</span> ld-gpt-check run -m gpt-5.5 -r xhigh -n 5</code>
               </div>
-              <p class="terminal-summary">Graded 5/5&nbsp;&nbsp; correct=2&nbsp;&nbsp; accuracy=<span>40.0%</span></p>
-            </div>
-          </div>
-        </section>
-
-        <section class="section-pad pain-section" id="pain">
-          <div class="section-heading">
-            <p class="section-kicker">Codex 体感监测</p>
-            <h2>感觉模型变笨了？别只靠感觉。</h2>
-            <p>
-              有时候 Codex 今天好像不太对劲：昨天能做的题，今天突然绕远；同样的问题，reasoning tokens 变少，答案也更容易错。LD-gpt-check 把这种体感变成可以记录的数据。
-            </p>
-          </div>
-          <div class="card-grid three-cols">
-            <article class="glass-card">
-              <span class="card-tag">01</span>
-              <h3>从玄学变成数据</h3>
-              <p>记录正确率、reasoning tokens、输出 tokens、耗时和 TPS。</p>
-            </article>
-            <article class="glass-card">
-              <span class="card-tag">02</span>
-              <h3>本地运行，可复现</h3>
-              <p>直接调用你机器上的 Codex CLI，测试过程清晰透明。</p>
-            </article>
-            <article class="glass-card">
-              <span class="card-tag">03</span>
-              <h3>社区共同观察</h3>
-              <p>登录 Linux.do 后可以上传测试摘要，未来形成趋势图和榜单。</p>
-            </article>
-          </div>
-        </section>
-
-        <section class="section-pad feature-section" id="features">
-          <div class="section-heading">
-            <p class="section-kicker">Features</p>
-            <h2>一个给 AI 编程玩家准备的小工具</h2>
-          </div>
-          <div class="feature-grid">
-            <article class="feature-card">
-              <span class="feature-icon">bin</span>
-              <h3>单文件 CLI</h3>
-              <p>下载即用，不需要折腾环境。</p>
-            </article>
-            <article class="feature-card">
-              <span class="feature-icon">exec</span>
-              <h3>自动调用 Codex</h3>
-              <p>封装 codex exec --json，自动解析输出。</p>
-            </article>
-            <article class="feature-card">
-              <span class="feature-icon">tok</span>
-              <h3>推理 token 统计</h3>
-              <p>不只看对错，也看模型到底有没有认真想。</p>
-            </article>
-            <article class="feature-card">
-              <span class="feature-icon">ld</span>
-              <h3>Linux.do 登录</h3>
-              <p>支持网页登录和设备码登录，远程服务器也能用。</p>
-            </article>
-            <article class="feature-card">
-              <span class="feature-icon">sum</span>
-              <h3>可选上传结果</h3>
-              <p>上传 summary，方便查看历史和社区趋势。</p>
-            </article>
-            <article class="feature-card">
-              <span class="feature-icon">min</span>
-              <h3>隐私克制</h3>
-              <p>默认不上传本地数据库，不上传完整聊天历史。</p>
-            </article>
-          </div>
-        </section>
-
-        <section class="section-pad how-section" id="how">
-          <div class="section-heading narrow">
-            <p class="section-kicker">How it works</p>
-            <h2>它是怎么检测的？</h2>
-          </div>
-          <div class="timeline">
-            <article class="timeline-step">
-              <span>1</span>
-              <h3>本地调用 Codex CLI</h3>
-              <p>在你的机器上执行 Codex，不代理、不托管你的请求。</p>
-            </article>
-            <article class="timeline-step">
-              <span>2</span>
-              <h3>输入固定糖果数学题</h3>
-              <p>用稳定题目减少变量，让多次记录更容易对比。</p>
-            </article>
-            <article class="timeline-step">
-              <span>3</span>
-              <h3>解析 JSON 输出</h3>
-              <p>读取 codex exec --json 的事件流，提取答案和 usage。</p>
-            </article>
-            <article class="timeline-step">
-              <span>4</span>
-              <h3>统计 token、耗时和正确率</h3>
-              <p>把正确率、reasoning tokens、输出 tokens、TPS 放到同一张表里。</p>
-            </article>
-            <article class="timeline-step">
-              <span>5</span>
-              <h3>可选上传测试摘要</h3>
-              <p>登录后上传 summary，为个人历史和社区趋势做准备。</p>
-            </article>
-          </div>
-        </section>
-
-        <section class="section-pad login-section" id="login">
-          <div class="login-copy">
-            <p class="section-kicker">Device login</p>
-            <h2>远程服务器也能登录</h2>
-            <p>
-              本地环境可以自动打开浏览器；如果你在 SSH、WSL 或远程服务器里运行，也可以复制链接并输入 9 位验证码完成授权。
-            </p>
-          </div>
-          <div class="login-demo">
-            <div class="terminal-window small-terminal">
-              <div class="terminal-topbar">
-                <div class="traffic-lights" aria-hidden="true">
-                  <span class="light red"></span>
-                  <span class="light yellow"></span>
-                  <span class="light green"></span>
+              <div class="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
+                <div class="result-tile">
+                  <span>accuracy</span>
+                  <strong>40%</strong>
                 </div>
-                <span class="terminal-title">login</span>
+                <div class="result-tile">
+                  <span>reason</span>
+                  <strong>2.1k</strong>
+                </div>
+                <div class="result-tile">
+                  <span>TPS</span>
+                  <strong>47</strong>
+                </div>
               </div>
-              <div class="terminal-body compact">
-                <p class="command"><span>$</span> ld-gpt-check login</p>
-                <p>正在打开浏览器完成 Linux.do 登录……</p>
-                <p>如果浏览器没有自动打开，请访问：</p>
-                <p class="link-like">https://example.com/device</p>
-                <p>验证码：</p>
-                <p class="code-big">483-921-775</p>
+              <div class="mt-5 grid gap-2 text-xs sm:text-sm">
+                <div class="result-row">
+                  <span>1</span>
+                  <p>最少需要取出 27 个...</p>
+                  <strong class="text-red">✗</strong>
+                </div>
+                <div class="result-row">
+                  <span>4</span>
+                  <p>答案是 21 个...</p>
+                  <strong class="text-blue-600">✓</strong>
+                </div>
+                <div class="result-row">
+                  <span>5</span>
+                  <p>最少需要取出 21 个...</p>
+                  <strong class="text-blue-600">✓</strong>
+                </div>
               </div>
-            </div>
-            <div class="auth-card">
-              <span class="auth-badge">Linux.do OAuth</span>
-              <h3>授权 LD-gpt-check CLI</h3>
-              <p>当前账号：<strong>yhk</strong></p>
-              <div class="auth-code">483-921-775</div>
-              <button type="button">授权此设备</button>
+              <div class="mt-5 rounded-xl border border-slate-200/80 bg-white/80 px-4 py-3 text-xs text-slate-500 sm:text-sm">
+                Graded 5/5 · correct=2 · accuracy=40.0%
+              </div>
             </div>
           </div>
         </section>
 
-        <section class="section-pad privacy-section" id="privacy">
+        <section class="section-block" id="how">
           <div class="section-heading">
-            <p class="section-kicker">Privacy</p>
-            <h2>默认克制，少传一点</h2>
-            <p>
-              LD-gpt-check 的目标是观察模型能力波动，不是收集你的本地数据。默认上传的只是测试摘要，例如模型名、正确率、token 用量、耗时和系统信息。
-            </p>
+            <p class="section-kicker">How it works</p>
+            <h2 class="section-title">一条命令，三件事。</h2>
+            <p class="section-copy">不做复杂后台，不做玄学评分。它只把一次本地检测跑完，然后把关键数字摆出来。</p>
           </div>
-          <div class="privacy-list" aria-label="隐私重点">
-            <div>
-              <span>不会</span>
-              <p>上传本地 Codex 数据库</p>
-            </div>
-            <div>
-              <span>不会</span>
-              <p>上传完整聊天历史</p>
-            </div>
-            <div>
-              <span>不会</span>
-              <p>在客户端保存 OAuth secret</p>
-            </div>
+          <div class="grid gap-4 md:grid-cols-3">
+            <article class="glass-card">
+              <span class="card-index">01</span>
+              <h3>调用本机 Codex</h3>
+              <p>封装 <code>codex exec --json</code>，测试过程仍然发生在你的机器上。</p>
+            </article>
+            <article class="glass-card">
+              <span class="card-index">02</span>
+              <h3>跑固定糖果题</h3>
+              <p>同一道题重复测试，记录答案是否命中，方便横向和纵向对比。</p>
+            </article>
+            <article class="glass-card">
+              <span class="card-index">03</span>
+              <h3>输出 summary</h3>
+              <p>正确率、reasoning tokens、输入输出 tokens、耗时和 TPS，一眼看完。</p>
+            </article>
           </div>
         </section>
 
-        <section class="section-pad install-roadmap" id="install">
-          <div class="install-panel">
+        <section class="section-block" id="features">
+          <div class="mb-9 max-w-3xl">
+            <p class="section-kicker">Features</p>
+            <h2 class="section-title">核心功能就这些。</h2>
+            <p class="section-copy">它是一个给 AI 编程玩家准备的小工具，重点是直接、可复现、少打扰。</p>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <article class="feature-simple">
+              <span>local</span>
+              <h3>本地运行</h3>
+              <p>直接调用你机器上的 Codex CLI，不托管你的请求。</p>
+            </article>
+            <article class="feature-simple">
+              <span>score</span>
+              <h3>自动评分</h3>
+              <p>固定题目、固定答案，把对错和正确率写清楚。</p>
+            </article>
+            <article class="feature-simple">
+              <span>tokens</span>
+              <h3>看 reasoning</h3>
+              <p>不只看答没答对，也看模型到底花了多少 token 想。</p>
+            </article>
+            <article class="feature-simple">
+              <span>share</span>
+              <h3>可选上传</h3>
+              <p>登录 Linux.do 后只上传 summary，后续可以做社区趋势。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section-block grid gap-5 lg:grid-cols-[1fr_1fr]" id="privacy">
+          <div class="glass-panel p-6 md:p-8">
+            <p class="section-kicker">Privacy</p>
+            <h2 class="section-title">默认克制。</h2>
+            <p class="section-copy">
+              这个工具的目标是观察模型能力波动，不是收集你的本地数据。默认上传的是测试摘要，不是完整上下文。
+            </p>
+            <div class="mt-6 grid gap-3">
+              <div class="privacy-strip">不会上传本地 Codex 数据库</div>
+              <div class="privacy-strip">不会上传完整聊天历史</div>
+              <div class="privacy-strip">不会在客户端保存 OAuth secret</div>
+            </div>
+          </div>
+          <div class="glass-panel p-6 md:p-8" id="install">
             <p class="section-kicker">Install</p>
-            <h2>下载 CLI，然后跑一次。</h2>
-            <p>Go 项目可以从源码安装，也可以等 GitHub Releases 提供预编译二进制。先确认本机已经安装并登录 Codex CLI。</p>
-            <div class="install-code" aria-label="安装命令">
-              <span>$</span>
+            <h2 class="section-title">下载，然后跑一次。</h2>
+            <p class="section-copy">先确认本机已经安装并登录 Codex CLI，然后安装 LD-gpt-check。</p>
+            <div class="code-line" aria-label="安装命令">
+              <span class="text-blue-600">$</span>
               <code>go install github.com/haowang02/ld-gpt-check/cmd/ld-gpt-check@latest</code>
             </div>
-            <div class="install-code" aria-label="运行命令">
-              <span>$</span>
-              <code>ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload</code>
+            <div class="code-line" aria-label="运行命令">
+              <span class="text-blue-600">$</span>
+              <code>ld-gpt-check run -m gpt-5.5 -r xhigh -n 5</code>
             </div>
-            <div class="install-actions">
-              <a class="button button-primary" href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">打开 GitHub</a>
-              <a class="button button-secondary" href="#how">查看原理</a>
-            </div>
-          </div>
-          <div class="roadmap-panel">
-            <p class="section-kicker">Roadmap</p>
-            <h2>接下来想做什么</h2>
-            <ul class="checklist">
-              <li class="done">Go CLI</li>
-              <li class="done">Linux.do 登录</li>
-              <li class="done">上传 summary</li>
-              <li>个人历史记录</li>
-              <li>社区趋势图</li>
-              <li>模型对比</li>
-              <li>更多测试题集</li>
-            </ul>
           </div>
         </section>
 
-        <section class="bottom-cta section-pad">
-          <div>
-            <p class="section-kicker">Run it locally</p>
-            <h2>现在，给你的 Codex 跑一次体检。</h2>
-            <p>一次测试不能定义模型，但一串记录可以看见趋势。</p>
-          </div>
-          <div class="hero-actions">
-            <a class="button button-primary" href="#install">下载 CLI</a>
-            <a class="button button-secondary" href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">GitHub</a>
-            <a class="button button-ghost" href="#how">查看文档</a>
+        <section class="my-12 rounded-xl border border-blue-200 bg-white/78 p-7 shadow-xl shadow-blue-100/60 backdrop-blur-xl md:p-10">
+          <div class="grid gap-7 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <p class="section-kicker">Run it locally</p>
+              <h2 class="section-title">现在跑一次体检。</h2>
+              <p class="section-copy mb-0">一次测试不能定义模型，但一串记录可以看见趋势。</p>
+            </div>
+            <div class="flex flex-col gap-3 sm:flex-row">
+              <a class="btn-primary" href="#install">下载 CLI</a>
+              <a class="btn-secondary" href="https://github.com/haowang02/ld-gpt-check" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
           </div>
         </section>
       </main>
 
-      <footer class="site-footer">
+      <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 py-8 text-sm text-slate-400">
         <span>LD-gpt-check</span>
         <span>开源透明，本地运行，适合 Linux.do 社区一起玩。</span>
         <span>© <span id="year"></span></span>
       </footer>
     </div>
-    <script src="./app.js"></script>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -1,0 +1,348 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: theme("fontFamily.sans");
+  }
+
+  strong {
+    @apply text-slate-950;
+  }
+}
+
+@layer components {
+  .bg-page {
+    background:
+      linear-gradient(135deg, rgba(37, 99, 235, 0.08), transparent 34%),
+      linear-gradient(225deg, rgba(34, 211, 238, 0.12), transparent 36%),
+      linear-gradient(180deg, #f8fbff 0%, #eef6ff 45%, #ffffff 100%);
+  }
+
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(37, 99, 235, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(37, 99, 235, 0.06) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.65), transparent 78%);
+  }
+
+  .site-nav.is-open {
+    @apply grid grid-cols-1 sm:grid-cols-2;
+  }
+
+  .nav-link {
+    @apply rounded-md px-3 py-2 text-sm text-slate-600 transition hover:bg-blue-50 hover:text-blue-700;
+  }
+
+  .nav-cta {
+    @apply rounded-md border border-blue-600 bg-blue-600 px-3 py-2 text-sm text-white shadow-lg shadow-blue-200/60 transition hover:bg-blue-700 md:ml-2;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    @apply inline-flex min-h-11 items-center justify-center rounded-md border px-5 font-semibold transition hover:-translate-y-0.5;
+  }
+
+  .btn-primary {
+    @apply border-blue-600 bg-gradient-to-r from-blue-600 via-cyan-500 to-violet text-white shadow-lg shadow-blue-200/70;
+  }
+
+  .btn-secondary {
+    @apply border-slate-200 bg-white text-slate-900 shadow-sm shadow-blue-100/60 hover:border-blue-200 hover:bg-blue-50;
+  }
+
+  .btn-ghost {
+    @apply border-transparent bg-transparent text-slate-500 hover:border-blue-100 hover:bg-blue-50 hover:text-blue-700;
+  }
+
+  .metric-pill {
+    @apply rounded-full border border-blue-100 bg-white/75 px-3 py-1.5 shadow-sm shadow-blue-100/50;
+  }
+
+  .hero-entry-card {
+    @apply rounded-2xl border border-blue-100 bg-white/85 p-5 shadow-lg shadow-blue-100/50 transition hover:-translate-y-1 hover:border-blue-200 hover:bg-white;
+  }
+
+  .hero-entry-card span {
+    @apply mb-5 block font-mono text-xs text-blue-500;
+  }
+
+  .hero-entry-card strong {
+    @apply block text-lg font-semibold text-slate-950;
+  }
+
+  .hero-entry-card p {
+    @apply mt-2 mb-0 text-sm leading-6 text-slate-500;
+  }
+
+  .terminal-card {
+    @apply relative min-w-0 overflow-hidden rounded-2xl border border-blue-100 bg-white/95 shadow-2xl shadow-blue-100/80 backdrop-blur-xl;
+  }
+
+  .terminal-card::before {
+    @apply pointer-events-none absolute inset-0 -z-10 rounded-2xl opacity-70 blur-2xl;
+    content: "";
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(34, 211, 238, 0.18), transparent 70%);
+  }
+
+  .result-tile {
+    @apply min-w-0 rounded-xl border border-blue-100 bg-white/85 p-3 shadow-sm shadow-blue-100/50;
+  }
+
+  .result-tile span {
+    @apply block truncate font-mono text-[10px] uppercase text-slate-400 sm:text-[11px];
+  }
+
+  .result-tile strong {
+    @apply mt-1 block text-lg font-semibold leading-none text-slate-950 sm:text-xl;
+  }
+
+  .result-row {
+    @apply grid grid-cols-[1.5rem_minmax(0,1fr)_1.5rem] items-center gap-2 rounded-xl border border-slate-200/80 bg-white/75 px-3 py-2;
+  }
+
+  .result-row span {
+    @apply text-slate-400;
+  }
+
+  .result-row p {
+    @apply mb-0 truncate text-slate-600;
+  }
+
+  .th-left,
+  .th-right {
+    @apply border-b border-slate-100 px-2.5 py-2 font-semibold text-slate-400;
+  }
+
+  .td-left,
+  .td-right {
+    @apply border-b border-slate-100 px-2.5 py-2 text-slate-600;
+  }
+
+  .th-left,
+  .td-left {
+    @apply text-left;
+  }
+
+  .th-right,
+  .td-right {
+    @apply text-right;
+  }
+
+  .section-block {
+    @apply min-w-0 py-16 md:py-24;
+  }
+
+  .section-heading {
+    @apply mb-9 max-w-3xl;
+  }
+
+  .section-kicker {
+    @apply mb-4 inline-flex font-mono text-sm text-blue-600;
+  }
+
+  .section-title {
+    @apply mb-4 text-3xl font-semibold leading-tight tracking-normal text-slate-950 md:text-5xl;
+  }
+
+  .section-copy {
+    @apply text-lg leading-8 text-slate-600;
+  }
+
+  .glass-panel,
+  .glass-card,
+  .feature-card,
+  .timeline-step {
+    @apply min-w-0 rounded-2xl border border-blue-100 bg-white/90 shadow-lg shadow-blue-100/50 backdrop-blur-xl;
+  }
+
+  .glass-card,
+  .feature-card,
+  .timeline-step {
+    @apply min-h-40 p-6 transition hover:-translate-y-1 hover:border-blue-200 hover:bg-white;
+  }
+
+  .glass-card h3,
+  .feature-card h3,
+  .timeline-step h3,
+  .glass-panel h3 {
+    @apply mb-2 text-lg font-semibold text-slate-950;
+  }
+
+  .glass-card p,
+  .feature-card p,
+  .timeline-step p {
+    @apply mb-0 text-slate-600;
+  }
+
+  .card-index {
+    @apply mb-8 inline-flex font-mono text-xs text-sky;
+  }
+
+  .feature-icon {
+    @apply mb-6 inline-grid h-8 w-12 place-items-center rounded-md border border-sky/25 bg-sky/10 font-mono text-[11px] text-sky;
+  }
+
+  .feature-focus-card {
+    @apply rounded-2xl border border-blue-100 bg-white/90 p-6 shadow-xl shadow-blue-100/60 backdrop-blur-xl transition hover:-translate-y-1 hover:bg-white;
+  }
+
+  .feature-focus-card h3 {
+    @apply mb-3 text-2xl font-semibold leading-tight text-slate-950;
+  }
+
+  .feature-focus-card p {
+    @apply text-slate-600;
+  }
+
+  .feature-log-line {
+    @apply flex items-center justify-between rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3 font-mono text-xs;
+  }
+
+  .feature-log-line span {
+    @apply text-slate-400;
+  }
+
+  .feature-log-line strong {
+    @apply text-slate-800;
+  }
+
+  .feature-chip-grid {
+    @apply grid gap-3 sm:grid-cols-2;
+  }
+
+  .feature-chip-card {
+    @apply grid grid-cols-[auto_1fr_auto] items-start gap-3 rounded-2xl border border-blue-100 bg-white/90 p-4 shadow-lg shadow-blue-100/45 transition hover:-translate-y-1 hover:border-blue-200 hover:bg-white;
+  }
+
+  .feature-chip-card h3 {
+    @apply mb-1 text-base font-semibold text-slate-950;
+  }
+
+  .feature-chip-card p {
+    @apply mb-0 text-sm leading-6 text-slate-500;
+  }
+
+  .feature-chip-card strong {
+    @apply rounded-full bg-slate-50 px-2.5 py-1 font-mono text-[11px] text-slate-400;
+  }
+
+  .feature-dot {
+    @apply mt-1 size-3 rounded-full shadow-sm;
+  }
+
+  .feature-simple {
+    @apply rounded-2xl border border-blue-100 bg-white/85 p-5 shadow-lg shadow-blue-100/45 backdrop-blur-xl transition hover:-translate-y-1 hover:border-blue-200 hover:bg-white;
+  }
+
+  .feature-simple span {
+    @apply mb-8 inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 font-mono text-[11px] text-blue-600;
+  }
+
+  .feature-simple h3 {
+    @apply mb-2 text-lg font-semibold text-slate-950;
+  }
+
+  .feature-simple p {
+    @apply mb-0 text-sm leading-6 text-slate-600;
+  }
+
+  .stat-tile {
+    @apply rounded-xl border border-blue-100 bg-white/85 p-4 shadow-sm shadow-blue-100/60;
+  }
+
+  .stat-tile span {
+    @apply mb-5 block font-mono text-[11px] uppercase text-slate-400;
+  }
+
+  .stat-tile strong {
+    @apply block text-lg font-semibold text-slate-950;
+  }
+
+  .stat-tile p {
+    @apply mt-1 mb-0 text-sm text-slate-500;
+  }
+
+  .timeline-step {
+    @apply relative;
+  }
+
+  .timeline-step span {
+    @apply mb-7 grid size-9 place-items-center rounded-full border border-blue-200 bg-blue-50 font-mono text-blue-600;
+  }
+
+  .privacy-item {
+    @apply rounded-2xl border border-blue-100 bg-blue-50/80 p-6;
+  }
+
+  .privacy-label {
+    @apply mb-4 inline-flex font-mono text-sm text-blue-600;
+  }
+
+  .privacy-item p {
+    @apply mb-0 text-lg font-semibold text-slate-950;
+  }
+
+  .privacy-strip {
+    @apply rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm font-semibold text-slate-800;
+  }
+
+  .code-line {
+    @apply mt-4 flex min-w-0 max-w-full items-start gap-3 overflow-x-auto rounded-xl border border-blue-100 bg-white/90 px-4 py-3 font-mono text-sm text-slate-700 shadow-sm shadow-blue-100/60;
+  }
+
+  .code-line code {
+    @apply break-all;
+  }
+
+  .check-done,
+  .check-todo {
+    @apply relative pl-8 text-slate-500;
+  }
+
+  .check-done {
+    @apply text-slate-950;
+  }
+
+  .check-done::before,
+  .check-todo::before {
+    @apply absolute left-0 top-0.5 grid size-5 place-items-center rounded border text-xs;
+    content: "";
+  }
+
+  .check-done::before {
+    @apply border-blue-300 bg-blue-50 text-blue-600;
+    content: "✓";
+  }
+
+  .check-todo::before {
+    @apply border-slate-200 text-slate-400;
+  }
+
+  .trend-chart {
+    @apply flex h-48 items-end gap-2 rounded-2xl border border-blue-100 bg-white/85 p-4;
+    background-image:
+      linear-gradient(rgba(37, 99, 235, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(37, 99, 235, 0.06) 1px, transparent 1px);
+    background-size: 100% 25%, 8.333% 100%;
+  }
+
+  .trend-chart span {
+    @apply min-h-6 flex-1 rounded-t-md border border-blue-200 bg-gradient-to-t from-blue-200 to-cyan-400;
+  }
+}
+
+@media (max-width: 520px) {
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    width: 100%;
+  }
+}

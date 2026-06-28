@@ -1,0 +1,135 @@
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  username TEXT,
+  avatar_url TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(provider, provider_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS device_sessions (
+  id TEXT PRIMARY KEY,
+  device_code_hash TEXT NOT NULL UNIQUE,
+  user_code_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  user_id TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  approved_at TEXT,
+  last_polled_at TEXT,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS access_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  device_name TEXT,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT,
+  expires_at TEXT,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_submissions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  upload_id TEXT NOT NULL,
+  client_version TEXT,
+  model TEXT,
+  reasoning_effort TEXT,
+  question_count INTEGER,
+  attempt_count INTEGER,
+  correct_count INTEGER,
+  accuracy REAL,
+  avg_input_tokens REAL,
+  avg_output_tokens REAL,
+  avg_reason_tokens REAL,
+  avg_time_seconds REAL,
+  avg_tps REAL,
+  os TEXT,
+  arch TEXT,
+  codex_version TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, upload_id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_question_results (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL,
+  question_id TEXT NOT NULL,
+  question_version TEXT NOT NULL,
+  question_title TEXT,
+  grader_type TEXT,
+  expected_answer TEXT,
+  prompt_hash TEXT,
+  test_count INTEGER,
+  correct_count INTEGER,
+  accuracy REAL,
+  avg_input_tokens REAL,
+  avg_output_tokens REAL,
+  avg_reason_tokens REAL,
+  avg_time_seconds REAL,
+  avg_tps REAL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(submission_id) REFERENCES benchmark_submissions(id)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_attempts (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL,
+  question_id TEXT NOT NULL,
+  question_version TEXT NOT NULL,
+  case_index INTEGER,
+  status TEXT,
+  is_correct INTEGER,
+  expected_answer TEXT,
+  extracted_answer TEXT,
+  failure_reason TEXT,
+  answer_preview TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  reasoning_tokens INTEGER,
+  time_seconds REAL,
+  tps REAL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(submission_id) REFERENCES benchmark_submissions(id)
+);
+
+CREATE TABLE IF NOT EXISTS oauth_states (
+  id TEXT PRIMARY KEY,
+  state_hash TEXT NOT NULL UNIQUE,
+  redirect_path TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  session_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT,
+  expires_at TEXT NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start TEXT NOT NULL,
+  count INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_submissions_user_created ON benchmark_submissions(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_benchmark_question_results_submission ON benchmark_question_results(submission_id);
+CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_submission ON benchmark_attempts(submission_id);
+CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_question ON benchmark_attempts(question_id, question_version);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_hash ON web_sessions(session_hash);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);

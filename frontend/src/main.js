@@ -1,3 +1,7 @@
+import "@fontsource/noto-sans-sc/chinese-simplified-400.css";
+import "@fontsource/noto-sans-sc/chinese-simplified-600.css";
+import "./styles.css";
+
 const navToggle = document.querySelector(".nav-toggle");
 const nav = document.querySelector(".site-nav");
 const year = document.querySelector("#year");

@@ -1,0 +1,11 @@
+# LD-gpt-check 配置示例。
+# 复制为 ld-gpt-check.toml，并放在二进制同一目录。
+# 真实配置包含 access_token，请不要提交到 Git。
+
+api_base_url = "https://YOUR_WORKER_DOMAIN"
+access_token = ""
+language = "zh-CN"
+
+[user]
+id = ""
+username = ""
