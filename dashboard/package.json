@@ -21,7 +21,8 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "recharts": "^3.6.0",
-    "simple-statistics": "^7.9.1"
+    "simple-statistics": "^7.9.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.1.1",

@@ -1,3 +1,5 @@
+import { DashboardOverviewSchema } from "./schema.js";
+
 const API_BASE_URL = import.meta.env.VITE_PUBLIC_API_BASE_URL || "";
 
 export async function fetchDashboardOverview(filters) {
@@ -11,5 +13,6 @@ export async function fetchDashboardOverview(filters) {
     throw new Error(`Dashboard API failed with ${response.status}`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  return DashboardOverviewSchema.parse(payload);
 }

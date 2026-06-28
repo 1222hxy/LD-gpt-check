@@ -14,7 +14,7 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -29,6 +29,8 @@ import {
   YAxis,
 } from "recharts";
 import { fetchDashboardOverview } from "./api.js";
+import { downloadDashboardExport } from "./export.js";
+import { DEFAULT_FILTERS, parseFilters, writeFiltersToUrl } from "./filters.js";
 import "./styles.css";
 
 const queryClient = new QueryClient();
@@ -40,20 +42,40 @@ const RANGE_OPTIONS = [
 const SEGMENT_COLORS = ["#0f766e", "#b45309", "#2563eb", "#be123c"];
 
 function App() {
-  const [filters, setFilters] = useState({ range: "30d", model: "all" });
+  const [filters, setFilters] = useState(() =>
+    typeof window === "undefined" ? DEFAULT_FILTERS : parseFilters(window.location.search),
+  );
   const dashboard = useQuery({
     queryKey: ["dashboard-overview", filters],
     queryFn: () => fetchDashboardOverview(filters),
     refetchInterval: 60_000,
   });
 
+  useEffect(() => {
+    writeFiltersToUrl(filters);
+  }, [filters]);
+
+  useEffect(() => {
+    if (!dashboard.data) return;
+    const normalizedFilters = parseFilters(new URLSearchParams(filters).toString(), dashboard.data.filters.models);
+    if (normalizedFilters.model !== filters.model || normalizedFilters.range !== filters.range) {
+      setFilters(normalizedFilters);
+    }
+  }, [dashboard.data, filters]);
+
   if (dashboard.isLoading) return <LoadingState />;
   if (dashboard.isError) return <ErrorState onRetry={dashboard.refetch} />;
 
   const data = dashboard.data;
+
   return (
     <main className="min-h-screen bg-[#f7f7f2] text-ink">
-      <TopBar updatedAt={data.updatedAt} onRefresh={dashboard.refetch} isRefreshing={dashboard.isFetching} />
+      <TopBar
+        updatedAt={data.updatedAt}
+        onRefresh={dashboard.refetch}
+        isRefreshing={dashboard.isFetching}
+        onExport={() => downloadDashboardExport(data, filters)}
+      />
       <section className="mx-auto grid w-full max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:px-8">
         <Sidebar filters={filters} models={data.filters.models} onChange={setFilters} />
         <div className="grid min-w-0 gap-5">
@@ -82,7 +104,7 @@ function App() {
   );
 }
 
-function TopBar({ updatedAt, onRefresh, isRefreshing }) {
+function TopBar({ updatedAt, onRefresh, isRefreshing, onExport }) {
   return (
     <header className="sticky top-0 z-20 border-b border-stone-200 bg-[#f7f7f2]/92 backdrop-blur-xl">
       <div className="mx-auto flex min-h-[72px] w-full max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
@@ -99,7 +121,7 @@ function TopBar({ updatedAt, onRefresh, isRefreshing }) {
           <button className="icon-button" type="button" title="刷新数据" onClick={onRefresh}>
             <RefreshCcw className={isRefreshing ? "animate-spin" : ""} size={18} aria-hidden="true" />
           </button>
-          <button className="command-button" type="button">
+          <button className="command-button" type="button" onClick={onExport}>
             <Download size={17} aria-hidden="true" />
             导出
           </button>
@@ -360,6 +382,13 @@ function PowerPanel({ statistics }) {
 function TimeOfDayPanel({ analysis }) {
   const worstHour = analysis.summary.worstHour;
   const worstSegment = analysis.summary.worstSegment;
+  const [selectedHour, setSelectedHour] = useState(worstHour?.hour ?? 0);
+  const selected = analysis.hourly.find((hour) => hour.hour === selectedHour) || analysis.hourly[0];
+
+  useEffect(() => {
+    setSelectedHour(worstHour?.hour ?? 0);
+  }, [worstHour?.hour]);
+
   return (
     <Panel title="时段降智分析" icon={Clock3} action="jStat + Holm">
       <div className="grid gap-3 md:grid-cols-4">
@@ -389,16 +418,34 @@ function TimeOfDayPanel({ analysis }) {
         <div className="min-w-0">
           <div className="hour-grid" aria-label="24 小时准确率热力图">
             {analysis.hourly.map((hour) => (
-              <div className={`hour-cell hour-${hour.verdict}`} key={hour.hour} title={`${hour.label} ${percent(hour.accuracy)}`}>
+              <button
+                className={`hour-cell hour-${hour.verdict}${selected.hour === hour.hour ? " is-selected" : ""}`}
+                key={hour.hour}
+                title={`${hour.label} ${percent(hour.accuracy)}`}
+                type="button"
+                onClick={() => setSelectedHour(hour.hour)}
+              >
                 <span>{String(hour.hour).padStart(2, "0")}</span>
                 <strong>{percent(hour.accuracy)}</strong>
                 <em>{signedPercent(hour.deltaVsDay)}</em>
-              </div>
+              </button>
             ))}
           </div>
         </div>
 
-        <div className="grid gap-2">
+        <div className="grid gap-3">
+          <div className="hour-detail-card">
+            <span>选中小时</span>
+            <strong>{selected.label}</strong>
+            <dl>
+              <div><dt>准确率</dt><dd>{percent(selected.accuracy)}</dd></div>
+              <div><dt>95% CI</dt><dd>{percent(selected.ci95Low)} - {percent(selected.ci95High)}</dd></div>
+              <div><dt>Holm p</dt><dd>{formatPValue(selected.adjustedPValue)}</dd></div>
+              <div><dt>效应量 h</dt><dd>{selected.effectSize}</dd></div>
+              <div><dt>风险分</dt><dd>{selected.riskScore}</dd></div>
+              <div><dt>平均耗时</dt><dd>{selected.avgLatencySeconds}s</dd></div>
+            </dl>
+          </div>
           {analysis.segments.map((segment) => (
             <div className="time-segment-row" key={segment.label}>
               <div>

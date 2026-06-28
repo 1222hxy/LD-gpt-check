@@ -266,6 +266,13 @@ The local mock implementation uses:
 - `jstat` for normal and chi-square distribution CDFs.
 - `simple-statistics` for descriptive statistics and quantiles.
 
+## Frontend Safeguards
+
+- Browser API responses are parsed through `DashboardOverviewSchema` in `dashboard/src/schema.js` before rendering.
+- Invalid or incomplete API payloads fail fast instead of producing misleading charts.
+- The dashboard can export a compact JSON statistical snapshot and hourly CSV from the current filter state.
+- `range` and `model` filters are mirrored into the URL so screenshots and shared links preserve context.
+
 Recommended Worker behavior:
 
 - Require an authenticated web session for non-public metrics.
