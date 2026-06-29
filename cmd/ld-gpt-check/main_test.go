@@ -10,7 +10,12 @@ import (
 
 func TestNoArgsStartsWizard(t *testing.T) {
 	old := runWizard
-	defer func() { runWizard = old }()
+	oldUpdate := runAutoUpdateCheck
+	defer func() {
+		runWizard = old
+		runAutoUpdateCheck = oldUpdate
+	}()
+	runAutoUpdateCheck = func(ctx context.Context, lang i18n.Lang) bool { return false }
 
 	called := false
 	runWizard = func(ctx context.Context, opts wizard.Options) error {
@@ -34,7 +39,15 @@ func TestNoArgsStartsWizard(t *testing.T) {
 
 func TestHelpDoesNotStartWizard(t *testing.T) {
 	old := runWizard
-	defer func() { runWizard = old }()
+	oldUpdate := runAutoUpdateCheck
+	defer func() {
+		runWizard = old
+		runAutoUpdateCheck = oldUpdate
+	}()
+	runAutoUpdateCheck = func(ctx context.Context, lang i18n.Lang) bool {
+		t.Fatal("help should not check for updates")
+		return false
+	}
 
 	runWizard = func(ctx context.Context, opts wizard.Options) error {
 		t.Fatal("wizard should not start for help")

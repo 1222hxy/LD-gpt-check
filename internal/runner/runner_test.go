@@ -363,6 +363,66 @@ func TestAPIBackendRedactsKeyFromErrorBody(t *testing.T) {
 	}
 }
 
+func TestAPIBackendRetriesBrokenStream(t *testing.T) {
+	q := apiTestQuestion()
+	attempts := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"id": "chatcmpl_retry",
+			"choices": []map[string]any{{
+				"message": map[string]any{"content": "21"},
+			}},
+		})
+	})
+
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Timeout:          5 * time.Second,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIBaseURL:  "https://api.test/v1",
+		ModelAPIKey:      "secret-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{q},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || !summary.Cases[0].OK {
+		t.Fatalf("attempts=%d case=%#v", attempts, summary.Cases[0])
+	}
+}
+
+func TestAPIBackendAuthFailureHint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return textResponse(http.StatusUnauthorized, "invalid token"), nil
+	})
+
+	_, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIBaseURL:  "https://api.test/v1",
+		ModelAPIKey:      "secret-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{apiTestQuestion()},
+	})
+	if err == nil {
+		t.Fatal("expected auth error")
+	}
+	if !strings.Contains(err.Error(), "认证失败") || !strings.Contains(err.Error(), "Key") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

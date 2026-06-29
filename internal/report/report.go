@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
 )
 
@@ -58,6 +59,7 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 			fmt.Fprintln(w, Colorize(l.S("run_status_start", model, effort, ev.Total), colorCyan, color))
 		case runner.ProgressCaseStart:
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_start", ev.Current, ev.Total, ev.Question.ID, ev.TestIndex), colorBlue, color))
+			printQuestionPrompt(w, l, ev.Question, l.S("run_status_question"), color)
 		case runner.ProgressCaseDone:
 			label := Colorize("FAIL", colorRed, color)
 			if ev.CaseResult.OK {
@@ -66,8 +68,21 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 			fmt.Fprintln(w, l.S("run_status_case_done", ev.Current, ev.Total, label, ev.CaseResult.TimeSeconds, ev.CaseResult.TPS))
 		case runner.ProgressCaseError:
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_error", ev.Current, ev.Total, ev.Error), colorRed, color))
+			printQuestionPrompt(w, l, ev.Question, l.S("run_status_failed_question"), color)
 		}
 	}
+}
+
+func printQuestionPrompt(w io.Writer, l i18n.Localizer, q questions.Question, label string, color bool) {
+	if strings.TrimSpace(q.Prompt) == "" {
+		return
+	}
+	title := q.Title
+	if strings.TrimSpace(title) == "" {
+		title = q.ID
+	}
+	fmt.Fprintln(w, Colorize(fmt.Sprintf(label, title), colorYellow, color))
+	fmt.Fprintln(w, q.Prompt)
 }
 
 func PrintBanner(w io.Writer, title, subtitle string, color bool) {

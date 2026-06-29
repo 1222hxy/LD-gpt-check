@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
 )
 
@@ -56,3 +57,51 @@ func TestPrintSummaryPanelIncludesMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintProgressErrorIncludesQuestionPrompt(t *testing.T) {
+	var out bytes.Buffer
+	progress := PrintProgress(&out, i18n.ZH, "gpt-5.4", "medium", false)
+	progress(runner.ProgressEvent{
+		Type:    runner.ProgressCaseError,
+		Current: 1,
+		Total:   1,
+		Question: questions.Question{
+			ID:     "q1",
+			Title:  "原题标题",
+			Prompt: "这里是完整原题内容",
+		},
+		Error: assertError("boom"),
+	})
+	text := out.String()
+	for _, want := range []string{"运行失败", "失败题目：原题标题", "这里是完整原题内容"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("progress output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrintProgressStartIncludesQuestionPrompt(t *testing.T) {
+	var out bytes.Buffer
+	progress := PrintProgress(&out, i18n.ZH, "gpt-5.4", "medium", false)
+	progress(runner.ProgressEvent{
+		Type:      runner.ProgressCaseStart,
+		Current:   1,
+		Total:     1,
+		TestIndex: 1,
+		Question: questions.Question{
+			ID:     "q1",
+			Title:  "原题标题",
+			Prompt: "这里是完整原题内容",
+		},
+	})
+	text := out.String()
+	for _, want := range []string{"正在运行", "测试题目：原题标题", "这里是完整原题内容"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("progress output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+type assertError string
+
+func (e assertError) Error() string { return string(e) }

@@ -3,7 +3,10 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -23,6 +26,7 @@ const (
 	envModelAPIBaseURL   = "LD_GPT_CHECK_MODEL_API_BASE_URL"
 	envModelAPIFormat    = "LD_GPT_CHECK_API_FORMAT"
 	apiResponseBodyLimit = 4096
+	apiMaxAttempts       = 3
 )
 
 type apiBackend struct {
@@ -103,6 +107,38 @@ func (b *apiBackend) runOne(ctx context.Context, opts Options, q questions.Quest
 }
 
 func (b *apiBackend) request(ctx context.Context, opts Options, prompt string) (ParsedEvents, error) {
+	var resp *resty.Response
+	var err error
+	for attempt := 1; attempt <= apiMaxAttempts; attempt++ {
+		resp, err = b.doRequest(ctx, opts, prompt)
+		if !shouldRetryAPI(resp, err) || attempt == apiMaxAttempts {
+			break
+		}
+		if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*500*time.Millisecond); sleepErr != nil {
+			return ParsedEvents{}, sleepErr
+		}
+	}
+	if err != nil {
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_failed", classifyTransportError(err, opts.Lang)))
+	}
+	if resp.IsError() {
+		status := resp.StatusCode()
+		preview := bodyPreview(resp.Body(), b.apiKey)
+		if status == httpStatusUnauthorized || status == httpStatusForbidden {
+			return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_auth_failed", status, preview))
+		}
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_status_failed", status, preview))
+	}
+	var obj map[string]any
+	dec := json.NewDecoder(strings.NewReader(string(resp.Body())))
+	dec.UseNumber()
+	if err := dec.Decode(&obj); err != nil {
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_decode_failed", err))
+	}
+	return parseAPIResponse(b.format, obj), nil
+}
+
+func (b *apiBackend) doRequest(ctx context.Context, opts Options, prompt string) (*resty.Response, error) {
 	req := b.client.R().
 		SetContext(ctx).
 		SetBody(b.requestBody(prompt, opts.ReasoningEffort))
@@ -112,20 +148,53 @@ func (b *apiBackend) request(ctx context.Context, opts Options, prompt string) (
 	} else {
 		req.SetHeader("Authorization", "Bearer "+b.apiKey)
 	}
-	resp, err := req.Post(b.endpointURL)
+	return req.Post(b.endpointURL)
+}
+
+const (
+	httpStatusUnauthorized = 401
+	httpStatusForbidden    = 403
+	httpStatusTooMany      = 429
+)
+
+func shouldRetryAPI(resp *resty.Response, err error) bool {
 	if err != nil {
-		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_failed", err))
+		return retryableTransportError(err)
 	}
-	if resp.IsError() {
-		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_status_failed", resp.StatusCode(), bodyPreview(resp.Body(), b.apiKey)))
+	if resp == nil {
+		return false
 	}
-	var obj map[string]any
-	dec := json.NewDecoder(strings.NewReader(string(resp.Body())))
-	dec.UseNumber()
-	if err := dec.Decode(&obj); err != nil {
-		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_decode_failed", err))
+	status := resp.StatusCode()
+	return status == httpStatusTooMany || status == 408 || status >= 500
+}
+
+func retryableTransportError(err error) bool {
+	if err == nil {
+		return false
 	}
-	return parseAPIResponse(b.format, obj), nil
+	if err == io.EOF || strings.Contains(strings.ToLower(err.Error()), "unexpected eof") || strings.Contains(strings.ToLower(err.Error()), "connection reset") {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
+}
+
+func classifyTransportError(err error, lang i18n.Lang) string {
+	if retryableTransportError(err) {
+		return i18n.New(lang).S("runner_api_retry_exhausted", err)
+	}
+	return err.Error()
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (b *apiBackend) requestBody(prompt, effort string) map[string]any {

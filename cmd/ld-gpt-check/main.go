@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime"
@@ -19,12 +21,16 @@ import (
 	"github.com/1222hxy/LD-gpt-check/internal/report"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
 	"github.com/1222hxy/LD-gpt-check/internal/system"
+	"github.com/1222hxy/LD-gpt-check/internal/updater"
 	"github.com/1222hxy/LD-gpt-check/internal/wizard"
+	"golang.org/x/term"
 )
 
-var version = "0.2.1"
+var version = "0.2.3"
+var assetSuffix = ""
 
 var runWizard = wizard.Run
+var runAutoUpdateCheck = autoUpdateCheck
 
 func main() {
 	lang := currentLang()
@@ -42,6 +48,11 @@ func main() {
 
 func run(ctx context.Context, args []string, lang i18n.Lang) error {
 	l := i18n.New(lang)
+	if shouldAutoCheck(args) {
+		if updated := runAutoUpdateCheck(ctx, lang); updated {
+			return nil
+		}
+	}
 	if len(args) == 0 {
 		return runWizard(ctx, wizard.Options{Version: version, Lang: lang})
 	}
@@ -58,6 +69,8 @@ func run(ctx context.Context, args []string, lang i18n.Lang) error {
 		return configCmd(ctx, args[1:], lang)
 	case "logout":
 		return logoutCmd(ctx, args[1:], lang)
+	case "update":
+		return updateCmd(ctx, args[1:], lang)
 	case "version", "--version", "-v":
 		fmt.Println(version)
 		return nil
@@ -67,6 +80,117 @@ func run(ctx context.Context, args []string, lang i18n.Lang) error {
 	default:
 		return fmt.Errorf("%s", l.S("unknown_command", args[0]))
 	}
+}
+
+func shouldAutoCheck(args []string) bool {
+	if updater.NoUpdateDisabled() {
+		return false
+	}
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "version", "--version", "-v", "help", "-h", "--help", "config", "update":
+		return false
+	default:
+		return true
+	}
+}
+
+func autoUpdateCheck(ctx context.Context, lang i18n.Lang) bool {
+	l := i18n.New(lang)
+	client := updater.Client{CurrentVersion: version, AssetSuffix: assetSuffix}
+	if !client.ShouldCheck() {
+		return false
+	}
+	result, err := client.Check(ctx)
+	client.MarkChecked()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, l.S("update_check_failed", err))
+		return false
+	}
+	if !result.UpdateAvailable {
+		return false
+	}
+	if !isTerminal(os.Stdin) {
+		fmt.Fprintln(os.Stderr, l.S("update_available_noninteractive", result.LatestVersion, version, result.GitHubAssetURL))
+		return false
+	}
+	if !promptUpdate(bufio.NewReader(os.Stdin), os.Stderr, l, result) {
+		return false
+	}
+	return installUpdate(ctx, client, result, l, os.Stderr)
+}
+
+func updateCmd(ctx context.Context, args []string, lang i18n.Lang) error {
+	l := i18n.New(lang)
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	yes := fs.Bool("yes", false, l.S("flag_update_yes"))
+	checkOnly := fs.Bool("check-only", false, l.S("flag_update_check_only"))
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%s", l.S("unexpected_args", fs.Args()))
+	}
+	client := updater.Client{CurrentVersion: version, AssetSuffix: assetSuffix}
+	result, err := client.Check(ctx)
+	client.MarkChecked()
+	if err != nil {
+		return err
+	}
+	if !result.UpdateAvailable {
+		fmt.Println(l.S("update_none", version))
+		return nil
+	}
+	if *checkOnly {
+		fmt.Println(l.S("update_available", result.LatestVersion, version, result.GitHubAssetURL))
+		return nil
+	}
+	if !*yes {
+		if !isTerminal(os.Stdin) {
+			fmt.Println(l.S("update_available_noninteractive", result.LatestVersion, version, result.GitHubAssetURL))
+			return nil
+		}
+		if !promptUpdate(bufio.NewReader(os.Stdin), os.Stdout, l, result) {
+			fmt.Println(l.S("update_declined"))
+			return nil
+		}
+	}
+	if !installUpdate(ctx, client, result, l, os.Stdout) {
+		return fmt.Errorf("%s", l.S("update_install_failed"))
+	}
+	return nil
+}
+
+func promptUpdate(r *bufio.Reader, out io.Writer, l i18n.Localizer, result updater.CheckResult) bool {
+	fmt.Fprintf(out, "%s [%s]: ", l.S("update_available_prompt", result.LatestVersion, result.CurrentVersion), l.BoolSuffix(false))
+	answer, err := r.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false
+	}
+	yes, parsed := i18n.ParseBoolInput(answer, false)
+	return parsed && yes
+}
+
+func installUpdate(ctx context.Context, client updater.Client, result updater.CheckResult, l i18n.Localizer, out io.Writer) bool {
+	fmt.Fprintln(out, l.S("update_downloading", result.LatestVersion))
+	status, err := client.Install(ctx, result)
+	if err != nil {
+		fmt.Fprintln(out, l.S("update_install_error", err))
+		return false
+	}
+	if status == "pending" {
+		fmt.Fprintln(out, l.S("update_windows_pending", result.LatestVersion))
+	} else {
+		fmt.Fprintln(out, l.S("update_success_restart", result.LatestVersion))
+	}
+	return true
+}
+
+func isTerminal(f *os.File) bool {
+	return f != nil && term.IsTerminal(int(f.Fd()))
 }
 
 func wizardCmd(ctx context.Context, args []string, lang i18n.Lang) error {
