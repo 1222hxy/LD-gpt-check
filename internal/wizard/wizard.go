@@ -243,12 +243,22 @@ func Run(ctx context.Context, opts Options) error {
 
 func promptQuestion(ctx context.Context, r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool, apiBase string) (questions.Question, error) {
 	choices := append([]questions.Question(nil), questions.Builtin()...)
+	seen := make(map[string]bool, len(choices))
+	for _, q := range choices {
+		seen[q.ID] = true
+	}
 	remoteURL := strings.TrimRight(apiBase, "/") + "/api/v1/questions"
 	remote, err := loadRemoteQuestions(ctx, remoteURL, true)
 	if err != nil {
 		report.PrintWarning(out, l.S("wizard_questions_remote_failed", err), color)
 	} else {
-		choices = append(choices, remote...)
+		for _, q := range remote {
+			if seen[q.ID] {
+				continue
+			}
+			seen[q.ID] = true
+			choices = append(choices, q)
+		}
 	}
 
 	for i, q := range choices {
