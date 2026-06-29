@@ -226,11 +226,11 @@
                 <div class="form-grid">
                   <label><span>名称</span><input name="name" maxlength="128" placeholder="例如 Linux.do Bridge" required /></label>
                   <label><span>Slug</span><input name="slug" maxlength="64" placeholder="自动从名称生成" /></label>
-                  <label><span>Icon URL</span><input name="icon_url" maxlength="512" placeholder="可从第一个 URL 读取" /></label>
+                  <label><span>Icon / 缓存图标</span><input name="icon_url" maxlength="98304" placeholder="自动抓取并缓存，必要时也可粘贴 URL" /></label>
                   <label><span>主页 URL</span><input name="homepage_url" maxlength="512" placeholder="https://example.com/" /></label>
                 </div>
                 <label style="margin-top: 12px"><span>描述</span><input name="description" maxlength="300" placeholder="自动从网页 description / og:description 填充" /></label>
-                <label style="margin-top: 12px"><span>Base URLs（每行一个，可粘贴逗号分隔）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1" required></textarea></label>
+                <label style="margin-top: 12px"><span>Base URLs（每行一个，可粘贴逗号分隔，可稍后拖入候选）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1"></textarea></label>
                 <div class="form-grid" style="margin-top: 10px">
                   <label><span>状态</span><select name="status"><option value="confirmed">已确认</option><option value="pending">待确认</option><option value="hidden">隐藏</option></select></label>
                   <label><span>主要 Base URL</span><input name="primary_base_url" maxlength="256" placeholder="默认使用第一条" /></label>

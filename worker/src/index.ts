@@ -24,6 +24,7 @@ const MAX_ATTEMPTS = 500;
 const MAX_STRING_LENGTH = 128;
 const MAX_BASE_URL_LENGTH = 256;
 const MAX_URL_LENGTH = 512;
+const MAX_ICON_VALUE_LENGTH = 96 * 1024;
 const MAX_PREVIEW_LENGTH = 300;
 const MAX_METADATA_LENGTH = 2048;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -344,33 +345,35 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
   const status = normalizeBridgeStatus(body.status, body.is_active === false ? "hidden" : "confirmed");
   const isActive = status === "hidden" || status === "merged" || body.is_active === false ? 0 : 1;
   const baseURLs = normalizeBridgeBaseURLs(body.base_urls);
-  if (baseURLs.length < 1) return jsonError("at least one valid https base_url is required", 400, "bad_request");
-  const iconURL = normalizeIconValue(str(body.icon_url, MAX_URL_LENGTH));
+  const iconURL = normalizeIconValue(str(body.icon_url, MAX_ICON_VALUE_LENGTH));
   const homepageURL = normalizePublicHTTPURL(str(body.homepage_url, MAX_URL_LENGTH));
+  if (baseURLs.length < 1 && !homepageURL) return jsonError("at least one valid https base_url or homepage_url is required", 400, "bad_request");
   const description = str(body.description, MAX_PREVIEW_LENGTH).trim();
   const canonicalURL = normalizePublicHTTPURL(str(body.canonical_url, MAX_URL_LENGTH));
   const ogImageURL = normalizePublicHTTPURL(str(body.og_image_url, MAX_URL_LENGTH));
   const rootDomain = rootDomainFromURL(homepageURL) || baseURLs[0]?.rootDomain || "";
   const suggestionID = str(body.suggestion_id, MAX_STRING_LENGTH);
 
-  const conflict = await env.DB.prepare(
-    `SELECT bridge_base_urls.base_url, bridges.name
-     FROM bridge_base_urls
-     JOIN bridges ON bridges.id = bridge_base_urls.bridge_id
-     WHERE bridge_base_urls.base_url IN (${baseURLs.map(() => "?").join(",")})
-       AND bridges.slug != ?`
-  )
-    .bind(...baseURLs.map((item) => item.baseURL), slug)
-    .first<any>();
-  if (conflict?.base_url) {
-    return jsonError(`base_url already belongs to ${conflict.name}`, 409, "conflict");
+  if (baseURLs.length > 0) {
+    const conflict = await env.DB.prepare(
+      `SELECT bridge_base_urls.base_url, bridges.name
+       FROM bridge_base_urls
+       JOIN bridges ON bridges.id = bridge_base_urls.bridge_id
+       WHERE bridge_base_urls.base_url IN (${baseURLs.map(() => "?").join(",")})
+         AND bridges.slug != ?`
+    )
+      .bind(...baseURLs.map((item) => item.baseURL), slug)
+      .first<any>();
+    if (conflict?.base_url) {
+      return jsonError(`base_url already belongs to ${conflict.name}`, 409, "conflict");
+    }
   }
 
   const now = iso(new Date());
   const existing = await env.DB.prepare(`SELECT id FROM bridges WHERE slug = ?`).bind(slug).first<any>();
   const bridgeID = existing?.id || crypto.randomUUID();
   const primaryBaseURL = str(body.primary_base_url || baseURLs[0]?.baseURL || "", MAX_BASE_URL_LENGTH);
-  const primaryBaseURLID = crypto.randomUUID();
+  const primaryBaseURLID = primaryBaseURL ? crypto.randomUUID() : "";
   const statements = [
     env.DB.prepare(
       `INSERT INTO bridges
@@ -389,7 +392,7 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
          confidence = excluded.confidence,
          is_active = excluded.is_active,
          updated_at = excluded.updated_at`
-    ).bind(bridgeID, name, slug, iconURL, homepageURL, description, status, primaryBaseURLID, rootDomain, canonicalURL, ogImageURL, 100, isActive, now, now),
+    ).bind(bridgeID, name, slug, iconURL, homepageURL, description, status, primaryBaseURLID || null, rootDomain, canonicalURL, ogImageURL, 100, isActive, now, now),
     env.DB.prepare(`UPDATE bridge_base_urls SET is_active = 0, updated_at = ? WHERE bridge_id = ?`).bind(now, bridgeID),
   ];
   baseURLs.forEach((item, index) => {
@@ -414,7 +417,9 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
       ).bind(baseURLID, bridgeID, item.baseURL, item.host, item.rootDomain, item.path, item.baseURL === primaryBaseURL ? 1 : 0, index, now, now)
     );
   });
-  statements.push(env.DB.prepare(`UPDATE bridges SET primary_base_url_id = COALESCE((SELECT id FROM bridge_base_urls WHERE bridge_id = ? AND base_url = ?), primary_base_url_id) WHERE id = ?`).bind(bridgeID, primaryBaseURL, bridgeID));
+  if (primaryBaseURL) {
+    statements.push(env.DB.prepare(`UPDATE bridges SET primary_base_url_id = COALESCE((SELECT id FROM bridge_base_urls WHERE bridge_id = ? AND base_url = ?), primary_base_url_id) WHERE id = ?`).bind(bridgeID, primaryBaseURL, bridgeID));
+  }
   if (suggestionID) {
     statements.push(
       env.DB.prepare(`UPDATE bridge_suggestions SET status = 'approved', bridge_id = ?, updated_at = ? WHERE id = ?`).bind(bridgeID, now, suggestionID)
@@ -2517,10 +2522,26 @@ async function fetchBridgePageInfo(homepageURL: string): Promise<{ title: string
       iconURL = (await firstReachableIconURL(iconCandidate, finalURL)) || "";
     }
     if (!iconURL) iconURL = (await firstReachableIconURL("", finalURL)) || "";
+    if (iconURL) iconURL = (await cachedIconDataURI(iconURL)) || iconURL;
   } catch {
     iconURL = "";
   }
   return { title, ogTitle, description, canonicalURL, ogImageURL, iconURL };
+}
+
+async function cachedIconDataURI(iconURL: string): Promise<string> {
+  try {
+    const resp = await safeMetadataFetch(iconURL, { method: "GET", maxBytes: 64 * 1024, timeoutMS: 5000 });
+    if (!resp.ok) return "";
+    const contentType = (resp.headers.get("content-type") || "image/png").split(";")[0].trim().toLowerCase();
+    if (!/^image\/(png|jpe?g|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon)$/.test(contentType)) return "";
+    const bytes = await responseBytesLimit(resp, 64 * 1024);
+    if (!bytes.length) return "";
+    const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    return `data:${contentType};base64,${btoa(binary)}`;
+  } catch {
+    return "";
+  }
 }
 
 async function responseTextLimit(response: Response, maxBytes: number): Promise<string> {
@@ -2547,6 +2568,32 @@ async function responseTextLimit(response: Response, maxBytes: number): Promise<
     offset += chunk.byteLength;
   }
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+async function responseBytesLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (total < maxBytes) {
+    const { value, done } = await reader.read();
+    if (done || !value) break;
+    if (total + value.byteLength > maxBytes) throw new Error("response body is too large");
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  try {
+    await reader.cancel();
+  } catch {
+    // Ignore cancellation failures.
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function extractTitle(htmlText: string): string {
@@ -2776,7 +2823,8 @@ function privateHostname(hostname: string): boolean {
     const [a, b] = h.split(".").map((part) => Number(part));
     return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 0 || a >= 224;
   }
-  if (h === "::1" || h.startsWith("[::1]")) return true;
+  const ipv6 = h.replace(/^\[|\]$/g, "");
+  if (ipv6 === "::1" || ipv6.startsWith("fc") || ipv6.startsWith("fd") || ipv6.startsWith("fe80:") || ipv6.startsWith("::ffff:127.") || ipv6.startsWith("::ffff:10.") || ipv6.startsWith("::ffff:192.168.")) return true;
   return false;
 }
 
@@ -2821,9 +2869,9 @@ function normalizeBridgeStatus(value: unknown, fallback = "confirmed"): string {
 }
 
 function normalizeIconValue(value: string): string {
-  const trimmed = str(value, MAX_URL_LENGTH).trim();
+  const trimmed = str(value, MAX_ICON_VALUE_LENGTH).trim();
   if (!trimmed) return "";
-  if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,[a-z0-9+/=]+$/i.test(trimmed) && trimmed.length <= 64 * 1024) return trimmed;
+  if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,[a-z0-9+/=]+$/i.test(trimmed) && trimmed.length <= MAX_ICON_VALUE_LENGTH) return trimmed;
   return normalizePublicHTTPURL(trimmed);
 }
 
