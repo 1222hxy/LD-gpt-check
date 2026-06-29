@@ -305,4 +305,7 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	if !strings.Contains(out.String(), "API 模式") || !strings.Contains(out.String(), "临时 API Key") {
 		t.Fatalf("missing API prompts:\n%s", out.String())
 	}
+	if got := strings.Count(out.String(), "不使用任何外部工具回答以下问题"); got != 1 {
+		t.Fatalf("question prompt should print once, got %d:\n%s", got, out.String())
+	}
 }
