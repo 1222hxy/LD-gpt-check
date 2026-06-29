@@ -71,7 +71,7 @@ export default {
 
       if (request.method === "GET" && matches(path, "/", "/account")) return withCommonHeaders(await accountPage(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/admin") return withCommonHeaders(await adminPage(request, env), request, env, requestID);
-      if (matches(request.method, "GET", "HEAD") && matches(path, "/admin/questions", "/admin/bridges")) return withCommonHeaders(await adminStaticPage(request, env), request, env, requestID);
+      if (matches(request.method, "GET", "HEAD") && matches(path, "/admin/questions", "/admin/questions/", "/admin/bridges", "/admin/bridges/")) return withCommonHeaders(await adminStaticPage(request, env), request, env, requestID);
       if (matches(request.method, "GET", "HEAD") && path === "/dashboard") return withCommonHeaders(redirect("/dashboard/"), request, env, requestID);
       if (request.method === "GET" && path === "/health") return withCommonHeaders(json({ ok: true }), request, env, requestID);
       if (request.method === "GET" && matches(path, "/api/questions", "/api/v1/questions")) return withCommonHeaders(await publicQuestions(request, env), request, env, requestID);
@@ -1954,7 +1954,9 @@ function knownPath(path: string): boolean {
     "/admin",
     "/dashboard",
     "/admin/questions",
+    "/admin/questions/",
     "/admin/bridges",
+    "/admin/bridges/",
     "/health",
     "/api/questions",
     "/api/v1/questions",
