@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS bridges (
   slug TEXT NOT NULL UNIQUE,
   icon_url TEXT NOT NULL DEFAULT '',
   homepage_url TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'confirmed',
+  primary_base_url_id TEXT,
+  root_domain TEXT NOT NULL DEFAULT '',
+  canonical_url TEXT NOT NULL DEFAULT '',
+  og_image_url TEXT NOT NULL DEFAULT '',
+  usage_count INTEGER NOT NULL DEFAULT 0,
+  user_count INTEGER NOT NULL DEFAULT 0,
+  confidence INTEGER NOT NULL DEFAULT 100,
+  last_seen_at TEXT,
+  merged_into_bridge_id TEXT,
+  merge_suppressed INTEGER NOT NULL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -101,6 +113,14 @@ CREATE TABLE IF NOT EXISTS bridge_base_urls (
   bridge_id TEXT NOT NULL,
   base_url TEXT NOT NULL UNIQUE,
   host TEXT NOT NULL,
+  root_domain TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  usage_count INTEGER NOT NULL DEFAULT 0,
+  last_seen_at TEXT,
+  confidence INTEGER NOT NULL DEFAULT 100,
+  source TEXT NOT NULL DEFAULT 'admin',
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -115,7 +135,18 @@ CREATE TABLE IF NOT EXISTS bridge_suggestions (
   source TEXT NOT NULL,
   submitted_name TEXT,
   page_title TEXT,
+  page_description TEXT NOT NULL DEFAULT '',
   icon_url TEXT,
+  homepage_url TEXT NOT NULL DEFAULT '',
+  canonical_url TEXT NOT NULL DEFAULT '',
+  og_image_url TEXT NOT NULL DEFAULT '',
+  detected_name TEXT NOT NULL DEFAULT '',
+  root_domain TEXT NOT NULL DEFAULT '',
+  confidence INTEGER NOT NULL DEFAULT 0,
+  candidate_bridge_id TEXT,
+  candidate_bridge_name TEXT NOT NULL DEFAULT '',
+  candidate_reason TEXT NOT NULL DEFAULT '',
+  user_count INTEGER NOT NULL DEFAULT 1,
   status TEXT NOT NULL DEFAULT 'pending',
   occurrence_count INTEGER NOT NULL DEFAULT 1,
   bridge_id TEXT,
@@ -124,6 +155,26 @@ CREATE TABLE IF NOT EXISTS bridge_suggestions (
   last_seen_at TEXT NOT NULL,
   FOREIGN KEY(user_id) REFERENCES users(id),
   FOREIGN KEY(bridge_id) REFERENCES bridges(id)
+);
+
+CREATE TABLE IF NOT EXISTS bridge_merge_ignores (
+  id TEXT PRIMARY KEY,
+  bridge_a_id TEXT NOT NULL,
+  bridge_b_id TEXT NOT NULL,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bridge_admin_events (
+  id TEXT PRIMARY KEY,
+  admin_user_id TEXT,
+  action TEXT NOT NULL,
+  bridge_id TEXT,
+  target_bridge_id TEXT,
+  suggestion_id TEXT,
+  base_url TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS benchmark_question_results (
@@ -234,3 +285,8 @@ CREATE INDEX IF NOT EXISTS idx_bridge_base_urls_host ON bridge_base_urls(host, i
 CREATE INDEX IF NOT EXISTS idx_benchmark_submissions_channel ON benchmark_submissions(codex_channel, created_at);
 CREATE INDEX IF NOT EXISTS idx_bridge_suggestions_status ON bridge_suggestions(status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_bridge_suggestions_host ON bridge_suggestions(host, status);
+CREATE INDEX IF NOT EXISTS idx_bridges_status ON bridges(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_bridges_root_domain ON bridges(root_domain, status);
+CREATE INDEX IF NOT EXISTS idx_bridge_base_urls_root_domain ON bridge_base_urls(root_domain, is_active);
+CREATE INDEX IF NOT EXISTS idx_bridge_suggestions_root_domain ON bridge_suggestions(root_domain, status);
+CREATE INDEX IF NOT EXISTS idx_bridge_suggestions_candidate ON bridge_suggestions(candidate_bridge_id, status);
