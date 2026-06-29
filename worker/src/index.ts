@@ -1911,11 +1911,12 @@ function withCommonHeaders(response: Response, request: Request, env: Env, reque
     const scriptNonce = headers.get("x-ldgc-script-nonce") || "";
     headers.delete("x-ldgc-script-nonce");
     const scriptSrc = scriptNonce
-      ? `script-src 'self' 'nonce-${scriptNonce}' https://challenges.cloudflare.com`
-      : "script-src 'self' https://challenges.cloudflare.com";
+      ? `script-src 'self' 'nonce-${scriptNonce}' https://challenges.cloudflare.com https://static.cloudflareinsights.com`
+      : "script-src 'self' https://challenges.cloudflare.com https://static.cloudflareinsights.com";
+    const connectSrc = "connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com";
     headers.set(
       "content-security-policy",
-      `default-src 'none'; ${scriptSrc}; style-src 'unsafe-inline'; img-src 'self' data: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
+      `default-src 'none'; ${scriptSrc}; style-src 'unsafe-inline'; img-src 'self' data: https:; frame-src https://challenges.cloudflare.com; ${connectSrc}; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
     );
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
