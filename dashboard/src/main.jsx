@@ -260,7 +260,7 @@ function StatisticsPanel({ statistics }) {
       meta: `n=${statistics.latency.sampleSize.toLocaleString("zh-CN")}，中位数 ${statistics.latency.median}s`,
     },
     {
-      label: "回归 z 检验",
+      label: "趋势 z 检验",
       value: statistics.regression.verdict === "insufficient" ? "数据不足" : `z=${statistics.regression.zScore}`,
       meta: `p=${formatPValue(statistics.regression.pValue)}，${verdictLabel(statistics.regression.verdict)}`,
     },
@@ -336,7 +336,7 @@ function TestPanel({ coverage }) {
           <strong>{coverage.watchCount}</strong>
         </div>
         <div className="mini-stat">
-          <span>回退项</span>
+          <span title="最近提交中状态低于健康阈值的样本数量。">表现下降项</span>
           <strong>{coverage.regressionCount}</strong>
         </div>
         <div className="mini-stat">
@@ -1174,6 +1174,7 @@ function RecentPanel({ submissions }) {
               <th>准确率</th>
               <th>题数</th>
               <th>平均耗时</th>
+              <th>渠道 / 中转站</th>
               <th>状态</th>
               <th>时间</th>
             </tr>
@@ -1190,6 +1191,9 @@ function RecentPanel({ submissions }) {
                 <td>{submission.questionCount}</td>
                 <td>{submission.avgTimeSeconds}s</td>
                 <td>
+                  <ChannelCell submission={submission} />
+                </td>
+                <td>
                   <StatusBadge status={submission.status} />
                 </td>
                 <td>{relativeTime(submission.createdAt)}</td>
@@ -1200,6 +1204,37 @@ function RecentPanel({ submissions }) {
       </div>
     </Panel>
   );
+}
+
+function ChannelCell({ submission }) {
+  const label = submission.channelLabel || channelDisplayLabel(submission);
+  const detail = submission.codexProviderHost || hostFromURL(submission.codexProviderBaseURL) || "";
+  return (
+    <div className="channel-cell" title={submission.codexProviderBaseURL || detail || label}>
+      <strong>{label}</strong>
+      {detail && !label.includes(detail) ? <span>{detail}</span> : null}
+    </div>
+  );
+}
+
+function channelDisplayLabel(submission) {
+  const host = submission.codexProviderHost || hostFromURL(submission.codexProviderBaseURL);
+  if (submission.codexChannel === "official") return host ? `官方 API (${host})` : "官方 API";
+  if (submission.codexChannel === "bridge") {
+    const name = submission.codexBridgeName || "中转站";
+    return host ? `${name} (${host})` : name;
+  }
+  if (submission.codexChannel === "unknown_bridge") return host ? `未识别中转站 (${host})` : "未识别中转站";
+  return host || "未记录渠道";
+}
+
+function hostFromURL(value) {
+  if (!value) return "";
+  try {
+    return new URL(value).host.toLowerCase();
+  } catch {
+    return "";
+  }
 }
 
 function SubmissionUserCell({ user }) {
@@ -1292,7 +1327,7 @@ function Progress({ value }) {
 }
 
 function StatusBadge({ status, label }) {
-  label = label || (status === "healthy" ? "稳定" : status === "watch" ? "观察" : "回退");
+  label = label || (status === "healthy" ? "稳定" : status === "watch" ? "观察" : "表现下降");
   return <span className={`status-badge status-${status}`}>{label}</span>;
 }
 
@@ -1363,7 +1398,7 @@ function formatPValue(value) {
 function verdictLabel(value) {
   if (value === "insufficient") return "样本不足";
   if (value === "improved") return "显著提升";
-  if (value === "regression") return "显著回退";
+  if (value === "regression") return "显著下降";
   return "未见显著差异";
 }
 

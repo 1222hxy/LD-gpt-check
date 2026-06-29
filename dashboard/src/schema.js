@@ -56,6 +56,11 @@ const RecentSubmissionSchema = z.object({
   avgTimeSeconds: z.number(),
   createdAt: z.string(),
   status: StatusSchema,
+  codexChannel: z.string().optional(),
+  codexBridgeName: z.string().optional(),
+  codexProviderBaseURL: z.string().optional(),
+  codexProviderHost: z.string().optional(),
+  channelLabel: z.string().optional(),
 });
 
 const SegmentSchema = z.object({

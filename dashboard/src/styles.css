@@ -438,6 +438,18 @@
     @apply bg-stone-200 text-stone-600;
   }
 
+  .channel-cell {
+    @apply min-w-[150px];
+  }
+
+  .channel-cell strong {
+    @apply block max-w-[220px] truncate text-sm font-semibold text-stone-900;
+  }
+
+  .channel-cell span {
+    @apply mt-1 block max-w-[220px] truncate text-xs text-stone-400;
+  }
+
   .progress-cell {
     @apply grid min-w-[132px] grid-cols-[42px_minmax(70px,1fr)] items-center gap-2;
   }

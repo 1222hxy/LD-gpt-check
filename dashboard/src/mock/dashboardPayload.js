@@ -19,6 +19,11 @@ const QUESTIONS = [
 
 const USERS = ["chen", "luna", "mika", "tang", "ops", "yu", "river", "lin"];
 const SEGMENTS = ["macOS", "Linux", "Windows", "CI Runner"];
+const PROVIDERS = [
+  { codexChannel: "official", codexBridgeName: "", codexProviderBaseURL: "https://api.openai.com/v1", codexProviderHost: "api.openai.com", channelLabel: "官方 API (api.openai.com)" },
+  { codexChannel: "bridge", codexBridgeName: "Krill AI", codexProviderBaseURL: "https://api.krill-ai.com/codex/v1", codexProviderHost: "api.krill-ai.com", channelLabel: "Krill AI (api.krill-ai.com)" },
+  { codexChannel: "unknown_bridge", codexBridgeName: "", codexProviderBaseURL: "https://relay.example.com/v1", codexProviderHost: "relay.example.com", channelLabel: "未识别中转站 (relay.example.com)" },
+];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
@@ -107,6 +112,7 @@ function buildRecentSubmissions(models) {
     const accuracy = clamp(profile.accuracy + Math.sin(index * 1.7) * 0.04, 0.65, 0.96);
     const username = USERS[index % USERS.length];
     const anonymous = index % 5 === 3;
+    const provider = PROVIDERS[index % PROVIDERS.length];
     return {
       id: `sub_${String(index + 1).padStart(3, "0")}`,
       user: anonymous
@@ -125,6 +131,7 @@ function buildRecentSubmissions(models) {
       avgTimeSeconds: round(profile.latency + (index % 4) * 0.8, 1),
       createdAt: new Date(now - index * 42 * 60 * 1000).toISOString(),
       status: accuracy > 0.86 ? "healthy" : accuracy > 0.78 ? "watch" : "regression",
+      ...provider,
     };
   });
 }

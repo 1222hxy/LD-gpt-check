@@ -26,7 +26,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.2.5"
+var version = "0.2.6"
 var assetSuffix = ""
 
 var runWizard = wizard.Run
@@ -348,6 +348,11 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 			fmt.Fprintf(out, l.S("uploaded_run")+"\n", id)
 		} else {
 			fmt.Fprintln(out, l.S("uploaded_run_no_id"))
+		}
+		if provider, _ := resp["provider"].(map[string]any); provider != nil {
+			if label, _ := provider["label"].(string); strings.TrimSpace(label) != "" {
+				fmt.Fprintf(out, l.S("uploaded_provider")+"\n", label)
+			}
 		}
 	}
 	return nil

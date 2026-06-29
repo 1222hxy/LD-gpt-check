@@ -695,7 +695,8 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     .first<any>();
   const recent = await env.DB.prepare(
     `SELECT benchmark_submissions.id, model, reasoning_effort, attempt_count, correct_count, accuracy, is_anonymous,
-            codex_channel, bridges.name AS codex_bridge_name, benchmark_submissions.created_at
+            codex_provider_base_url, codex_provider_host, codex_channel,
+            bridges.name AS codex_bridge_name, benchmark_submissions.created_at
      FROM benchmark_submissions
      LEFT JOIN bridges ON bridges.id = benchmark_submissions.codex_bridge_id
      WHERE user_id = ? ORDER BY benchmark_submissions.created_at DESC LIMIT 10`
@@ -710,7 +711,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
         <td>${escapeHTML(str(r.reasoning_effort || "-", 32))}</td>
         <td>${int(r.correct_count)}/${int(r.attempt_count)}</td>
         <td>${formatPercent(num(r.accuracy))}</td>
-        <td>${channelLabel(r.codex_channel, r.codex_bridge_name)}</td>
+        <td>${channelLabel(r.codex_channel, r.codex_bridge_name, r.codex_provider_base_url || r.codex_provider_host)}</td>
         <td>${r.is_anonymous ? "匿名" : "公开"}</td>
         <td>${escapeHTML(formatDate(r.created_at))}</td>
         <td>
@@ -749,7 +750,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     </section>
     <section class="panel">
       <h2>提交中转站</h2>
-      <p>如果你的 Codex 使用了中转站，可以提交 provider base URL。管理员审核后，后续上传会显示对应中转站标签。</p>
+      <p>如果你的 Codex 使用了中转站，可以提交 provider base URL。最近上传会先显示实际使用的主机；管理员审核映射后，会显示更准确的中转站名称。</p>
       <form method="post" action="/account/bridge-suggestions">
         <div class="actions">
           <input name="name" maxlength="128" placeholder="中转站名称，可选">
@@ -761,7 +762,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     <section class="panel">
       <h2>最近上传</h2>
       <p>这里只展示最后 10 条记录。删除操作只会删除你的测试数据，不会删除账号、网页会话或 CLI token。</p>
-      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>渠道</th><th>展示</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
+      ${rows ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>推理</th><th>正确</th><th>正确率</th><th>渠道 / 中转站</th><th>展示</th><th>时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p>还没有上传记录。</p>`}
       ${rows ? `<form class="delete-all" method="post" action="/account/submissions/delete-all">
         <label>清空全部测试数据：输入 <strong>DELETE</strong> 确认</label>
         <div class="actions"><input name="confirm" autocomplete="off" placeholder="DELETE"><button class="danger" type="submit">清空我的测试数据</button></div>
@@ -1060,7 +1061,18 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
     if (duplicate?.id) return json({ id: duplicate.id, duplicate: true });
     throw err;
   }
-  return json({ id: submissionID, duplicate: false });
+  return json({
+    id: submissionID,
+    duplicate: false,
+    provider: {
+      channel: provider.channel,
+      label: plainChannelLabel(provider.channel, provider.bridgeName, provider.baseURL || provider.host),
+      base_url: provider.baseURL,
+      host: provider.host,
+      bridge_id: provider.bridgeID,
+      bridge_name: provider.bridgeName,
+    },
+  });
 }
 
 async function listSubmissions(request: Request, env: Env): Promise<Response> {
@@ -1154,6 +1166,7 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
   const recentRows = await env.DB.prepare(
     `SELECT s.id, s.model, s.question_count, s.attempt_count, s.correct_count, s.accuracy,
             s.avg_time_seconds, s.is_anonymous, s.created_at,
+            s.codex_provider_base_url, s.codex_provider_host, s.codex_channel,
             users.username, users.login, users.name, users.avatar_url, users.avatar_template,
             bridges.name AS codex_bridge_name
      FROM benchmark_submissions s
@@ -1234,6 +1247,11 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     avgTimeSeconds: round(num(row.avg_time_seconds), 1),
     createdAt: str(row.created_at, MAX_STRING_LENGTH),
     status: dashboardStatus(ratio(row.accuracy)),
+    codexChannel: str(row.codex_channel || "unknown", 32),
+    codexBridgeName: str(row.codex_bridge_name || "", MAX_STRING_LENGTH),
+    codexProviderBaseURL: str(row.codex_provider_base_url || "", MAX_STRING_LENGTH),
+    codexProviderHost: str(row.codex_provider_host || "", MAX_STRING_LENGTH),
+    channelLabel: plainChannelLabel(row.codex_channel, row.codex_bridge_name, row.codex_provider_base_url || row.codex_provider_host),
   }));
   const segments = (segmentRows.results ?? []).map((row: any) => ({
     label: str(row.label || "未知", MAX_STRING_LENGTH),
@@ -1871,11 +1889,32 @@ function formatPercent(v: number): string {
   return `${v.toFixed(1)}%`;
 }
 
-function channelLabel(channel: unknown, bridgeName: unknown): string {
-  if (channel === "official") return "官方";
-  if (channel === "bridge") return escapeHTML(str(bridgeName || "中转站", MAX_STRING_LENGTH));
-  if (channel === "unknown_bridge") return "未知中转站";
-  return "-";
+function channelLabel(channel: unknown, bridgeName: unknown, providerBaseURLOrHost: unknown = ""): string {
+  return escapeHTML(plainChannelLabel(channel, bridgeName, providerBaseURLOrHost));
+}
+
+function plainChannelLabel(channel: unknown, bridgeName: unknown, providerBaseURLOrHost: unknown = ""): string {
+  const host = providerDisplayHost(providerBaseURLOrHost);
+  if (channel === "official") return host ? `官方 API (${host})` : "官方 API";
+  if (channel === "bridge") {
+    const name = str(bridgeName || "中转站", MAX_STRING_LENGTH);
+    return host ? `${name} (${host})` : name;
+  }
+  if (channel === "unknown_bridge") return host ? `未识别中转站 (${host})` : "未识别中转站";
+  const fallback = str(channel || "", 32);
+  return fallback ? (host ? `${fallback} (${host})` : fallback) : "-";
+}
+
+function providerDisplayHost(value: unknown): string {
+  const raw = str(value || "", MAX_URL_LENGTH);
+  if (!raw) return "";
+  const normalized = normalizeProviderBaseURL(raw);
+  if (normalized) return hostFromProviderBaseURL(normalized);
+  try {
+    return new URL(raw).host.toLowerCase();
+  } catch {
+    return raw.replace(/^https?:\/\//i, "").split("/")[0].toLowerCase();
+  }
 }
 
 function formatDate(v: unknown): string {
@@ -2258,11 +2297,22 @@ function normalizeProviderBaseURL(raw: unknown): string {
     url.password = "";
     url.search = "";
     url.hash = "";
-    url.pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = stripProviderEndpointPath(url.pathname).replace(/\/+$/, "");
     return url.toString().replace(/\/$/, "");
   } catch {
     return "";
   }
+}
+
+function stripProviderEndpointPath(pathname: string): string {
+  let path = pathname.replace(/\/+$/, "");
+  for (const suffix of ["/chat/completions", "/responses", "/messages", "/completions", "/complete"]) {
+    if (path.toLowerCase().endsWith(suffix)) {
+      path = path.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return path || "/";
 }
 
 function normalizePublicHTTPSURL(raw: unknown): string {
@@ -2319,7 +2369,12 @@ function hostFromProviderBaseURL(baseURL: string): string {
 }
 
 function officialProviderBaseURL(baseURL: string): boolean {
-  return baseURL === "https://api.openai.com" || baseURL === "https://api.openai.com/v1";
+  return (
+    baseURL === "https://api.openai.com" ||
+    baseURL === "https://api.openai.com/v1" ||
+    baseURL === "https://api.anthropic.com" ||
+    baseURL === "https://api.anthropic.com/v1"
+  );
 }
 
 function slugify(value: string): string {

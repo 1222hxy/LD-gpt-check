@@ -952,7 +952,7 @@ function buildTestCoverage(questionQuality, recentSubmissions) {
     suites: [
       { label: "单元测试", passed: 42, total: 42, status: "pass" },
       { label: "API contract", passed: 18, total: 18, status: "pass" },
-      { label: "回归样本", passed: passedAttempts, total: totalAttempts, status: regressionCount ? "watch" : "pass" },
+      { label: "题目样本", passed: passedAttempts, total: totalAttempts, status: regressionCount ? "watch" : "pass" },
       { label: "视觉冒烟", passed: 2, total: 2, status: "pass" },
     ],
     totalAttempts,
