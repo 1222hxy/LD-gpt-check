@@ -11,6 +11,7 @@ import (
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
+	"golang.org/x/term"
 )
 
 func PrintTable(s runner.Summary) {
@@ -97,8 +98,9 @@ func (s *streamLineState) write(w io.Writer, l i18n.Localizer, text string) {
 	}
 	s.last = now
 	s.active = true
+	preview := limitedStreamLine(s.buf, streamContentWidth(w, l))
 	fmt.Fprint(w, "\r\x1b[2K")
-	fmt.Fprint(w, Colorize(l.S("run_status_stream", limitedStreamLine(s.buf, 96)), colorGray, s.color))
+	fmt.Fprint(w, Colorize(l.S("run_status_stream", preview), colorGray, s.color))
 }
 
 func (s *streamLineState) reset(w io.Writer) {
@@ -114,13 +116,32 @@ func streamPreview(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-func limitedStreamLine(text string, maxRunes int) string {
+func limitedStreamLine(text string, maxWidth int) string {
 	text = streamPreview(text)
-	if maxRunes <= 0 || len([]rune(text)) <= maxRunes {
+	if maxWidth <= 0 || DisplayWidth(text) <= maxWidth {
 		return text
 	}
 	runes := []rune(text)
-	return "..." + string(runes[len(runes)-maxRunes:])
+	ellipsis := "..."
+	limit := maxWidth - DisplayWidth(ellipsis)
+	if limit <= 0 {
+		return strings.Repeat(".", maxWidth)
+	}
+	var b strings.Builder
+	used := 0
+	for i := len(runes) - 1; i >= 0; i-- {
+		rw := runeWidth(runes[i])
+		if used+rw > limit {
+			break
+		}
+		b.WriteRune(runes[i])
+		used += rw
+	}
+	tail := []rune(b.String())
+	for i, j := 0, len(tail)-1; i < j; i, j = i+1, j-1 {
+		tail[i], tail[j] = tail[j], tail[i]
+	}
+	return ellipsis + string(tail)
 }
 
 func isTerminalWriter(w io.Writer) bool {
@@ -130,6 +151,22 @@ func isTerminalWriter(w io.Writer) bool {
 	}
 	info, err := f.Stat()
 	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
+}
+
+func streamContentWidth(w io.Writer, l i18n.Localizer) int {
+	const fallbackColumns = 80
+	columns := fallbackColumns
+	if f, ok := w.(*os.File); ok {
+		if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 {
+			columns = width
+		}
+	}
+	prefixWidth := DisplayWidth(l.S("run_status_stream", ""))
+	available := columns - prefixWidth - 1
+	if available < 1 {
+		return 1
+	}
+	return available
 }
 
 func PrintQuestionPrompts(w io.Writer, lang i18n.Lang, qs []questions.Question, color bool) {

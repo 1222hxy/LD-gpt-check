@@ -104,6 +104,19 @@ func TestPrintProgressStartDoesNotPrintQuestionPrompt(t *testing.T) {
 	}
 }
 
+func TestLimitedStreamLineUsesDisplayWidthAndKeepsTail(t *testing.T) {
+	got := limitedStreamLine("生成了很长很长的一段中文内容，最后答案是二十一", 20)
+	if DisplayWidth(got) > 20 {
+		t.Fatalf("limited stream width = %d, value %q", DisplayWidth(got), got)
+	}
+	if !strings.HasPrefix(got, "...") {
+		t.Fatalf("limited stream should mark omitted prefix: %q", got)
+	}
+	if !strings.Contains(got, "二十一") {
+		t.Fatalf("limited stream should keep latest tail: %q", got)
+	}
+}
+
 func TestPrintQuestionPromptsPrintsSelectedQuestion(t *testing.T) {
 	var out bytes.Buffer
 	PrintQuestionPrompts(&out, i18n.ZH, []questions.Question{{
