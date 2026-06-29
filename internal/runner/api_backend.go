@@ -55,7 +55,7 @@ func newAPIBackend(opts Options) (*apiBackend, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("%s", l.S("runner_api_key_required", envModelAPIKey))
 	}
-	rawBase := firstNonEmpty(opts.ModelAPIBaseURL, os.Getenv(envModelAPIBaseURL))
+	rawBase := firstNonEmpty(opts.ModelAPIBaseURL, os.Getenv(envModelAPIBaseURL), defaultModelAPIBaseURL(format))
 	endpointURL, providerBaseURL, providerHost, err := apiEndpointURL(rawBase, format)
 	if err != nil {
 		return nil, fmt.Errorf("%s", l.S("runner_api_base_invalid", rawBase))
@@ -81,6 +81,13 @@ func newAPIBackend(opts Options) (*apiBackend, error) {
 		endpointURL:     endpointURL,
 		client:          client,
 	}, nil
+}
+
+func defaultModelAPIBaseURL(format APIFormat) string {
+	if format == APIFormatAnthropic {
+		return "https://api.anthropic.com/v1"
+	}
+	return "https://api.openai.com/v1"
 }
 
 func (b *apiBackend) runOne(ctx context.Context, opts Options, q questions.Question, index int) (CaseResult, error) {

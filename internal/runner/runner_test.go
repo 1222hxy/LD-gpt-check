@@ -339,6 +339,35 @@ func TestAPIBackendRequiresKey(t *testing.T) {
 	}
 }
 
+func TestAPIBackendDefaultsBaseURLByFormat(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://api.openai.com/v1/chat/completions" {
+			t.Fatalf("url = %s", r.URL.String())
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{"content": "21"},
+			}},
+		})
+	})
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIKey:      "secret-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{apiTestQuestion()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Cases[0].OK {
+		t.Fatalf("case = %#v", summary.Cases[0])
+	}
+}
+
 func TestAPIBackendRedactsKeyFromErrorBody(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return textResponse(http.StatusUnauthorized, "bad key secret-key"), nil

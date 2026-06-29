@@ -344,7 +344,7 @@ func promptAPIFormat(r *bufio.Reader, out io.Writer, l i18n.Localizer, color boo
 }
 
 func promptAPIModel(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) (string, error) {
-	report.PrintWarning(out, l.S("model_choose"), color)
+	report.PrintInfo(out, l.S("wizard_api_model_hint"), l.S("wizard_api_model_hint_value"), color)
 	fmt.Fprintln(out, report.Muted(l.S("model_choice_55"), color))
 	fmt.Fprintln(out, report.Muted(l.S("model_choice_54"), color))
 	fmt.Fprintln(out, report.Muted(l.S("model_choice_other"), color))

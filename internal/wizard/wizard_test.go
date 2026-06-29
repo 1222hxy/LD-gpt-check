@@ -154,6 +154,24 @@ func TestPromptModelRequiresChoiceWhenCodexConfigIsDefault(t *testing.T) {
 	}
 }
 
+func TestPromptAPIModelUsesAPIHintWithoutCodexWarning(t *testing.T) {
+	var out bytes.Buffer
+	got, err := promptAPIModel(bufio.NewReader(strings.NewReader("3\nclaude-sonnet-4-5\n")), &out, i18n.New(i18n.ZH), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "claude-sonnet-4-5" {
+		t.Fatalf("model = %q", got)
+	}
+	text := out.String()
+	if !strings.Contains(text, "API 模型") || !strings.Contains(text, "GPT 5.5") || !strings.Contains(text, "GPT 5.4") {
+		t.Fatalf("missing API model prompt:\n%s", text)
+	}
+	if strings.Contains(text, "无法确认") {
+		t.Fatalf("API model prompt should not mention Codex auto-detection:\n%s", text)
+	}
+}
+
 func TestPromptDuration(t *testing.T) {
 	var out bytes.Buffer
 	got, err := promptDuration(bufio.NewReader(strings.NewReader("90s\n")), &out, i18n.New(i18n.ZH), "超时", 30*time.Minute)
