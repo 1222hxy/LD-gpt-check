@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,35 @@ import (
 type authJSONBackend struct {
 	auth   *codexauth.CodexAuth
 	client *resty.Client
+}
+
+type CodexRequest struct {
+	Model     string      `json:"model"`
+	Input     []InputItem `json:"input"`
+	Stream    bool        `json:"stream"`
+	Store     bool        `json:"store"`
+	Reasoning Reasoning   `json:"reasoning"`
+	Text      TextConfig  `json:"text"`
+}
+
+type InputItem struct {
+	Type    string        `json:"type"`
+	Role    string        `json:"role"`
+	Content []ContentPart `json:"content"`
+}
+
+type ContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type Reasoning struct {
+	Effort  string `json:"effort"`
+	Summary string `json:"summary"`
+}
+
+type TextConfig struct {
+	Verbosity string `json:"verbosity"`
 }
 
 func newAuthJSONBackend(opts Options) (*authJSONBackend, error) {
@@ -104,16 +134,24 @@ func (b *authJSONBackend) runOne(ctx context.Context, opts Options, q questions.
 }
 
 func (b *authJSONBackend) request(ctx context.Context, opts Options, prompt string) (ParsedEvents, error) {
-	var resp *resty.Response
+	var resp *http.Response
 	var err error
 	for attempt := 1; attempt <= apiMaxAttempts; attempt++ {
-		resp, err = b.doRequest(ctx, opts, prompt)
-		if !shouldRetryAPI(resp, err) || attempt == apiMaxAttempts {
-			break
+		resp, err = b.doStreamRequest(ctx, opts, prompt)
+		if retryableTransportError(err) && attempt < apiMaxAttempts {
+			if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*apiRetryBaseDelay); sleepErr != nil {
+				return ParsedEvents{}, sleepErr
+			}
+			continue
 		}
-		if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*apiRetryBaseDelay); sleepErr != nil {
-			return ParsedEvents{}, sleepErr
+		if err == nil && resp != nil && shouldRetryStatus(resp.StatusCode) && attempt < apiMaxAttempts {
+			_ = resp.Body.Close()
+			if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*apiRetryBaseDelay); sleepErr != nil {
+				return ParsedEvents{}, sleepErr
+			}
+			continue
 		}
+		break
 	}
 	l := i18n.New(opts.Lang)
 	if err != nil {
@@ -122,9 +160,10 @@ func (b *authJSONBackend) request(ctx context.Context, opts Options, prompt stri
 	if resp == nil {
 		return ParsedEvents{}, fmt.Errorf("%s", l.S("runner_api_failed", l.S("runner_api_empty_response")))
 	}
-	if resp.IsError() {
-		status := resp.StatusCode()
-		preview := bodyPreview(resp.Body(), b.auth.AccessToken)
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		status := resp.StatusCode
+		preview := streamBodyPreview(resp.Body, b.auth.AccessToken)
 		if status == httpStatusUnauthorized || status == httpStatusForbidden {
 			return ParsedEvents{}, fmt.Errorf("%s", l.S("runner_auth_json_auth_failed", status, preview))
 		}
@@ -133,32 +172,59 @@ func (b *authJSONBackend) request(ctx context.Context, opts Options, prompt stri
 		}
 		return ParsedEvents{}, fmt.Errorf("%s", l.S("runner_api_status_failed", status, preview))
 	}
-	var obj map[string]any
-	dec := json.NewDecoder(strings.NewReader(string(resp.Body())))
-	dec.UseNumber()
-	if err := dec.Decode(&obj); err != nil {
+	parsed, err := parseAPIStream(resp.Body, APIFormatOpenAIResponses, opts.Progress)
+	if err != nil {
 		return ParsedEvents{}, fmt.Errorf("%s", l.S("runner_api_decode_failed", err))
 	}
-	parsed := parseAPIResponse(APIFormatOpenAIResponses, obj)
-	parsed.EventTypes = []string{"auth_json.codex.responses"}
+	if len(parsed.EventTypes) == 0 {
+		parsed.EventTypes = []string{"auth_json.codex.responses.stream"}
+	}
 	return parsed, nil
 }
 
-func (b *authJSONBackend) doRequest(ctx context.Context, opts Options, prompt string) (*resty.Response, error) {
-	return b.client.R().
-		SetContext(ctx).
-		SetHeader("Authorization", "Bearer "+b.auth.AccessToken).
-		SetBody(authJSONRequestBody(prompt, opts)).
-		Post(codexauth.CodexResponsesEndpoint)
+func (b *authJSONBackend) doStreamRequest(ctx context.Context, opts Options, prompt string) (*http.Response, error) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(BuildCodexRequest(opts.Model, opts.ReasoningEffort, prompt)); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, codexauth.CodexResponsesEndpoint, &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+b.auth.AccessToken)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://chatgpt.com")
+	req.Header.Set("Referer", "https://chatgpt.com/")
+	req.Header.Set("Originator", "codex_cli_rs")
+	req.Header.Set("User-Agent", "codex_cli_rs/0.125.0")
+	return b.client.GetClient().Do(req)
 }
 
-func authJSONRequestBody(prompt string, opts Options) map[string]any {
-	body := map[string]any{
-		"model": strings.TrimSpace(opts.Model),
-		"input": prompt,
+func BuildCodexRequest(model, effort, prompt string) CodexRequest {
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		effort = "medium"
 	}
-	if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
-		body["reasoning"] = map[string]any{"effort": effort}
+	return CodexRequest{
+		Model:  strings.TrimSpace(model),
+		Stream: true,
+		Store:  false,
+		Input: []InputItem{
+			{
+				Type: "message",
+				Role: "user",
+				Content: []ContentPart{
+					{Type: "input_text", Text: prompt},
+				},
+			},
+		},
+		Reasoning: Reasoning{
+			Effort:  effort,
+			Summary: "auto",
+		},
+		Text: TextConfig{
+			Verbosity: "medium",
+		},
 	}
-	return body
 }

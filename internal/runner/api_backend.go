@@ -402,6 +402,9 @@ func parseAPIStream(r io.Reader, format APIFormat, progress func(ProgressEvent))
 		if err := dec.Decode(&obj); err != nil {
 			return err
 		}
+		if err := apiStreamFailureError(obj); err != nil {
+			return err
+		}
 		applyAPIStreamEvent(format, obj, &parsed, eventTypes, progress)
 		return nil
 	}
@@ -428,6 +431,22 @@ func parseAPIStream(r io.Reader, format APIFormat, progress func(ProgressEvent))
 		return ParsedEvents{}, io.ErrUnexpectedEOF
 	}
 	return parsed, nil
+}
+
+func apiStreamFailureError(obj map[string]any) error {
+	if stringField(obj, "type") != "response.failed" {
+		return nil
+	}
+	response, _ := obj["response"].(map[string]any)
+	if response == nil {
+		return fmt.Errorf("response failed")
+	}
+	errObj, _ := response["error"].(map[string]any)
+	if errObj == nil {
+		return fmt.Errorf("response failed")
+	}
+	msg := firstNonEmpty(stringField(errObj, "message"), stringField(errObj, "code"), "response failed")
+	return fmt.Errorf("%s", msg)
 }
 
 func applyAPIStreamEvent(format APIFormat, obj map[string]any, parsed *ParsedEvents, eventTypes map[string]struct{}, progress func(ProgressEvent)) {

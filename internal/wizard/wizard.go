@@ -112,6 +112,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	} else if !ok {
 		report.PrintSuccess(out, l.S("wizard_done_next"), color)
+		waitForWizardQuit(reader, out, l, in)
 		return nil
 	}
 	selectedQuestion, err := promptQuestion(ctx, reader, out, l, color, apiBase)
@@ -180,6 +181,7 @@ func Run(ctx context.Context, opts Options) error {
 	if backend == runner.BackendCodex && codexErr != nil {
 		report.PrintWarning(out, l.S("wizard_need_api_without_codex"), color)
 		report.PrintSuccess(out, l.S("wizard_done_next"), color)
+		waitForWizardQuit(reader, out, l, in)
 		return nil
 	}
 	if backend == runner.BackendAPI {
@@ -323,6 +325,7 @@ func Run(ctx context.Context, opts Options) error {
 		Summary:          summary,
 	}, lang, color)
 	report.PrintSuccess(out, l.S("wizard_done"), color)
+	waitForWizardQuit(reader, out, l, in)
 	return nil
 }
 
@@ -396,6 +399,28 @@ func applyCCSwitchResolutionPrompt(r *bufio.Reader, out io.Writer, l i18n.Locali
 	}
 	_ = os.Setenv("LD_GPT_CHECK_DISABLE_CC_SWITCH", "1")
 	report.PrintWarning(out, l.S("wizard_cc_switch_skipped"), color)
+}
+
+func waitForWizardQuit(r *bufio.Reader, out io.Writer, l i18n.Localizer, in io.Reader) {
+	if !wizardShouldPauseBeforeExit(in) {
+		return
+	}
+	for {
+		fmt.Fprintf(out, "\n%s ", l.S("wizard_press_q_exit"))
+		s, err := readLine(r)
+		if err != nil {
+			return
+		}
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "q", "quit", "exit", "退出":
+			return
+		}
+	}
+}
+
+func wizardShouldPauseBeforeExit(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	return ok && f != nil && term.IsTerminal(int(f.Fd()))
 }
 
 func wizardQuestionSource(q questions.Question) string {
@@ -763,10 +788,11 @@ func promptBool(r *bufio.Reader, out io.Writer, l i18n.Localizer, label string, 
 
 func promptEffort(r *bufio.Reader, out io.Writer, l i18n.Localizer, label, def string) (string, error) {
 	for {
-		v, err := promptString(r, out, l, label+" (low/medium/high/xhigh)", def)
+		v, err := promptString(r, out, l, label+" (low/medium/high/xhigh/custom)", def)
 		if err != nil {
 			return "", err
 		}
+		v = strings.TrimSpace(v)
 		if runner.ValidReasoningEffort(v) {
 			return v, nil
 		}

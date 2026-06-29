@@ -205,14 +205,27 @@ func TestPreview(t *testing.T) {
 }
 
 func TestRunOptionValidation(t *testing.T) {
-	if _, err := Run(context.Background(), Options{ReasoningEffort: "bad"}); err == nil {
-		t.Fatal("expected invalid effort error")
+	if _, err := Run(context.Background(), Options{ReasoningEffort: "\t"}); err == nil {
+		t.Fatal("expected empty effort error")
 	}
 	if _, err := Run(context.Background(), Options{Model: "x", ReasoningEffort: "medium", Tests: MaxTests + 1}); err == nil {
 		t.Fatal("expected max tests error")
 	}
 	if _, err := Run(context.Background(), Options{Model: "x", ReasoningEffort: "medium", Tests: -1}); err == nil {
 		t.Fatal("expected negative tests error")
+	}
+}
+
+func TestValidReasoningEffortAllowsCustomValues(t *testing.T) {
+	for _, effort := range []string{"low", "xhigh", "minimal", "ultra-high", "vendor_custom_1"} {
+		if !ValidReasoningEffort(effort) {
+			t.Fatalf("ValidReasoningEffort(%q) = false", effort)
+		}
+	}
+	for _, effort := range []string{"", " \t ", "bad\nvalue"} {
+		if ValidReasoningEffort(effort) {
+			t.Fatalf("ValidReasoningEffort(%q) = true", effort)
+		}
 	}
 }
 
@@ -431,6 +444,17 @@ func TestParseAPIStreamResponsesAndAnthropicDeltas(t *testing.T) {
 	})
 }
 
+func TestParseAPIStreamResponseFailed(t *testing.T) {
+	input := strings.Join([]string{
+		`data: {"type":"response.failed","response":{"error":{"message":"backend rejected request"}}}`,
+		``,
+	}, "\n")
+	_, err := parseAPIStream(strings.NewReader(input), APIFormatOpenAIResponses, nil)
+	if err == nil || !strings.Contains(err.Error(), "backend rejected request") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestRunWithAnthropicMessagesAPIBackend(t *testing.T) {
 	q := apiTestQuestion()
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -509,28 +533,56 @@ func TestRunWithAuthJSONBackend(t *testing.T) {
 		if got := r.Header.Get("Originator"); got != "codex_cli_rs" {
 			t.Fatalf("originator = %q", got)
 		}
+		if got := r.Header.Get("Accept"); got != "text/event-stream" {
+			t.Fatalf("accept = %q", got)
+		}
+		if got := r.Header.Get("Origin"); got != "https://chatgpt.com" {
+			t.Fatalf("origin = %q", got)
+		}
+		if got := r.Header.Get("Referer"); got != "https://chatgpt.com/" {
+			t.Fatalf("referer = %q", got)
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["model"] != "gpt-5.5" || body["input"] != apiTestQuestion().Prompt {
+		if body["model"] != "gpt-5.5" || body["store"] != false || body["stream"] != true {
 			t.Fatalf("body = %#v", body)
+		}
+		input, _ := body["input"].([]any)
+		if len(input) != 1 {
+			t.Fatalf("input = %#v", body["input"])
+		}
+		message, _ := input[0].(map[string]any)
+		content, _ := message["content"].([]any)
+		if message["type"] != "message" || message["role"] != "user" || len(content) != 1 {
+			t.Fatalf("message input = %#v", message)
+		}
+		textPart, _ := content[0].(map[string]any)
+		if textPart["type"] != "input_text" || textPart["text"] != apiTestQuestion().Prompt {
+			t.Fatalf("text part = %#v", textPart)
 		}
 		reasoning, _ := body["reasoning"].(map[string]any)
 		if reasoning["effort"] != "xhigh" {
 			t.Fatalf("reasoning = %#v", reasoning)
 		}
-		return jsonResponse(http.StatusOK, map[string]any{
-			"id":          "resp_auth_1",
-			"output_text": "最终答案：21",
-			"usage": map[string]any{
-				"input_tokens":  15,
-				"output_tokens": 6,
-				"output_tokens_details": map[string]any{
-					"reasoning_tokens": 4,
-				},
-			},
-		})
+		if reasoning["summary"] != "auto" {
+			t.Fatalf("reasoning summary = %#v", reasoning)
+		}
+		text, _ := body["text"].(map[string]any)
+		if text["verbosity"] != "medium" {
+			t.Fatalf("text config = %#v", text)
+		}
+		return sseResponse(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"最终"}`,
+			``,
+			`data: {"type":"response.output_text.delta","delta":"答案：21"}`,
+			``,
+			`data: {"type":"response.completed","response":{"id":"resp_auth_1","output_text":"最终答案：21","usage":{"input_tokens":15,"output_tokens":6,"output_tokens_details":{"reasoning_tokens":4}}}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")), nil
 	})
 
 	summary, err := Run(context.Background(), Options{
@@ -555,6 +607,29 @@ func TestRunWithAuthJSONBackend(t *testing.T) {
 	}
 	if strings.Contains(summary.CodexInvocation, accessToken) || !strings.Contains(summary.CodexInvocation, `"token_status":"valid"`) || !strings.Contains(summary.CodexInvocation, "p***@example.com") {
 		t.Fatalf("unsafe invocation = %s", summary.CodexInvocation)
+	}
+}
+
+func TestBuildCodexRequestIncludesRequiredRootFields(t *testing.T) {
+	req := BuildCodexRequest("gpt-5.5", "", "hello")
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(data, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["stream"] != true || body["store"] != false {
+		t.Fatalf("required booleans missing or wrong: %s", data)
+	}
+	reasoning, _ := body["reasoning"].(map[string]any)
+	if reasoning["effort"] != "medium" || reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning = %#v", reasoning)
+	}
+	text, _ := body["text"].(map[string]any)
+	if text["verbosity"] != "medium" {
+		t.Fatalf("text = %#v", text)
 	}
 }
 
@@ -601,10 +676,12 @@ func TestAuthJSONBackendRefreshesMissingAccessToken(t *testing.T) {
 			if got := r.Header.Get("Authorization"); got != "Bearer "+refreshedToken {
 				t.Fatalf("authorization = %q", got)
 			}
-			return jsonResponse(http.StatusOK, map[string]any{
-				"id":          "resp_auth_refresh",
-				"output_text": "21",
-			})
+			return sseResponse(strings.Join([]string{
+				`data: {"type":"response.output_text.delta","delta":"21"}`,
+				``,
+				`data: [DONE]`,
+				``,
+			}, "\n")), nil
 		default:
 			t.Fatalf("unexpected URL = %s", r.URL.String())
 			return nil, nil

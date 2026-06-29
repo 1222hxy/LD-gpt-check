@@ -40,6 +40,7 @@ ld-gpt-check
 CLI 会进入向导，自动带你完成常见操作：
 
 - 🤖 选择或识别 Codex 使用的模型。
+- ⚡ 自动识别 CC Switch 当前上游配置，用真实中转站信息跑测试和归一统计。
 - 🔌 没有本机 Codex 时，可改用 API 模式，支持 OpenAI / Anthropic 兼容接口。
 - 🧠 选择 reasoning effort。
 - 🔢 设置测试次数，默认 5 次。
@@ -48,6 +49,34 @@ CLI 会进入向导，自动带你完成常见操作：
 - 📊 查看彩色终端结果和统计摘要。
 
 需要二进制下载说明、手动参数、JSON 输出、本地题库、自托管后端等高级用法时，再看 [命令参考](docs/commands.md)。
+
+## ⚡ CC Switch 支持
+
+如果你在用 CC Switch，LD-gpt-check 会尽量自动识别它当前给 Codex 使用的上游配置。这个能力很实用：很多时候 Codex 本机配置里只会显示 `127.0.0.1` 之类的本地代理地址，而工具会继续读取 CC Switch 的配置或数据库，找到真正的 API Base URL、API 格式和当前 Codex provider，避免上传统计被错误归到本机代理。
+
+这对使用 Codex App 搭配 CC Switch 的用户尤其友好：通常不需要手动复制 Base URL 或 Key，向导会在检测到可用配置后提示是否沿用。
+
+向导里的体验是：
+
+- 先检测本机 Codex 环境。
+- 再检测 CC Switch 是否存在，以及是否有 Codex 专用 provider。
+- 如果 Codex 可用，优先继续用本机 Codex 跑测试，同时提示是否用 CC Switch 当前上游做统计归一。
+- 如果 Codex 不可用，但 CC Switch 里有 Codex API 配置，可以询问是否沿用它作为 API 模式继续测试。
+- 终端会明确提示本次提取到的配置来源，例如 `CC Switch 当前上游配置`、`OpenAI 官方登录配置` 或 `本机 Codex CLI 配置`。
+
+安全边界也做了处理：API Key 只在本次进程内存里使用，不会写入 `ld-gpt-check.toml`，也不会上传到服务器或打印到终端。
+
+默认会识别常见位置：
+
+- Windows：`C:\Users\<你>\.cc-switch`
+- macOS：`~/.cc-switch`、`~/Library/Application Support/CC Switch` 等常见应用目录
+- Linux：`~/.cc-switch`、`~/.config/cc-switch`
+
+如果你的 CC Switch 数据库放在特殊位置，可以用环境变量显式指定：
+
+```bash
+LD_GPT_CHECK_CC_SWITCH_DB=/path/to/cc-switch.db ld-gpt-check
+```
 
 ### 🤖 让 Agent 帮你下载并跑一轮
 

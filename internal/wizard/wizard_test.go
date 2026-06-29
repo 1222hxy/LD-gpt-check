@@ -120,14 +120,17 @@ func TestAuthJSONWizardAllowsRefreshTokenOnly(t *testing.T) {
 	}
 }
 
-func TestPromptEffortRetriesInvalidValue(t *testing.T) {
+func TestPromptEffortAllowsCustomValue(t *testing.T) {
 	var out bytes.Buffer
-	got, err := promptEffort(bufio.NewReader(strings.NewReader("bad\nxhigh\n")), &out, i18n.New(i18n.ZH), "推理强度", "medium")
+	got, err := promptEffort(bufio.NewReader(strings.NewReader("vendor_custom\n")), &out, i18n.New(i18n.ZH), "推理强度", "medium")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "xhigh" {
+	if got != "vendor_custom" {
 		t.Fatalf("effort = %q", got)
+	}
+	if !strings.Contains(out.String(), "custom") {
+		t.Fatalf("missing custom hint:\n%s", out.String())
 	}
 }
 
@@ -256,9 +259,12 @@ func TestPromptQuestionCanSelectRemoteQuestion(t *testing.T) {
 }
 
 func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
+	home := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), config.ConfigFileName)
 	t.Setenv(config.ConfigEnvVarName, configPath)
 	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("LD_GPT_CHECK_MODEL_API_KEY", "")
 
 	oldRunBenchmark := runBenchmark
@@ -344,10 +350,19 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 
 func TestWizardUsesCCSwitchAPIConfigWhenCodexMissing(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), config.ConfigFileName)
-	codexHome := t.TempDir()
-	ccSwitchHome := t.TempDir()
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	ccSwitchHome := filepath.Join(home, ".cc-switch")
+	if err := os.MkdirAll(codexHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ccSwitchHome, 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(config.ConfigEnvVarName, configPath)
 	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("CODEX_HOME", codexHome)
 	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", ccSwitchHome)
 	t.Setenv("LD_GPT_CHECK_MODEL_API_KEY", "")

@@ -179,12 +179,11 @@ const (
 )
 
 func ValidReasoningEffort(v string) bool {
-	switch v {
-	case "low", "medium", "high", "xhigh":
-		return true
-	default:
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > 80 {
 		return false
 	}
+	return !strings.ContainsAny(v, "\r\n\t")
 }
 
 func NormalizeBackend(v Backend) (Backend, bool) {
@@ -220,6 +219,7 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	if opts.ReasoningEffort == "" {
 		opts.ReasoningEffort = "medium"
 	}
+	opts.ReasoningEffort = strings.TrimSpace(opts.ReasoningEffort)
 	if !ValidReasoningEffort(opts.ReasoningEffort) {
 		return Summary{}, fmt.Errorf("%s", l.S("runner_bad_effort", opts.ReasoningEffort))
 	}
