@@ -1158,10 +1158,11 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
     <section class="hero">
       <span class="badge">已登录</span>
       ${userIdentityBlock(user)}
-      <p>当前网页会话已通过 Linux.do 登录。你可以继续授权 CLI，或退出当前浏览器登录。</p>
+      <p>当前网页会话已通过 Linux.do 登录。你可以下载 CLI、授权设备，或退出当前浏览器登录。</p>
       <div class="actions">
         ${adminActions}
-        <a class="button" href="/device">授权 CLI 设备</a>
+        <a class="button" href="/#install">下载 CLI</a>
+        <a class="button secondary" href="/device">授权 CLI 设备</a>
         <form method="post" action="/logout"><button class="secondary" type="submit">退出登录</button></form>
       </div>
     </section>
@@ -1169,11 +1170,6 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
       <article><span>用户 ID</span><strong>${escapeHTML(user.id)}</strong></article>
       <article><span>累计上传</span><strong>${int(stats?.total_submissions)} 次</strong></article>
       <article><span>平均正确率</span><strong>${stats?.avg_accuracy == null ? "-" : formatPercent(num(stats.avg_accuracy))}</strong></article>
-    </section>
-    <section class="panel">
-      <h2>CLI 配置</h2>
-      <p>在本机终端使用下面的 API 地址登录。</p>
-      <pre>LD_GPT_CHECK_API_BASE_URL=${escapeHTML(env.BASE_URL.replace(/\/$/, ""))} bin/ld-gpt-check login</pre>
     </section>
     <section class="panel">
       <h2>提交中转站</h2>
@@ -2194,12 +2190,12 @@ function layoutPage(title: string, content: string): string {
 <style>
 :root{color-scheme:light;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--brand2:#06b6d4;--bg:#f7fbff}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.1),transparent 34%),linear-gradient(225deg,rgba(6,182,212,.14),transparent 38%),var(--bg);padding:24px;line-height:1.5}
-main{width:min(100%,920px);margin:0 auto}.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.86);border-radius:14px;padding:12px 14px;box-shadow:0 16px 50px rgba(37,99,235,.12)}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav a{color:#334155;text-decoration:none;font-size:14px}
+main{width:min(100%,920px);margin:0 auto}.nav{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.86);border-radius:14px;padding:12px 14px;box-shadow:0 16px 50px rgba(37,99,235,.12)}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav a{color:#334155;text-decoration:none;font-size:14px}.nav-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:flex-end}
 .hero,.panel,.grid article{border:1px solid rgba(191,219,254,.9);background:rgba(255,255,255,.88);box-shadow:0 20px 70px rgba(37,99,235,.13);backdrop-filter:blur(18px);border-radius:16px;padding:24px}.hero{margin-bottom:16px}.badge{display:inline-flex;margin-bottom:12px;border:1px solid #bfdbfe;border-radius:999px;padding:5px 10px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;background:#eff6ff}h1{margin:0;font-size:34px;line-height:1.12;letter-spacing:0}h2{margin:0 0 8px;font-size:20px}p{margin:10px 0 0;color:var(--muted)}.user-head{display:flex;align-items:center;gap:14px}.user-avatar{display:block;width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid #bfdbfe;background:#eff6ff;box-shadow:0 12px 30px rgba(37,99,235,.14)}.user-avatar-fallback{display:grid;place-items:center;font-size:24px;font-weight:800;color:#1d4ed8}.user-name{color:var(--text);text-decoration:none}.user-name:hover{color:#1d4ed8}.user-meta{margin-top:4px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.inline-link{color:#1d4ed8;text-decoration:none}.inline-link:hover{text-decoration:underline}.admin-list{display:grid;gap:10px;margin-top:12px}.admin-list a{display:block;border:1px solid #dbeafe;border-radius:10px;background:#f8fafc;padding:14px;text-decoration:none;color:var(--text)}.admin-list a:hover{border-color:#93c5fd;background:#eff6ff}.admin-list strong{display:block}.admin-list span{display:block;margin-top:4px;color:#64748b;font-size:13px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;align-items:center}.actions form{margin:0}.panel input{min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:9px 12px;font:600 14px system-ui,sans-serif}button,a.button{appearance:none;border:1px solid var(--brand);border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;min-height:42px;padding:10px 14px;font:700 14px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.danger{border-color:#dc2626;background:#dc2626;color:#fff}.small{min-height:32px;padding:6px 10px;font-size:12px}.delete-all{margin-top:16px;border-top:1px solid #e2e8f0;padding-top:16px}.delete-all label{display:block;color:#64748b;font-size:14px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.grid span{display:block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#64748b}.grid strong{display:block;margin-top:6px;overflow-wrap:anywhere}.panel{margin-bottom:16px}pre{overflow:auto;border:1px solid #dbeafe;background:#f8fafc;border-radius:10px;padding:12px;color:#1d4ed8}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;border-bottom:1px solid #e2e8f0;padding:10px 8px;white-space:nowrap}th{color:#64748b;font-weight:650}td form{margin:0}
 .login-actions{margin-top:22px}.linuxdo-button{display:inline-flex;align-items:center;gap:12px;min-height:58px;border:1px solid #1d4ed8;border-radius:14px;background:linear-gradient(135deg,#1d4ed8,#06b6d4);box-shadow:0 18px 45px rgba(37,99,235,.24);color:#fff;padding:10px 16px;text-decoration:none;transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}.linuxdo-button:hover{transform:translateY(-1px);box-shadow:0 22px 56px rgba(37,99,235,.3);filter:saturate(1.08)}.linuxdo-button span{display:grid;gap:2px;text-align:left}.linuxdo-button strong{color:#fff;font-size:15px;line-height:1.2}.linuxdo-button small{color:rgba(255,255,255,.78);font-size:12px;line-height:1.3}.linuxdo-icon{width:38px;height:38px;flex:0 0 auto;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22)}
-@media(max-width:680px){body{padding:12px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button,.linuxdo-button{width:100%}.actions form{width:100%}.linuxdo-button{justify-content:flex-start}}
+@media(max-width:680px){body{padding:12px}.nav{align-items:flex-start}.nav-actions{gap:10px}.grid{grid-template-columns:1fr}h1{font-size:28px}button,a.button,.linuxdo-button{width:100%}.actions form{width:100%}.linuxdo-button{justify-content:flex-start}}
 </style></head>
-<body><main><nav class="nav"><a class="brand" href="/account">LD-gpt-check</a><a href="/device">授权 CLI</a></nav>${content}</main></body></html>`;
+<body><main><nav class="nav"><a class="brand" href="/">LD-gpt-check</a><span class="nav-actions"><a href="/#install">下载 CLI</a><a href="/device">授权 CLI</a></span></nav>${content}</main></body></html>`;
 }
 
 function cookie(name: string, value: string, env: Env, maxAge: number): string {

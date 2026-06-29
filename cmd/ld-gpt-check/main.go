@@ -27,7 +27,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.2.6"
+var version = "0.2.7"
 var assetSuffix = ""
 var gitCommit = ""
 var gitCommitDate = ""
