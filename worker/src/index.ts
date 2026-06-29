@@ -1526,14 +1526,85 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
   });
 }
 
+function dashboardWhereClause(filters: { model: string; channel: string }): string {
+  const conditions = ["s.created_at >= ?"];
+  if (filters.model) conditions.push("s.model = ?");
+  if (filters.channel) conditions.push(`${dashboardChannelKeySQL("s")} = ?`);
+  return conditions.join(" AND ");
+}
+
+function dashboardWhereBinds(cutoff: string, model: string, channel: string): string[] {
+  const binds = [cutoff];
+  if (model) binds.push(model);
+  if (channel) binds.push(channel);
+  return binds;
+}
+
+function dashboardChannelKeySQL(alias: string): string {
+  const host = dashboardProviderHostSQL(alias);
+  return `CASE
+    WHEN ${host} = 'api.openai.com' THEN 'official:openai'
+    WHEN ${host} = 'api.deepseek.com' THEN 'official:deepseek'
+    WHEN ${host} = 'api.anthropic.com' THEN 'official:anthropic'
+    WHEN ${alias}.codex_channel = 'bridge' AND ${alias}.codex_bridge_id IS NOT NULL AND ${alias}.codex_bridge_id != '' THEN 'bridge:' || ${alias}.codex_bridge_id
+    WHEN ${alias}.codex_channel = 'unknown_bridge' THEN 'unknown_bridge:' || COALESCE(NULLIF(${host}, ''), NULLIF(${alias}.codex_provider_base_url, ''), 'unknown')
+    WHEN ${alias}.codex_channel = 'local_private' THEN 'local_private'
+    ELSE COALESCE(NULLIF(${alias}.codex_channel, ''), 'unknown')
+  END`;
+}
+
+function dashboardChannelLabelSQL(alias: string, bridgeAlias: string): string {
+  const host = dashboardProviderHostSQL(alias);
+  return `CASE
+    WHEN ${host} = 'api.openai.com' THEN 'OpenAI 官方 (api.openai.com)'
+    WHEN ${host} = 'api.deepseek.com' THEN 'DeepSeek 官方 (api.deepseek.com)'
+    WHEN ${host} = 'api.anthropic.com' THEN 'Anthropic 官方 (api.anthropic.com)'
+    WHEN ${alias}.codex_channel = 'bridge' THEN
+      COALESCE(NULLIF(${bridgeAlias}.name, ''), '中转站') ||
+      CASE WHEN COALESCE(NULLIF(${host}, ''), '') != '' THEN ' (' || ${host} || ')' ELSE '' END
+    WHEN ${alias}.codex_channel = 'unknown_bridge' THEN
+      '未识别中转站' ||
+      CASE WHEN COALESCE(NULLIF(${host}, ''), '') != '' THEN ' (' || ${host} || ')' ELSE '' END
+    WHEN ${alias}.codex_channel = 'local_private' THEN '本机代理（未归一）'
+    ELSE COALESCE(NULLIF(${alias}.codex_channel, ''), '未知渠道')
+  END`;
+}
+
+function dashboardChannelKindSQL(alias: string): string {
+  const host = dashboardProviderHostSQL(alias);
+  return `CASE
+    WHEN ${host} = 'api.openai.com' THEN 'openai_official'
+    WHEN ${host} = 'api.deepseek.com' THEN 'domestic_official'
+    WHEN ${host} = 'api.anthropic.com' THEN 'anthropic_official'
+    WHEN ${alias}.codex_channel = 'bridge' THEN 'bridge'
+    WHEN ${alias}.codex_channel = 'unknown_bridge' THEN 'unknown_bridge'
+    WHEN ${alias}.codex_channel = 'local_private' THEN 'local_private'
+    ELSE COALESCE(NULLIF(${alias}.codex_channel, ''), 'unknown')
+  END`;
+}
+
+function dashboardProviderHostSQL(alias: string): string {
+  return `CASE
+    WHEN lower(COALESCE(NULLIF(${alias}.codex_provider_host, ''), '')) != '' THEN lower(${alias}.codex_provider_host)
+    WHEN ${alias}.codex_provider_base_url IN ('https://api.openai.com', 'https://api.openai.com/v1') THEN 'api.openai.com'
+    WHEN ${alias}.codex_provider_base_url IN ('https://api.deepseek.com', 'https://api.deepseek.com/v1') THEN 'api.deepseek.com'
+    WHEN ${alias}.codex_provider_base_url IN ('https://api.anthropic.com', 'https://api.anthropic.com/v1') THEN 'api.anthropic.com'
+    ELSE ''
+  END`;
+}
+
 async function dashboardOverview(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const range = dashboardRange(url.searchParams.get("range"));
   const model = str(url.searchParams.get("model") || "all", MAX_STRING_LENGTH) || "all";
+  const channel = str(url.searchParams.get("channel") || "all", MAX_STRING_LENGTH) || "all";
   const cutoff = iso(addSeconds(new Date(), -range.days * 86400));
   const modelFilter = model !== "all" ? model : "";
-  const where = modelFilter ? "s.created_at >= ? AND s.model = ?" : "s.created_at >= ?";
-  const binds = modelFilter ? [cutoff, modelFilter] : [cutoff];
+  const channelFilter = channel !== "all" ? channel : "";
+  const baseFilter = dashboardWhereClause({ model: modelFilter, channel: "" });
+  const baseBinds = dashboardWhereBinds(cutoff, modelFilter, "");
+  const where = dashboardWhereClause({ model: modelFilter, channel: channelFilter });
+  const binds = dashboardWhereBinds(cutoff, modelFilter, channelFilter);
 
   const modelsRow = await env.DB.prepare(
     `SELECT DISTINCT model FROM benchmark_submissions
@@ -1541,6 +1612,30 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
      ORDER BY model ASC`
   ).all<any>();
   const models = (modelsRow.results ?? []).map((row: any) => String(row.model || "")).filter(Boolean);
+  const channelRows = await env.DB.prepare(
+    `SELECT key, label, kind, COUNT(*) AS count, AVG(accuracy) AS accuracy
+     FROM (
+       SELECT ${dashboardChannelKeySQL("s")} AS key,
+              ${dashboardChannelLabelSQL("s", "bridges")} AS label,
+              ${dashboardChannelKindSQL("s")} AS kind,
+              s.accuracy AS accuracy
+       FROM benchmark_submissions s
+       LEFT JOIN bridges ON bridges.id = s.codex_bridge_id
+       WHERE ${baseFilter}
+     ) AS channel_source
+     GROUP BY key, label, kind
+     ORDER BY
+       CASE kind
+         WHEN 'openai_official' THEN 0
+         WHEN 'domestic_official' THEN 1
+         WHEN 'anthropic_official' THEN 2
+         WHEN 'bridge' THEN 3
+         WHEN 'unknown_bridge' THEN 4
+         ELSE 5
+       END,
+       count DESC,
+       label ASC`
+  ).bind(...baseBinds).all<any>();
 
   const summaryRow = await env.DB.prepare(
     `SELECT COUNT(*) AS submissions, COUNT(DISTINCT s.user_id) AS active_users,
@@ -1602,23 +1697,7 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
      ORDER BY s.created_at DESC
      LIMIT 20`
   ).bind(...binds).all<any>();
-  const segmentRows = await env.DB.prepare(
-    `SELECT
-       CASE
-         WHEN s.codex_channel = 'official' THEN '官方'
-         WHEN s.codex_channel = 'bridge' THEN COALESCE(NULLIF(bridges.name, ''), '中转站')
-         WHEN s.codex_channel = 'unknown_bridge' THEN '未知中转站'
-         ELSE COALESCE(NULLIF(s.codex_channel, ''), '未知')
-       END AS label,
-       COUNT(*) AS count,
-       AVG(s.accuracy) AS accuracy
-     FROM benchmark_submissions s
-     LEFT JOIN bridges ON bridges.id = s.codex_bridge_id
-     WHERE ${where}
-     GROUP BY label
-     ORDER BY count DESC, label ASC
-     LIMIT 12`
-  ).bind(...binds).all<any>();
+  const segmentRows = channelRows;
   const userBridgeRows = await env.DB.prepare(
     `SELECT
        CASE WHEN s.is_anonymous = 1 THEN 'anonymous' ELSE s.user_id END AS user_key,
@@ -1702,6 +1781,13 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     count: int(row.count),
     accuracy: ratio(row.accuracy),
   }));
+  const channels = (channelRows.results ?? []).map((row: any) => ({
+    key: str(row.key || "unknown", MAX_STRING_LENGTH),
+    label: str(row.label || "未知渠道", MAX_STRING_LENGTH),
+    kind: str(row.kind || "unknown", MAX_STRING_LENGTH),
+    count: int(row.count),
+    accuracy: ratio(row.accuracy),
+  }));
   const userBridgeUsage = summarizeUserBridgeUsage(userBridgeRows.results ?? []);
   const hourlyBuckets = normalizeHourlyBuckets(hourlyRows.results ?? []);
   const accuracyValues = (sampleRows.results ?? []).map((row: any) => ratio(row.accuracy)).filter((value: number) => Number.isFinite(value));
@@ -1725,7 +1811,9 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     filters: {
       range: range.value,
       model: modelFilter || "all",
+      channel: channelFilter || "all",
       models,
+      channels,
     },
     summary: {
       submissions: int(summaryRow?.submissions),
@@ -1740,6 +1828,7 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     questionQuality,
     recentSubmissions,
     userBridgeUsage,
+    channels,
     segments,
     hourlyBuckets,
     statistics,
@@ -2349,7 +2438,15 @@ function channelLabel(channel: unknown, bridgeName: unknown, providerBaseURLOrHo
 
 function plainChannelLabel(channel: unknown, bridgeName: unknown, providerBaseURLOrHost: unknown = ""): string {
   const host = providerDisplayHost(providerBaseURLOrHost);
-  if (channel === "official") return host ? `官方 API (${host})` : "官方 API";
+  if (channel === "official") {
+    if (host === "api.openai.com") return "OpenAI 官方 (api.openai.com)";
+    if (host === "api.anthropic.com") return "Anthropic 官方 (api.anthropic.com)";
+    return host ? `官方 API (${host})` : "官方 API";
+  }
+  if (channel === "domestic_official") {
+    if (host === "api.deepseek.com") return "DeepSeek 官方 (api.deepseek.com)";
+    return host ? `国产官方 API (${host})` : "国产官方 API";
+  }
   if (channel === "local_private") return "本机代理（未归一）";
   if (channel === "bridge") {
     const name = str(bridgeName || "中转站", MAX_STRING_LENGTH);
@@ -3084,8 +3181,10 @@ async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL
   if (privateProviderBaseURL(baseURL)) {
     return { baseURL: "", host: "", channel: "local_private", bridgeID: null, bridgeName: "" };
   }
-  if (officialProviderBaseURL(baseURL)) {
-    return { baseURL, host, channel: "official", bridgeID: null, bridgeName: "" };
+  const officialChannel = officialProviderChannel(baseURL);
+  if (officialChannel) {
+    const channel = officialChannel === "domestic" ? "domestic_official" : "official";
+    return { baseURL, host, channel, bridgeID: null, bridgeName: "" };
   }
   const row = await env.DB.prepare(
     `SELECT bridge_base_urls.bridge_id, bridges.name
@@ -3541,12 +3640,15 @@ function levenshtein(a: string, b: string): number {
 }
 
 function officialProviderBaseURL(baseURL: string): boolean {
-  return (
-    baseURL === "https://api.openai.com" ||
-    baseURL === "https://api.openai.com/v1" ||
-    baseURL === "https://api.anthropic.com" ||
-    baseURL === "https://api.anthropic.com/v1"
-  );
+  return officialProviderChannel(baseURL) !== "";
+}
+
+function officialProviderChannel(baseURL: string): string {
+  const normalized = normalizeProviderBaseURL(baseURL);
+  if (normalized === "https://api.openai.com" || normalized === "https://api.openai.com/v1") return "openai";
+  if (normalized === "https://api.anthropic.com" || normalized === "https://api.anthropic.com/v1") return "anthropic";
+  if (normalized === "https://api.deepseek.com" || normalized === "https://api.deepseek.com/v1") return "domestic";
+  return "";
 }
 
 function adminEventStatement(
@@ -4166,6 +4268,24 @@ function distributionSummary(values: number[]): Record<string, number> {
       sampleSize: 0,
     };
   }
+  if (clean.length < 2) {
+    const value = clean[0] ?? 0;
+    return {
+      min: round(value, 3),
+      q1: round(value, 3),
+      median: round(value, 3),
+      q3: round(value, 3),
+      max: round(value, 3),
+      iqr: 0,
+      mean: round(value, 3),
+      stdDev: 0,
+      coefficientOfVariation: 0,
+      skewness: 0,
+      excessKurtosis: 0,
+      tailRisk: 0,
+      sampleSize: clean.length,
+    };
+  }
   const q1 = quantile(clean, 0.25);
   const median = quantile(clean, 0.5);
   const q3 = quantile(clean, 0.75);
@@ -4284,7 +4404,7 @@ function driftStats(trend: any[]): Record<string, unknown> {
 function riskBudgetStats(input: any): Record<string, unknown> {
   const targetAccuracy = 0.85;
   const attempts = Math.max(int(input.totalAttempts), 0);
-  if (attempts <= 0) {
+  if (attempts < 30) {
     return {
       targetAccuracy,
       failureRate: 0,
@@ -4353,7 +4473,7 @@ function powerStats(models: any[], averageAccuracy: number): Record<string, unkn
     baselineAccuracy: round(averageAccuracy, 3),
     averageModelSampleSize,
     minimumDetectableEffect: round(minimumDetectableEffect, 3),
-    verdict: averageModelSampleSize > 0 ? "measured" : "insufficient",
+    verdict: averageModelSampleSize >= 30 ? "measured" : "insufficient",
     requiredSamples: [0.01, 0.02, 0.05].map((delta) => ({
       delta,
       perGroup: Math.ceil((2 * variance * 1.96 ** 2) / Math.max(delta ** 2, 0.0001)),

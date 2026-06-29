@@ -18,23 +18,25 @@ const QUESTIONS = [
 ];
 
 const USERS = ["chen", "luna", "mika", "tang", "ops", "yu", "river", "lin"];
-const SEGMENTS = ["macOS", "Linux", "Windows", "CI Runner"];
 const PROVIDERS = [
-  { codexChannel: "official", codexBridgeName: "", codexProviderBaseURL: "https://api.openai.com/v1", codexProviderHost: "api.openai.com", channelLabel: "官方 API (api.openai.com)" },
-  { codexChannel: "bridge", codexBridgeName: "Krill AI", codexProviderBaseURL: "https://api.krill-ai.com/codex/v1", codexProviderHost: "api.krill-ai.com", channelLabel: "Krill AI (api.krill-ai.com)" },
-  { codexChannel: "unknown_bridge", codexBridgeName: "", codexProviderBaseURL: "https://relay.example.com/v1", codexProviderHost: "relay.example.com", channelLabel: "未识别中转站 (relay.example.com)" },
+  { key: "official:openai", kind: "openai_official", supportedModels: ["gpt-5.5", "gpt-5.5-mini", "o4-mini"], codexChannel: "official", codexBridgeName: "", codexProviderBaseURL: "https://api.openai.com/v1", codexProviderHost: "api.openai.com", channelLabel: "OpenAI 官方 (api.openai.com)" },
+  { key: "official:deepseek", kind: "domestic_official", supportedModels: ["deepseek-r1"], codexChannel: "domestic_official", codexBridgeName: "", codexProviderBaseURL: "https://api.deepseek.com/v1", codexProviderHost: "api.deepseek.com", channelLabel: "DeepSeek 官方 (api.deepseek.com)" },
+  { key: "bridge:krill", kind: "bridge", supportedModels: ["gpt-5.5", "gpt-5.5-mini", "o4-mini"], codexChannel: "bridge", codexBridgeName: "Krill AI", codexProviderBaseURL: "https://api.krill-ai.com/codex/v1", codexProviderHost: "api.krill-ai.com", channelLabel: "Krill AI (api.krill-ai.com)" },
+  { key: "unknown_bridge:relay.example.com", kind: "unknown_bridge", supportedModels: ["gpt-5.5-mini", "o4-mini"], codexChannel: "unknown_bridge", codexBridgeName: "", codexProviderBaseURL: "https://relay.example.com/v1", codexProviderHost: "relay.example.com", channelLabel: "未识别中转站 (relay.example.com)" },
 ];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
+export function buildDashboardPayload({ range = "30d", model = "all", channel = "all" } = {}) {
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-  const selectedModels = model === "all" || !MODELS.includes(model) ? MODELS : [model];
+  const selectedProviders = channel === "all" ? PROVIDERS : PROVIDERS.filter((provider) => provider.key === channel);
+  const selectedModels = compatibleModels(model, selectedProviders.length ? selectedProviders : PROVIDERS);
   const trend = buildTrend(days, selectedModels);
   const modelBreakdown = buildModelBreakdown(selectedModels, days);
   const questionQuality = buildQuestionQuality(days, selectedModels.length);
-  const recentSubmissions = buildRecentSubmissions(selectedModels);
+  const recentSubmissions = buildRecentSubmissions(selectedModels, selectedProviders.length ? selectedProviders : PROVIDERS);
   const userBridgeUsage = buildUserBridgeUsage(recentSubmissions);
-  const segments = buildSegments(selectedModels.length);
+  const channels = buildChannels(model);
+  const segments = channels.map(({ label, count, accuracy }) => ({ label, count, accuracy }));
   const summary = summarize(trend, modelBreakdown, segments);
   const hourlyBuckets = buildHourlyBuckets(days, selectedModels);
   const statistics = buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets });
@@ -44,7 +46,9 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
     filters: {
       range,
       model,
+      channel,
       models: MODELS,
+      channels,
     },
     summary,
     trend,
@@ -52,6 +56,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
     questionQuality,
     recentSubmissions,
     userBridgeUsage,
+    channels,
     segments,
     hourlyBuckets,
     statistics,
@@ -59,6 +64,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
 }
 
 function buildTrend(days, models) {
+  if (!models.length) return [];
   const now = Date.now();
   return Array.from({ length: days }, (_, index) => {
     const date = new Date(now - (days - index - 1) * DAY_MS);
@@ -92,6 +98,7 @@ function buildModelBreakdown(models, days) {
 }
 
 function buildQuestionQuality(days, modelCount) {
+  if (modelCount <= 0) return [];
   return QUESTIONS.map(([questionId, title], index) => {
     const attempts = Math.round(days * modelCount * (5.5 + index * 1.2));
     const accuracy = clamp(0.91 - index * 0.045 + Math.sin(days + index) * 0.012, 0.58, 0.93);
@@ -106,15 +113,18 @@ function buildQuestionQuality(days, modelCount) {
   }).sort((a, b) => a.accuracy - b.accuracy);
 }
 
-function buildRecentSubmissions(models) {
+function buildRecentSubmissions(models, providers) {
+  const compatibleProviders = providers.filter((provider) => provider.supportedModels.some((item) => models.includes(item)));
+  if (!models.length || !compatibleProviders.length) return [];
   const now = Date.now();
   return Array.from({ length: 8 }, (_, index) => {
-    const currentModel = models[index % models.length];
+    const provider = compatibleProviders[index % compatibleProviders.length];
+    const providerModels = provider.supportedModels.filter((item) => models.includes(item));
+    const currentModel = providerModels[index % providerModels.length];
     const profile = MODEL_PROFILES[currentModel];
     const accuracy = clamp(profile.accuracy + Math.sin(index * 1.7) * 0.04, 0.65, 0.96);
     const username = USERS[index % USERS.length];
     const anonymous = index % 5 === 3;
-    const provider = PROVIDERS[index % PROVIDERS.length];
     return {
       id: `sub_${String(index + 1).padStart(3, "0")}`,
       user: anonymous
@@ -133,7 +143,11 @@ function buildRecentSubmissions(models) {
       avgTimeSeconds: round(profile.latency + (index % 4) * 0.8, 1),
       createdAt: new Date(now - index * 42 * 60 * 1000).toISOString(),
       status: accuracy > 0.86 ? "healthy" : accuracy > 0.78 ? "watch" : "regression",
-      ...provider,
+      codexChannel: provider.codexChannel,
+      codexBridgeName: provider.codexBridgeName,
+      codexProviderBaseURL: provider.codexProviderBaseURL,
+      codexProviderHost: provider.codexProviderHost,
+      channelLabel: provider.channelLabel,
     };
   });
 }
@@ -197,15 +211,25 @@ function buildUserBridgeUsage(recentSubmissions) {
   });
 }
 
-function buildSegments(modelCount) {
-  return SEGMENTS.map((label, index) => ({
-    label,
-    count: Math.round(86 + modelCount * 41 + index * 34),
-    accuracy: round(0.795 + index * 0.018 + modelCount * 0.006, 3),
+function buildChannels(model) {
+  const requestedModels = model === "all" || !MODELS.includes(model) ? MODELS : [model];
+  return PROVIDERS.filter((provider) => provider.supportedModels.some((item) => requestedModels.includes(item))).map((provider, index) => ({
+    key: provider.key,
+    label: provider.channelLabel,
+    kind: provider.kind,
+    count: 96 + index * 31,
+    accuracy: round(0.82 + index * 0.012, 3),
   }));
 }
 
+function compatibleModels(model, providers) {
+  const requestedModels = model === "all" || !MODELS.includes(model) ? MODELS : [model];
+  const allowed = new Set(providers.flatMap((provider) => provider.supportedModels));
+  return requestedModels.filter((item) => allowed.has(item));
+}
+
 function buildHourlyBuckets(days, models) {
+  if (!models.length) return [];
   const modelAccuracy = average(models.map((item) => MODEL_PROFILES[item].accuracy));
   const modelLatency = average(models.map((item) => MODEL_PROFILES[item].latency));
   const scale = Math.sqrt(days / 30);
@@ -256,10 +280,12 @@ function summarize(trend, modelBreakdown, segments) {
 
 function weightedAverage(items, valueKey, weightKey) {
   const totalWeight = sum(items.map((item) => item[weightKey]));
+  if (!totalWeight) return 0;
   return sum(items.map((item) => item[valueKey] * item[weightKey])) / totalWeight;
 }
 
 function average(values) {
+  if (!values.length) return 0;
   return sum(values) / values.length;
 }
 

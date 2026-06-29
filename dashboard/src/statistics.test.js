@@ -171,6 +171,46 @@ describe("dashboard statistics payload", () => {
     expect(payload.modelBreakdown).toHaveLength(1);
     expect(payload.statistics.modelComparisons).toHaveLength(1);
     expect(payload.statistics.modelComparisons[0].model).toBe("gpt-5.5");
+    expect(payload.statistics.pairwiseTests).toHaveLength(0);
+    expect(payload.statistics.modelRanking[0].verdict).toBe("insufficient");
+    expect(payload.statistics.efficiencyFrontier[0].verdict).toBe("insufficient");
+  });
+
+  it("keeps DeepSeek official traffic out of unknown bridge mock data", () => {
+    const payload = buildDashboardPayload({ range: "30d", channel: "official:deepseek" });
+
+    expect(payload.filters.channel).toBe("official:deepseek");
+    expect(payload.modelBreakdown.map((item) => item.model)).toEqual(["deepseek-r1"]);
+    expect(payload.recentSubmissions.every((item) => item.codexChannel === "domestic_official")).toBe(true);
+    expect(payload.recentSubmissions.every((item) => item.model === "deepseek-r1")).toBe(true);
+    expect(payload.channels.find((item) => item.key === "official:deepseek")?.kind).toBe("domestic_official");
+  });
+
+  it("returns explicit insufficient statistics for incompatible model and channel filters", () => {
+    const payload = buildDashboardPayload({ range: "30d", model: "gpt-5.5", channel: "official:deepseek" });
+
+    expect(payload.modelBreakdown).toHaveLength(0);
+    expect(payload.recentSubmissions).toHaveLength(0);
+    expect(payload.statistics.coverage.hasSubmissions).toBe(false);
+    expect(payload.statistics.regression.verdict).toBe("insufficient");
+    expect(payload.statistics.riskBudget.verdict).toBe("insufficient");
+    expect(payload.statistics.pairwiseTests).toHaveLength(0);
+  });
+
+  it("keeps all statistical sections finite for empty payloads", () => {
+    const stats = buildStatistics({
+      trend: [],
+      modelBreakdown: [],
+      questionQuality: [],
+      recentSubmissions: [],
+      hourlyBuckets: [],
+    });
+
+    expect(stats.accuracy.sampleSize).toBe(0);
+    expect(stats.latency.sampleSize).toBe(0);
+    expect(stats.timeOfDay.omnibus.verdict).toBe("insufficient");
+    expect(stats.drift.window.verdict).toBe("insufficient");
+    expect(JSON.stringify(stats)).not.toMatch(/NaN|Infinity/);
   });
 
   it("can rebuild statistics from payload sections", () => {

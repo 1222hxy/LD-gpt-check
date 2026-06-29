@@ -6,6 +6,7 @@ export async function fetchDashboardOverview(filters) {
   const params = new URLSearchParams({
     range: filters.range,
     model: filters.model,
+    channel: filters.channel,
   });
   const response = await fetch(`${API_BASE_URL}/api/dashboard/overview?${params}`);
 

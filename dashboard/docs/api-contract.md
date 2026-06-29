@@ -3,7 +3,7 @@
 The dashboard frontend calls one read-only endpoint:
 
 ```text
-GET /api/dashboard/overview?range=30d&model=all
+GET /api/dashboard/overview?range=30d&model=all&channel=all
 ```
 
 For local development, `dashboard/vite.config.js` proxies this endpoint to a real Cloudflare Worker API. In production, the Worker builds the response from D1 tables:
@@ -19,6 +19,7 @@ For local development, `dashboard/vite.config.js` proxies this endpoint to a rea
 | --- | --- | --- | --- |
 | `range` | `7d`, `30d`, `90d` | `30d` | Time window for trend and aggregate metrics. |
 | `model` | `all` or model id | `all` | Optional model filter. |
+| `channel` | `all`, `official:openai`, `official:deepseek`, `official:anthropic`, `bridge:<id>`, `unknown_bridge:<host>` | `all` | Optional provider/channel filter. Official model vendors and each normalized bridge are separated. |
 
 ## Response
 
@@ -28,7 +29,24 @@ For local development, `dashboard/vite.config.js` proxies this endpoint to a rea
   "filters": {
     "range": "30d",
     "model": "all",
-    "models": ["gpt-5.5", "gpt-5.5-mini", "o4-mini"]
+    "channel": "all",
+    "models": ["gpt-5.5", "gpt-5.5-mini", "o4-mini"],
+    "channels": [
+      {
+        "key": "official:openai",
+        "label": "OpenAI 官方 (api.openai.com)",
+        "kind": "openai_official",
+        "count": 612,
+        "accuracy": 0.861
+      },
+      {
+        "key": "official:deepseek",
+        "label": "DeepSeek 官方 (api.deepseek.com)",
+        "kind": "domestic_official",
+        "count": 128,
+        "accuracy": 0.847
+      }
+    ]
   },
   "summary": {
     "submissions": 1284,
@@ -85,9 +103,18 @@ For local development, `dashboard/vite.config.js` proxies this endpoint to a rea
       "status": "healthy"
     }
   ],
+  "channels": [
+    {
+      "key": "bridge:krill",
+      "label": "Krill AI (api.krill-ai.com)",
+      "kind": "bridge",
+      "count": 184,
+      "accuracy": 0.832
+    }
+  ],
   "segments": [
     {
-      "label": "macOS",
+      "label": "OpenAI 官方 (api.openai.com)",
       "count": 612,
       "accuracy": 0.861
     }
@@ -519,7 +546,7 @@ The Worker implementation uses:
 - Browser API responses are parsed through `DashboardOverviewSchema` in `dashboard/src/schema.js` before rendering.
 - Invalid or incomplete API payloads fail fast instead of producing misleading charts.
 - The dashboard can export a compact JSON statistical snapshot and hourly CSV from the current filter state.
-- `range` and `model` filters are mirrored into the URL so screenshots and shared links preserve context.
+- `range`, `model`, and `channel` filters are mirrored into the URL so screenshots and shared links preserve context.
 
 Recommended Worker behavior:
 

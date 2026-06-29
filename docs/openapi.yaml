@@ -986,7 +986,7 @@ components:
           type: string
         codex_channel:
           type: string
-          enum: [official, bridge, unknown_bridge]
+          enum: [official, domestic_official, bridge, unknown_bridge, local_private]
         codex_bridge_id:
           type:
             - string

@@ -525,7 +525,7 @@ Query 参数：
 | `codex_model_provider` | string | Codex 配置中的 provider 名称，或 API 模式的调用格式 |
 | `codex_provider_host` | string | provider `base_url` 的 host，不含协议、路径或 query |
 | `codex_provider_base_url` | string | 规范化后的 HTTPS provider base URL，保留 path，去除 query/fragment；用于区分官方渠道、中转站和未知中转站 |
-| `codex_channel` | string | 服务端落库分类：`official`、`bridge`、`unknown_bridge`；上传方无需传入 |
+| `codex_channel` | string | 服务端落库分类：`official`、`domestic_official`、`bridge`、`unknown_bridge`、`local_private`；上传方无需传入 |
 | `codex_bridge_name` | string | 命中管理员配置的中转站映射时返回的中转站名称 |
 | `codex_sandbox` | string | CLI 本次实际使用的 Codex sandbox；API 模式为 `api` |
 | `codex_disabled_features` | array | 本次禁用的 Codex 功能摘要；API 模式可为空 |

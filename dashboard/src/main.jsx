@@ -57,8 +57,12 @@ function App() {
 
   useEffect(() => {
     if (!dashboard.data) return;
-    const normalizedFilters = parseFilters(new URLSearchParams(filters).toString(), dashboard.data.filters.models);
-    if (normalizedFilters.model !== filters.model || normalizedFilters.range !== filters.range) {
+    const normalizedFilters = parseFilters(new URLSearchParams(filters).toString(), dashboard.data.filters.models, dashboard.data.filters.channels);
+    if (
+      normalizedFilters.model !== filters.model ||
+      normalizedFilters.range !== filters.range ||
+      normalizedFilters.channel !== filters.channel
+    ) {
       setFilters(normalizedFilters);
     }
   }, [dashboard.data, filters]);
@@ -78,7 +82,7 @@ function App() {
         onExport={() => downloadDashboardExport(data, filters)}
       />
       <section className="mx-auto grid w-full max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:px-8">
-        <Sidebar filters={filters} models={data.filters.models} onChange={setFilters} />
+        <Sidebar filters={filters} models={data.filters.models} channels={data.filters.channels} onChange={setFilters} />
         <div className="grid min-w-0 gap-5">
           <SummaryGrid summary={data.summary} />
           {!coverage.hasSubmissions ? <DataNotice coverage={coverage} /> : null}
@@ -114,7 +118,7 @@ function App() {
           </div>
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
             <QualityPanel questions={data.questionQuality} />
-            <SegmentPanel segments={data.segments} />
+            <ChannelPanel channels={data.channels.length ? data.channels : data.segments.map((item) => ({ ...item, key: item.label, kind: "legacy" }))} />
           </div>
           <UserBridgePanel users={data.userBridgeUsage || []} />
           <RecentPanel submissions={data.recentSubmissions} />
@@ -151,7 +155,7 @@ function TopBar({ updatedAt, onRefresh, isRefreshing, onExport }) {
   );
 }
 
-function Sidebar({ filters, models, onChange }) {
+function Sidebar({ filters, models, channels, onChange }) {
   return (
     <aside className="h-max rounded-md border border-stone-200 bg-white p-4 shadow-soft lg:sticky lg:top-24">
       <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
@@ -185,6 +189,21 @@ function Sidebar({ filters, models, onChange }) {
             {models.map((model) => (
               <option key={model} value={model}>
                 {model}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-2">
+          <span className="text-xs font-medium text-stone-500">渠道</span>
+          <select
+            className="h-10 rounded-md border border-stone-200 bg-white px-3 text-sm outline-none transition focus:border-sea focus:ring-4 focus:ring-teal-100"
+            value={filters.channel}
+            onChange={(event) => onChange((current) => ({ ...current, channel: event.target.value }))}
+          >
+            <option value="all">全部渠道</option>
+            {channels.map((channel) => (
+              <option key={channel.key} value={channel.key}>
+                {compactChannelLabel(channel)} · {channel.count}
               </option>
             ))}
           </select>
@@ -261,14 +280,14 @@ function StatisticsPanel({ statistics }) {
       meta: `n=${statistics.latency.sampleSize.toLocaleString("zh-CN")}，中位数 ${statistics.latency.median}s`,
     },
     {
-      label: "趋势 z 检验",
+      label: "基线差异检验",
       value: statistics.regression.verdict === "insufficient" ? "数据不足" : `z=${statistics.regression.zScore}`,
       meta: `p=${formatPValue(statistics.regression.pValue)}，${verdictLabel(statistics.regression.verdict)}`,
     },
   ];
 
   return (
-    <Panel title="统计置信度" icon={ShieldCheck} action="95% CI / z-test">
+    <Panel title="统计置信度" icon={ShieldCheck} action="Wilson / 基线检验">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
           <div className="stat-card" key={card.label}>
@@ -353,7 +372,7 @@ function PairwisePanel({ tests }) {
   if (!tests.length) {
     return (
       <Panel title="模型显著性" icon={BarChart3} action="数据不足">
-        <EmptyState detail="需要至少两个模型各有足够尝试数，才能进行成对显著性比较。" />
+        <EmptyState detail="当前筛选下需要至少两个模型各有足够样本，才能进行成对显著性比较。" />
       </Panel>
     );
   }
@@ -1118,36 +1137,36 @@ function QualityPanel({ questions }) {
   );
 }
 
-function SegmentPanel({ segments }) {
-  const total = segments.reduce((sum, item) => sum + item.count, 0);
-  if (!segments.length || total <= 0) {
+function ChannelPanel({ channels }) {
+  const total = channels.reduce((sum, item) => sum + item.count, 0);
+  if (!channels.length || total <= 0) {
     return (
-      <Panel title="运行环境" icon={Gauge} action="数据不足">
-        <EmptyState detail="当前筛选范围内没有可聚合的运行环境或渠道数据。" />
+      <Panel title="渠道分布" icon={Gauge} action="数据不足">
+        <EmptyState detail="当前筛选范围内没有可聚合的官方渠道或中转站数据。" />
       </Panel>
     );
   }
   return (
-    <Panel title="运行环境" icon={Gauge} action="系统分布">
-      <div className="distribution-stack" aria-label="运行环境提交量分布">
-        {segments.map((segment, index) => (
+    <Panel title="渠道分布" icon={Gauge} action="官方 / 中转站">
+      <div className="distribution-stack" aria-label="渠道提交量分布">
+        {channels.map((channel, index) => (
           <span
-            key={segment.label}
+            key={channel.key || channel.label}
             style={{
-              width: `${(segment.count / total) * 100}%`,
+              width: `${(channel.count / total) * 100}%`,
               backgroundColor: SEGMENT_COLORS[index % SEGMENT_COLORS.length],
             }}
-            title={`${segment.label}: ${segment.count}`}
+            title={`${channel.label}: ${channel.count}`}
           />
         ))}
       </div>
       <div className="grid gap-2">
-        {segments.map((segment, index) => (
-          <div className="segment-row" key={segment.label}>
+        {channels.map((channel, index) => (
+          <div className="segment-row" key={channel.key || channel.label}>
             <span style={{ backgroundColor: SEGMENT_COLORS[index % SEGMENT_COLORS.length] }} />
-            <strong>{segment.label}</strong>
-            <em>{segment.count} 次</em>
-            <b>{percent(segment.accuracy)}</b>
+            <strong>{channel.label}</strong>
+            <em>{channel.count} 次</em>
+            <b>{percent(channel.accuracy)}</b>
           </div>
         ))}
       </div>
@@ -1263,13 +1282,29 @@ function ChannelCell({ submission }) {
 
 function channelDisplayLabel(submission) {
   const host = submission.codexProviderHost || hostFromURL(submission.codexProviderBaseURL);
-  if (submission.codexChannel === "official") return host ? `官方 API (${host})` : "官方 API";
+  if (submission.codexChannel === "official") {
+    if (host === "api.openai.com") return "OpenAI 官方 (api.openai.com)";
+    if (host === "api.anthropic.com") return "Anthropic 官方 (api.anthropic.com)";
+    return host ? `官方 API (${host})` : "官方 API";
+  }
+  if (submission.codexChannel === "domestic_official") {
+    if (host === "api.deepseek.com") return "DeepSeek 官方 (api.deepseek.com)";
+    return host ? `国产官方 API (${host})` : "国产官方 API";
+  }
   if (submission.codexChannel === "bridge") {
     const name = submission.codexBridgeName || "中转站";
     return host ? `${name} (${host})` : name;
   }
   if (submission.codexChannel === "unknown_bridge") return host ? `未识别中转站 (${host})` : "未识别中转站";
   return host || "未记录渠道";
+}
+
+function compactChannelLabel(channel) {
+  if (channel.kind === "openai_official") return "OpenAI 官方";
+  if (channel.kind === "domestic_official") return "国产官方";
+  if (channel.kind === "anthropic_official") return "Anthropic 官方";
+  if (channel.kind === "unknown_bridge") return "未识别中转站";
+  return String(channel.label || "渠道").replace(/\s*\([^)]*\)\s*$/, "");
 }
 
 function hostFromURL(value) {

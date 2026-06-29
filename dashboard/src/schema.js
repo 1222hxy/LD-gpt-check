@@ -104,6 +104,14 @@ const SegmentSchema = z.object({
   accuracy: z.number(),
 });
 
+const ChannelSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  kind: z.string(),
+  count: z.number(),
+  accuracy: z.number(),
+});
+
 const HourlyBucketSchema = z.object({
   hour: z.number().int().min(0).max(23),
   submissions: z.number(),
@@ -472,7 +480,9 @@ export const DashboardOverviewSchema = z.object({
   filters: z.object({
     range: z.string(),
     model: z.string(),
+    channel: z.string().optional().default("all"),
     models: z.array(z.string()),
+    channels: z.array(ChannelSchema).optional().default([]),
   }),
   summary: SummarySchema,
   trend: z.array(TrendPointSchema),
@@ -480,6 +490,7 @@ export const DashboardOverviewSchema = z.object({
   questionQuality: z.array(QuestionQualitySchema),
   recentSubmissions: z.array(RecentSubmissionSchema),
   userBridgeUsage: z.array(UserBridgeUsageSchema).optional().default([]),
+  channels: z.array(ChannelSchema).optional().default([]),
   segments: z.array(SegmentSchema),
   hourlyBuckets: z.array(HourlyBucketSchema),
   statistics: StatisticsSchema,

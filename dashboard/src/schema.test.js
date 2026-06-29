@@ -9,6 +9,8 @@ describe("dashboard schema", () => {
 
     expect(parsed.statistics.timeOfDay.hourly).toHaveLength(24);
     expect(parsed.hourlyBuckets).toHaveLength(24);
+    expect(parsed.filters.channels.some((channel) => channel.key === "official:deepseek")).toBe(true);
+    expect(parsed.channels.some((channel) => channel.kind === "domestic_official")).toBe(true);
     expect(parsed.statistics.forecast.accuracy.forecast).toHaveLength(7);
     expect(parsed.statistics.modelRanking.length).toBe(parsed.modelBreakdown.length);
     expect(parsed.statistics.drift.cusum.series).toHaveLength(parsed.trend.length);

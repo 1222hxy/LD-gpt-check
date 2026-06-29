@@ -214,14 +214,14 @@ export function linearTrendForecast(points, horizon = 7) {
 }
 
 export function analyzeTimeOfDay(hourlyBuckets) {
-  if (!hourlyBuckets?.length) {
+  if (!hourlyBuckets?.length || hourlyBuckets.every((item) => !item.attempts)) {
     return {
-      omnibus: { statistic: 0, degreesOfFreedom: 0, pValue: 1, verdict: "stable" },
+      omnibus: { statistic: 0, degreesOfFreedom: 0, pValue: 1, verdict: "insufficient" },
       hourly: [],
       segments: [],
       worstHours: [],
       degradationWindows: [],
-      summary: { worstHour: null, worstSegment: null, affectedAttempts: 0 },
+      summary: { worstHour: null, worstSegment: null, affectedAttempts: 0, overallAccuracy: 0 },
     };
   }
 
@@ -235,6 +235,7 @@ export function analyzeTimeOfDay(hourlyBuckets) {
   const overallAccuracy = overallSuccesses / overallTrials;
   const omnibus = chiSquareGoodness(rows);
   const rawHourly = rows.map((item) => {
+    const hourAccuracy = item.trials > 0 ? item.successes / item.trials : 0;
     const test = twoProportionZTest({
       baselineSuccesses: overallSuccesses - item.successes,
       baselineTrials: overallTrials - item.trials,
@@ -248,7 +249,7 @@ export function analyzeTimeOfDay(hourlyBuckets) {
       label: `${String(item.hour).padStart(2, "0")}:00`,
       attempts: item.trials,
       submissions: item.submissions,
-      accuracy: item.successes / item.trials,
+      accuracy: hourAccuracy,
       avgLatencySeconds: item.avgLatencySeconds,
       ci95Low: ci.low,
       ci95High: ci.high,
@@ -258,15 +259,15 @@ export function analyzeTimeOfDay(hourlyBuckets) {
       zScore: test.zScore,
       pValue: test.pValue,
       adjustedPValue: test.pValue,
-      effectSize: cohenH(item.successes / item.trials, overallAccuracy),
+      effectSize: item.trials > 0 ? cohenH(hourAccuracy, overallAccuracy) : 0,
       riskScore: Math.max(0, -test.delta) * Math.sqrt(item.trials),
-      verdict: "pending",
+      verdict: item.trials > 0 ? "pending" : "empty",
     };
   });
   const adjusted = holmAdjust(rawHourly.map((item) => item.pValue));
   rawHourly.forEach((item, index) => {
     item.adjustedPValue = adjusted[index];
-    item.verdict = item.adjustedPValue < 0.05 && item.deltaVsDay < 0 ? "degraded" : item.adjustedPValue < 0.05 ? "elevated" : "normal";
+    item.verdict = item.verdict === "empty" ? "empty" : item.adjustedPValue < 0.05 && item.deltaVsDay < 0 ? "degraded" : item.adjustedPValue < 0.05 ? "elevated" : "normal";
   });
 
   const hourly = rawHourly.map(formatHourlyResult);
@@ -302,6 +303,12 @@ export function analyzeTimeOfDay(hourlyBuckets) {
 }
 
 export function buildStatistics({ trend, modelBreakdown, questionQuality, recentSubmissions, hourlyBuckets }) {
+  trend = Array.isArray(trend) ? trend : [];
+  modelBreakdown = Array.isArray(modelBreakdown) ? modelBreakdown : [];
+  questionQuality = Array.isArray(questionQuality) ? questionQuality : [];
+  recentSubmissions = Array.isArray(recentSubmissions) ? recentSubmissions : [];
+  hourlyBuckets = Array.isArray(hourlyBuckets) ? hourlyBuckets : [];
+
   const modelTrials = modelBreakdown.map((item) => item.submissions * 150);
   const modelSuccesses = modelBreakdown.map((item, index) => Math.round(item.accuracy * modelTrials[index]));
   const totalTrials = modelTrials.reduce((total, value) => total + value, 0);
@@ -319,7 +326,7 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
     observedTrials: totalTrials,
   });
 
-  const bestAccuracy = Math.max(...modelBreakdown.map((item) => item.accuracy));
+  const bestAccuracy = modelBreakdown.length ? Math.max(...modelBreakdown.map((item) => item.accuracy)) : 0;
   const modelComparisons = modelBreakdown.map((item, index) => {
     const trials = modelTrials[index];
     const successes = modelSuccesses[index];
@@ -374,7 +381,7 @@ export function buildStatistics({ trend, modelBreakdown, questionQuality, recent
       delta: round(zTest.delta, 3),
       zScore: round(zTest.zScore, 2),
       pValue: round(zTest.pValue, 4),
-      verdict: zTest.pValue < 0.05 && zTest.delta < 0 ? "regression" : zTest.pValue < 0.05 ? "improved" : "stable",
+      verdict: totalTrials <= 0 ? "insufficient" : zTest.pValue < 0.05 && zTest.delta < 0 ? "regression" : zTest.pValue < 0.05 ? "improved" : "stable",
     },
     power: {
       baselineAccuracy,
@@ -487,11 +494,12 @@ function buildCorrelations({ trend, questionQuality, hourlyBuckets }) {
 }
 
 function buildQuestionDiagnostics(questionQuality) {
+  if (!questionQuality.length) return [];
   const failureRates = questionQuality.map((item) => item.failureRate);
   const avgTimes = questionQuality.map((item) => item.avgTimeSeconds);
   const failureMean = mean(failureRates);
   const failureStd = standardDeviation(failureRates);
-  const timeMedian = ss.median(avgTimes);
+  const timeMedian = ss.median(avgTimes) || 1;
 
   return questionQuality
     .map((item) => {
@@ -517,6 +525,19 @@ function buildQuestionDiagnostics(questionQuality) {
 }
 
 function buildModelRanking(modelBreakdown, modelSuccesses, modelTrials) {
+  if (modelBreakdown.length < 2) {
+    return modelBreakdown.map((item, index) => {
+      const posterior = betaPosteriorSummary(modelSuccesses[index] || 0, modelTrials[index] || 0);
+      return {
+        model: item.model,
+        posteriorMean: round(posterior.mean, 3),
+        posteriorStdDev: 0,
+        probabilityBest: 1,
+        expectedLoss: 0,
+        verdict: "insufficient",
+      };
+    });
+  }
   const posterior = modelBreakdown.map((item, index) => {
     const successes = modelSuccesses[index];
     const trials = modelTrials[index];
@@ -562,6 +583,9 @@ function buildRobustness({ recentSubmissions, questionQuality }) {
   const submissionAccuracy = recentSubmissions.map((item) => item.accuracy);
   const submissionLatency = recentSubmissions.map((item) => item.avgTimeSeconds);
   const questionFailures = questionQuality.map((item) => item.failureRate);
+  const submissionAccuracyMedian = submissionAccuracy.length ? ss.median(submissionAccuracy) : 0;
+  const submissionLatencyMedian = submissionLatency.length ? ss.median(submissionLatency) : 0;
+  const questionFailureMedian = questionFailures.length ? ss.median(questionFailures) : 0;
 
   return {
     recentOutliers: recentSubmissions
@@ -583,9 +607,9 @@ function buildRobustness({ recentSubmissions, questionQuality }) {
       }))
       .filter((item) => item.failureRobustZ >= 1.5),
     baselines: {
-      submissionAccuracyMedian: round(ss.median(submissionAccuracy), 3),
-      submissionLatencyMedian: round(ss.median(submissionLatency), 1),
-      questionFailureMedian: round(ss.median(questionFailures), 3),
+      submissionAccuracyMedian: round(submissionAccuracyMedian, 3),
+      submissionLatencyMedian: round(submissionLatencyMedian, 1),
+      questionFailureMedian: round(questionFailureMedian, 3),
       submissionSampleSize: recentSubmissions.length,
       questionSampleSize: questionQuality.length,
     },
@@ -603,6 +627,31 @@ function buildDistributionShape({ trend, recentSubmissions, questionQuality, hou
 }
 
 function buildDriftAnalysis(trend) {
+  if (trend.length < 4) {
+    return {
+      window: {
+        priorDays: 0,
+        recentDays: trend.length,
+        priorAccuracy: 0,
+        recentAccuracy: round(mean(trend.map((item) => item.accuracy)), 3),
+        delta: 0,
+        zScore: 0,
+        pValue: 1,
+        verdict: "insufficient",
+      },
+      volume: {
+        priorMean: 0,
+        recentMean: round(mean(trend.map((item) => item.submissions)), 1),
+        delta: 0,
+        tScore: 0,
+        degreesOfFreedom: 0,
+        pValue: 1,
+        verdict: "insufficient",
+      },
+      ewma: { lambda: 0.32, latest: 0, deltaVsMean: 0, min: 0, max: 0, verdict: "insufficient", series: [] },
+      cusum: { latest: 0, min: 0, max: 0, signalScore: 0, verdict: "insufficient", series: [] },
+    };
+  }
   const midpoint = Math.floor(trend.length / 2);
   const prior = trend.slice(0, midpoint);
   const recent = trend.slice(midpoint);
@@ -667,6 +716,22 @@ function buildDriftAnalysis(trend) {
 }
 
 function buildRiskBudget({ totalTrials, totalSuccesses, baselineAccuracy, trendStability, timeOfDay, robustness, questionDiagnostics }) {
+  if (totalTrials <= 0) {
+    return {
+      targetAccuracy: baselineAccuracy,
+      failureRate: 0,
+      failures: 0,
+      allowedFailures: 0,
+      excessFailures: 0,
+      budgetRemaining: 0,
+      burnRate: 0,
+      degradedAttemptShare: 0,
+      auditQuestions: 0,
+      outlierLoad: 0,
+      anomalyDays: 0,
+      verdict: "insufficient",
+    };
+  }
   const failures = totalTrials - totalSuccesses;
   const allowedFailures = Math.round(totalTrials * (1 - baselineAccuracy));
   const excessFailures = Math.max(0, failures - allowedFailures);
@@ -700,6 +765,18 @@ function buildRiskBudget({ totalTrials, totalSuccesses, baselineAccuracy, trendS
 }
 
 function buildEfficiencyFrontier(modelBreakdown) {
+  if (modelBreakdown.length < 2) {
+    return modelBreakdown.map((item) => ({
+      model: item.model,
+      accuracy: round(item.accuracy, 3),
+      avgTps: item.avgTps,
+      avgTimeSeconds: item.avgTimeSeconds,
+      utilityScore: round(item.accuracy, 3),
+      dominatedBy: [],
+      onFrontier: true,
+      verdict: "insufficient",
+    }));
+  }
   const maxTps = Math.max(...modelBreakdown.map((item) => item.avgTps));
   const minLatency = Math.min(...modelBreakdown.map((item) => item.avgTimeSeconds));
 
@@ -735,6 +812,7 @@ function buildEfficiencyFrontier(modelBreakdown) {
 }
 
 function buildPairwiseModelTests(modelBreakdown, modelSuccesses, modelTrials) {
+  if (modelBreakdown.length < 2) return [];
   const leaderIndex = modelBreakdown.reduce(
     (bestIndex, item, index) => (item.accuracy > modelBreakdown[bestIndex].accuracy ? index : bestIndex),
     0,
@@ -826,7 +904,7 @@ function buildTimeSegments(rows, overallSuccesses, overallTrials) {
     return {
       ...segment,
       attempts: trials,
-      accuracy: successes / trials,
+      accuracy: trials > 0 ? successes / trials : 0,
       avgLatencySeconds: mean(latencyValues),
       deltaVsDay: test.delta,
       zScore: test.zScore,
@@ -912,6 +990,18 @@ function formatHourlyResult(item) {
 }
 
 function buildTrendStability(trend) {
+  if (trend.length < 2) {
+    return {
+      submissionStdDev: 0,
+      accuracyStdDev: 0,
+      accuracyMean: 0,
+      upperControlLimit: 0,
+      lowerControlLimit: 0,
+      latestZScore: 0,
+      anomalies: [],
+      verdict: "insufficient",
+    };
+  }
   const accuracyValues = trend.map((item) => item.accuracy);
   const submissionValues = trend.map((item) => item.submissions);
   const accuracyMean = mean(accuracyValues);
@@ -956,7 +1046,7 @@ function buildTestCoverage(questionQuality, recentSubmissions) {
       { label: "视觉冒烟", passed: 2, total: 2, status: "pass" },
     ],
     totalAttempts,
-    passRate: round(passedAttempts / totalAttempts, 3),
+    passRate: totalAttempts > 0 ? round(passedAttempts / totalAttempts, 3) : 0,
     regressionCount,
     watchCount,
     flakyQuestions,

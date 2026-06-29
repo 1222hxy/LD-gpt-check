@@ -35,8 +35,9 @@ export function buildHourlyCsv(hourly) {
 
 export function downloadDashboardExport(data, filters) {
   const payload = buildDashboardExport(data, filters);
-  downloadText(`ld-gpt-check-dashboard-${filters.range}-${filters.model}.json`, JSON.stringify(payload, null, 2), "application/json");
-  downloadText(`ld-gpt-check-hourly-${filters.range}-${filters.model}.csv`, buildHourlyCsv(data.statistics.timeOfDay.hourly), "text/csv");
+  const channel = filters.channel || "all";
+  downloadText(`ld-gpt-check-dashboard-${filters.range}-${filters.model}-${channel}.json`, JSON.stringify(payload, null, 2), "application/json");
+  downloadText(`ld-gpt-check-hourly-${filters.range}-${filters.model}-${channel}.csv`, buildHourlyCsv(data.statistics.timeOfDay.hourly), "text/csv");
 }
 
 function downloadText(filename, text, type) {
