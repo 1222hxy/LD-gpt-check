@@ -4,171 +4,78 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="robots" content="noindex,nofollow" />
-    <title>中转站配置 - LD-gpt-check</title>
+    <title>中转站归一管理 - LD-gpt-check</title>
     <style>
-      :root {
-        color-scheme: light;
-        --bg: #f7fbff;
-        --text: #0f172a;
-        --muted: #64748b;
-        --line: #dbeafe;
-        --brand: #2563eb;
-        --cyan: #0891b2;
-        --green: #047857;
-        --red: #be123c;
-        --amber: #b45309;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: var(--text);
-        background: linear-gradient(135deg, rgba(37, 99, 235, .08), transparent 34%), linear-gradient(225deg, rgba(8, 145, 178, .12), transparent 38%), var(--bg);
-        line-height: 1.5;
-        padding: 20px;
-      }
-      main { width: min(100%, 1240px); margin: 0 auto; }
-      nav, .hero, .panel, .card {
-        border: 1px solid rgba(191, 219, 254, .95);
-        background: rgba(255, 255, 255, .94);
-        box-shadow: 0 16px 48px rgba(37, 99, 235, .11);
-        backdrop-filter: blur(16px);
-        border-radius: 10px;
-      }
-      nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; padding: 10px 12px; }
-      nav a { color: #334155; text-decoration: none; font-size: 14px; }
-      .brand { font-weight: 800; color: #1d4ed8; }
-      .nav-links { display: flex; flex-wrap: wrap; gap: 14px; }
-      .hero, .panel { padding: 20px; margin-bottom: 14px; }
-      .hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
-      .badge, .pill { display: inline-flex; border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 750; }
-      .badge { margin-bottom: 10px; border: 1px solid #bfdbfe; color: #1d4ed8; background: #eff6ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      .pill { background: #eff6ff; color: #1d4ed8; }
-      .pill.green { background: #ecfdf5; color: var(--green); }
-      .pill.amber { background: #fffbeb; color: var(--amber); }
-      .pill.red { background: #fff1f2; color: var(--red); }
-      h1 { margin: 0; font-size: 32px; line-height: 1.12; letter-spacing: 0; }
-      h2 { margin: 0 0 10px; font-size: 19px; }
-      h3 { margin: 0; font-size: 15px; }
-      p { margin: 8px 0 0; color: var(--muted); }
-      a { color: #1d4ed8; }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; overflow-wrap: anywhere; }
-      .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
-      .stat { border: 1px solid #dbeafe; border-radius: 8px; background: #f8fafc; padding: 12px; }
-      .stat span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
-      .stat strong { display: block; margin-top: 4px; font-size: 22px; }
-      .layout { display: grid; grid-template-columns: minmax(420px, .92fr) minmax(0, 1.08fr); gap: 14px; align-items: start; }
-      .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
-      label { display: grid; gap: 5px; font-weight: 700; }
-      label span { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: .02em; }
-      input, textarea, select {
-        width: 100%;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        padding: 9px 11px;
-        font: 600 14px system-ui, sans-serif;
-        background: #fff;
-      }
-      textarea { min-height: 152px; margin-top: 8px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; }
-      textarea:focus, input:focus, select:focus { outline: 3px solid rgba(37, 99, 235, .16); border-color: var(--brand); }
-      .check { min-height: 40px; display: flex; align-items: center; gap: 8px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 11px; background: #f8fafc; color: #334155; }
-      .check input { width: auto; }
-      .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
-      button, .button {
-        appearance: none;
-        border: 1px solid var(--brand);
-        border-radius: 8px;
-        background: linear-gradient(135deg, var(--brand), var(--cyan));
-        color: #fff;
-        min-height: 38px;
-        padding: 8px 12px;
-        font: 750 14px system-ui, sans-serif;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-      }
-      .secondary { border-color: #cbd5e1; background: #fff; color: #334155; }
-      .ghost { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
-      .danger { border-color: #fecdd3; background: #fff1f2; color: var(--red); }
-      .small { min-height: 32px; padding: 6px 9px; font-size: 12px; }
-      .status { border-top: 1px solid #e2e8f0; margin-top: 14px; padding-top: 12px; font-size: 14px; color: #64748b; }
-      .error { color: var(--red); }
-      .success { color: var(--green); }
-      .toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-      .toolbar input { max-width: 280px; }
-      .filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
-      .filter-chip { border: 1px solid #cbd5e1; background: #fff; color: #334155; min-height: 32px; padding: 5px 10px; }
-      .filter-chip.is-active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
-      .list { display: grid; gap: 10px; }
-      .card { padding: 13px; box-shadow: none; }
-      .card.is-drop-target { outline: 3px solid rgba(37, 99, 235, .2); border-color: #2563eb; }
-      .card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-      .title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-      .icon { width: 34px; height: 34px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; object-fit: contain; flex: 0 0 auto; }
-      .icon-fallback { display: grid; place-items: center; color: #1d4ed8; font-weight: 800; background: #eff6ff; }
-      .meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; color: #64748b; font-size: 13px; }
-      .url-list { display: grid; gap: 5px; margin-top: 10px; }
-      .url-row { display: flex; justify-content: space-between; gap: 8px; border: 1px solid #e2e8f0; border-radius: 7px; background: #fff; padding: 7px 9px; }
-      .candidate-list { display: grid; gap: 6px; margin-top: 10px; }
-      .candidate { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #dbeafe; border-radius: 8px; background: #f8fafc; padding: 8px; }
-      .details { margin-top: 10px; }
-      .details summary { cursor: pointer; color: #1d4ed8; font-weight: 750; }
-      .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      .preview-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid #dbeafe; border-radius: 9px; padding: 10px; background: #f8fafc; }
-      .empty { border: 1px dashed #bfdbfe; border-radius: 8px; padding: 16px; background: #f8fafc; color: var(--muted); }
-      .help { margin-top: 10px; border: 1px solid #dbeafe; border-radius: 8px; background: #f8fafc; padding: 10px 12px; color: #475569; font-size: 13px; }
-      @media (max-width: 960px) {
-        body { padding: 12px; }
-        .layout, .form-grid, .stats, .split { grid-template-columns: 1fr; }
-        .hero, .panel { padding: 16px; }
-        .hero-head, .toolbar { display: block; }
-        .toolbar input { max-width: none; margin-top: 8px; }
-        h1 { font-size: 28px; }
-        button, .button { width: 100%; }
-        .url-row { display: grid; }
-      }
+      :root{color-scheme:light;--bg:#f7fbff;--text:#0f172a;--muted:#64748b;--line:#dbeafe;--brand:#2563eb;--cyan:#0891b2;--green:#047857;--red:#be123c;--amber:#b45309}
+      *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:linear-gradient(135deg,rgba(37,99,235,.08),transparent 34%),linear-gradient(225deg,rgba(8,145,178,.12),transparent 38%),var(--bg);line-height:1.5;padding:18px}
+      main{width:min(100%,1440px);margin:0 auto}nav,.hero,.panel,.card,.drawer{border:1px solid rgba(191,219,254,.95);background:rgba(255,255,255,.95);box-shadow:0 16px 48px rgba(37,99,235,.1);backdrop-filter:blur(16px);border-radius:10px}
+      nav{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px;padding:10px 12px}.brand{font-weight:800;color:#1d4ed8;text-decoration:none}.nav-links{display:flex;gap:14px;flex-wrap:wrap}.nav-links a{color:#334155;text-decoration:none;font-size:14px}
+      .hero{padding:18px;margin-bottom:14px}.hero-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.badge,.pill{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:750}.badge{margin-bottom:10px;border:1px solid #bfdbfe;color:#1d4ed8;background:#eff6ff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.pill{background:#eff6ff;color:#1d4ed8}.pill.green{background:#ecfdf5;color:var(--green)}.pill.amber{background:#fffbeb;color:var(--amber)}.pill.red{background:#fff1f2;color:var(--red)}
+      h1{margin:0;font-size:30px;line-height:1.12;letter-spacing:0}h2{margin:0;font-size:18px}h3{margin:0;font-size:15px}p{margin:8px 0 0;color:var(--muted)}a{color:#1d4ed8}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;overflow-wrap:anywhere}
+      .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:16px}.stat{border:1px solid #dbeafe;border-radius:8px;background:#f8fafc;padding:12px}.stat span,.stat small{display:block;color:var(--muted);font-size:12px;font-weight:700}.stat strong{display:block;margin-top:4px;font-size:22px}
+      .board{display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px}.panel{padding:14px}.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px}.toolbar input{max-width:320px}
+      input,textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 11px;font:600 14px system-ui,sans-serif;background:#fff}textarea{min-height:130px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}input:focus,textarea:focus{outline:3px solid rgba(37,99,235,.16);border-color:var(--brand)}
+      button,.button{appearance:none;border:1px solid var(--brand);border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--cyan));color:#fff;min-height:36px;padding:7px 11px;font:750 13px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.ghost{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}.danger{border-color:#fecdd3;background:#fff1f2;color:var(--red)}.icon-button{width:32px;min-height:32px;padding:0}.button-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+      .list{display:grid;gap:10px}.card{padding:12px;box-shadow:none}.card header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.card.is-drop-target{outline:3px solid rgba(37,99,235,.2);border-color:#2563eb}.card.is-dragging{opacity:.65}.title{display:flex;align-items:center;gap:10px;min-width:0}.icon{width:34px;height:34px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;object-fit:contain;flex:0 0 auto}.icon-fallback{display:grid;place-items:center;color:#1d4ed8;font-weight:800;background:#eff6ff}.meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;color:#64748b;font-size:13px}.empty{border:1px dashed #bfdbfe;border-radius:8px;padding:16px;background:#f8fafc;color:var(--muted)}
+      .bridge-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.drop-hint{margin-top:10px;border:1px dashed #bfdbfe;border-radius:8px;background:#f8fafc;padding:9px;color:#64748b;font-size:13px}.url-preview{margin-top:10px;display:grid;gap:5px}.url-preview div,.alias-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid #e2e8f0;border-radius:7px;background:#fff;padding:7px 9px}.alias-row.sortable-ghost{opacity:.45}.drag-handle{cursor:grab;color:#64748b;font-weight:900}
+      .drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.2);display:none;z-index:20}.drawer-backdrop.is-open{display:block}.drawer{position:fixed;right:16px;top:16px;bottom:16px;width:min(520px,calc(100vw - 32px));padding:16px;overflow:auto;z-index:21;transform:translateX(calc(100% + 24px));transition:transform .18s ease}.drawer.is-open{transform:translateX(0)}.drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.field{display:grid;gap:5px;margin-top:12px}.field span{font-size:12px;color:#64748b;text-transform:uppercase;font-weight:800}.status{border-top:1px solid #e2e8f0;margin-top:14px;padding-top:12px;font-size:14px;color:#64748b}.error{color:var(--red)}.success{color:var(--green)}
+      @media(max-width:980px){body{padding:12px}.board,.stats{grid-template-columns:1fr}.hero-head,.toolbar{display:block}.toolbar input{max-width:none;margin-top:8px}.bridge-grid{grid-template-columns:1fr}button,.button{width:100%}.icon-button{width:100%}}
     </style>
   </head>
   <body>
     <main>
       <nav>
         <a class="brand" href="/admin">LD-gpt-check Admin</a>
-        <div class="nav-links">
-          <a href="/admin">管理首页</a>
-          <a href="/admin/questions">题目管理</a>
-          <a href="/account">账号</a>
-        </div>
+        <div class="nav-links"><a href="/admin">管理首页</a><a href="/admin/questions">题目管理</a><a href="/account">账号</a></div>
       </nav>
       <section class="hero">
         <div class="hero-head">
           <div>
-            <span class="badge">Bridge Config</span>
-            <h1>中转站识别与归一化</h1>
-            <p>把用户提交的 API base URL 整理到正确中转站。优先通过确认、绑定、拖拽和合并维护，少填字段。</p>
+            <span class="badge">Bridge Normalize</span>
+            <h1>中转站归一管理</h1>
+            <p>把待归一 API Base URL 拖到正确中转站。主页、图标和名称只在详情里轻量维护。</p>
           </div>
-          <a class="button secondary" href="/admin">返回管理首页</a>
+          <button class="secondary" type="button" id="new-bridge">新建中转站</button>
         </div>
         <div class="stats" id="stats"></div>
       </section>
-      <section id="app" class="panel">
-        <p>正在检查登录状态...</p>
+      <section id="app" class="board">
+        <section class="panel"><p>正在检查登录状态...</p></section>
       </section>
     </main>
+
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+
+    <script src="/admin/bridges/sortable.min.js"></script>
     <script>
       const app = document.querySelector("#app");
       const stats = document.querySelector("#stats");
+      const drawer = document.querySelector("#drawer");
+      const drawerBackdrop = document.querySelector("#drawer-backdrop");
       let latestPayload = null;
-      let activeFilter = "pending";
+      let activeBridge = null;
+      let activeSuggestion = null;
+      let aliasSortable = null;
 
       function escapeHTML(value) {
-        return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+        return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
       }
-
       function slugify(value) {
-        return String(value).trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+        return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+      }
+      function shortURL(value) {
+        const text = String(value || "");
+        return text.length > 58 ? `${text.slice(0, 42)}...${text.slice(-12)}` : text;
+      }
+      function renderIcon(url, label) {
+        return url ? `<img class="icon" src="${escapeHTML(url)}" alt="" loading="lazy" />` : `<span class="icon icon-fallback">${escapeHTML((label || "?").slice(0, 1).toUpperCase())}</span>`;
+      }
+      function setStatus(message, type = "") {
+        const status = document.querySelector("#status");
+        if (!status) return;
+        status.className = `status ${type}`.trim();
+        status.textContent = message;
       }
 
       async function load() {
@@ -179,501 +86,284 @@
           return;
         }
         if (!response.ok) {
-          app.innerHTML = `<p class="error">${escapeHTML(payload.error || "加载失败")}</p>`;
+          app.innerHTML = `<section class="panel"><p class="error">${escapeHTML(payload.error || "加载失败")}</p></section>`;
           return;
         }
         latestPayload = payload;
         renderStats(payload);
-        render(payload);
+        renderBoard(payload);
       }
 
       function renderStats(payload) {
         const bridges = payload.bridges || [];
         const activeURLs = bridges.flatMap((bridge) => bridge.base_urls || []).filter((item) => item.is_active).length;
-        const mergedCount = Number(payload.merged_count || 0);
         const suggestions = payload.suggestions || [];
-        const unknownUploads = suggestions.filter((item) => item.source === "upload").reduce((sum, item) => sum + Number(item.occurrence_count || 0), 0);
-        const duplicateGroups = payload.duplicate_groups || [];
         stats.innerHTML = `
           <article class="stat"><span>有效中转站</span><strong>${bridges.length}</strong></article>
+          <article class="stat"><span>待归一 URL</span><strong>${suggestions.length}</strong></article>
           <article class="stat"><span>启用 API Base URL</span><strong>${activeURLs}</strong></article>
-          <article class="stat"><span>待处理候选</span><strong>${suggestions.length}</strong></article>
-          <article class="stat"><span>疑似重复</span><strong>${duplicateGroups.length}</strong><small>已合并 ${mergedCount}</small></article>
+          <article class="stat"><span>已合并历史</span><strong>${Number(payload.merged_count || 0)}</strong></article>
         `;
       }
 
-      function render(payload) {
+      function renderBoard(payload) {
         app.innerHTML = `
-          <div class="filter-row">
-            ${[
-              ["pending", "待确认"],
-              ["duplicates", "疑似重复"],
-              ["popular", "使用最多"],
-              ["missing_icon", "没有 icon"],
-              ["missing_name", "没有名称"],
-              ["all", "全部中转站"],
-            ].map(([id, label]) => `<button class="filter-chip ${activeFilter === id ? "is-active" : ""}" type="button" data-filter="${id}">${label}</button>`).join("")}
-          </div>
-          <section style="margin-top: 14px" id="duplicate-section">${renderDuplicates(payload.duplicate_groups || [])}</section>
-          <div class="layout">
-            <section>
-              <div class="toolbar">
-                <h2 id="form-title">粘贴主页或 Base URL 自动填充</h2>
-                <button class="secondary small" type="button" id="new-bridge">新建</button>
-              </div>
-              <form id="bridge-form">
-                <input type="hidden" name="suggestion_id" />
-                <label><span>主页 URL 或 API Base URL</span><input name="homepage_or_base" maxlength="512" placeholder="https://example.com 或 https://api.example.com/v1" /></label>
-                <div class="form-grid">
-                  <label><span>名称</span><input name="name" maxlength="128" placeholder="例如 Linux.do Bridge" required /></label>
-                  <label><span>Slug</span><input name="slug" maxlength="64" placeholder="自动从名称生成" /></label>
-                  <label><span>Icon / 缓存图标</span><input name="icon_url" maxlength="98304" placeholder="自动抓取并缓存，必要时也可粘贴 URL" /></label>
-                  <label><span>主页 URL</span><input name="homepage_url" maxlength="512" placeholder="https://example.com/" /></label>
-                </div>
-                <label style="margin-top: 12px"><span>描述</span><input name="description" maxlength="300" placeholder="自动从网页 description / og:description 填充" /></label>
-                <label style="margin-top: 12px"><span>API Base URLs（每行一个，不要填写官网主页）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1"></textarea></label>
-                <div class="form-grid" style="margin-top: 10px">
-                  <label><span>状态</span><select name="status"><option value="confirmed">已确认</option><option value="pending">待确认</option><option value="hidden">隐藏</option></select></label>
-                  <label><span>主要 API Base URL</span><input name="primary_base_url" maxlength="256" placeholder="默认使用第一条" /></label>
-                </div>
-                <div class="help">推荐流程：粘贴主页 URL 自动填充，确认卡片预览，再把候选拖到已有中转站或一键绑定。</div>
-                <div class="actions">
-                  <button type="button" id="inspect-current">自动填充</button>
-                  <button type="submit">保存配置</button>
-                  <button class="secondary" type="button" id="clear-form">清空表单</button>
-                </div>
-              </form>
-              <p class="status" id="status">当前管理员：${escapeHTML(payload.user.username || payload.user.login || payload.user.id)}。</p>
-            </section>
-            <section>
-              <div class="toolbar">
-                <h2>待确认队列</h2>
-                <input id="suggestion-filter" placeholder="筛选候选 URL / host" />
-              </div>
-              <div class="list" id="suggestion-list">${renderSuggestions(payload.suggestions || "")}</div>
-            </section>
-          </div>
-          <section style="margin-top: 22px">
+          <section class="panel">
+            <div class="toolbar">
+              <h2>待归一 URL</h2>
+              <input id="suggestion-filter" placeholder="筛选 URL / host" />
+            </div>
+            <div class="list" id="pending-list">${renderSuggestions(payload.suggestions || [])}</div>
+          </section>
+          <section class="panel">
             <div class="toolbar">
               <h2>中转站卡片</h2>
               <input id="bridge-filter" placeholder="筛选名称 / URL" />
             </div>
-            <div class="list" id="bridge-list">${renderBridges(payload.bridges || [])}</div>
+            <div class="bridge-grid" id="bridge-list">${renderBridges(payload.bridges || [])}</div>
           </section>
         `;
-        bindEvents();
-      }
-
-      function bindEvents() {
-        const form = document.querySelector("#bridge-form");
-        form.addEventListener("submit", save);
-        form.name.addEventListener("input", () => {
-          if (!form.slug.dataset.manual) form.slug.value = slugify(form.name.value);
-        });
-        form.slug.addEventListener("input", () => {
-          form.slug.dataset.manual = "1";
-        });
-        document.querySelector("#inspect-current").addEventListener("click", inspectCurrent);
-        document.querySelector("#clear-form").addEventListener("click", resetForm);
-        document.querySelector("#new-bridge").addEventListener("click", resetForm);
-        document.querySelector("#suggestion-filter").addEventListener("input", rerenderSuggestions);
-        document.querySelector("#bridge-filter").addEventListener("input", rerenderBridges);
-        document.querySelectorAll("[data-filter]").forEach((button) => button.addEventListener("click", setFilter));
-        document.querySelectorAll("[data-inspect]").forEach((button) => button.addEventListener("click", inspectSuggestion));
-        document.querySelectorAll("[data-accept]").forEach((button) => button.addEventListener("click", acceptSuggestion));
-        document.querySelectorAll("[data-bind-suggestion]").forEach((button) => button.addEventListener("click", bindSuggestion));
-        document.querySelectorAll("[data-archive]").forEach((button) => button.addEventListener("click", archiveSuggestion));
-        document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", editBridge));
-        document.querySelectorAll("[data-alias-action]").forEach((button) => button.addEventListener("click", aliasAction));
-        document.querySelectorAll("[data-test-url]").forEach((button) => button.addEventListener("click", testBaseURL));
-        document.querySelectorAll("[data-copy-url]").forEach((button) => button.addEventListener("click", copyBaseURL));
-        document.querySelectorAll("[data-merge]").forEach((button) => button.addEventListener("click", mergeBridge));
-        document.querySelectorAll("[data-ignore-merge]").forEach((button) => button.addEventListener("click", ignoreMerge));
-        document.querySelectorAll("[data-drop-bridge]").forEach((card) => {
-          card.addEventListener("dragover", (event) => { event.preventDefault(); card.classList.add("is-drop-target"); });
-          card.addEventListener("dragleave", () => card.classList.remove("is-drop-target"));
-          card.addEventListener("drop", dropSuggestionOnBridge);
-        });
-        document.querySelectorAll("[draggable='true'][data-suggestion-id]").forEach((card) => {
-          card.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", card.dataset.suggestionId));
-        });
-      }
-
-      function setFilter(event) {
-        activeFilter = event.currentTarget.dataset.filter || "pending";
-        render(latestPayload);
-      }
-
-      function renderIcon(url, label) {
-        return url
-          ? `<img class="icon" src="${escapeHTML(url)}" alt="${escapeHTML(label)} icon" loading="lazy" />`
-          : `<span class="icon icon-fallback">${escapeHTML((label || "?").slice(0, 1).toUpperCase())}</span>`;
+        bindBoardEvents();
+        initSuggestionDrag();
+        initBridgeDrops();
       }
 
       function renderSuggestions(items) {
-        const list = Array.isArray(items) ? items : [];
         const term = String(document.querySelector("#suggestion-filter")?.value || "").toLowerCase();
-        const filtered = list.filter((item) => [item.base_url, item.host, item.root_domain, item.submitted_name, item.detected_name, item.page_title].join(" ").toLowerCase().includes(term));
-        if (!filtered.length) return `<div class="empty">没有待处理候选。</div>`;
-        return filtered.map(renderSuggestion).join("");
-      }
-
-      function renderSuggestion(item) {
-        const name = item.detected_name || item.submitted_name || item.page_title || item.host;
-        const submitter = item.username || item.login || "unknown";
-        const candidates = item.candidates || [];
-        return `
-          <article class="card" draggable="true" data-suggestion-id="${escapeHTML(item.id)}">
-            <header>
-              <div class="title">${renderIcon(item.icon_url, name)}<div><h3>${escapeHTML(name)}</h3><code>${escapeHTML(item.base_url)}</code></div></div>
-              <span class="pill amber">${Number(item.confidence || 0)}%</span>
-            </header>
-            <div class="meta">
-              <span>host: ${escapeHTML(item.host)}</span>
-              <span>root: ${escapeHTML(item.root_domain || "-")}</span>
-              <span>提交人: ${escapeHTML(submitter)}</span>
-              <span>出现: ${Number(item.occurrence_count || 0)}</span>
-              <span>用户: ${Number(item.user_count || 0)}</span>
-              ${item.page_title ? `<span>title: ${escapeHTML(item.page_title)}</span>` : ""}
-            </div>
-            ${item.page_description ? `<p>${escapeHTML(item.page_description)}</p>` : ""}
-            ${candidates.length ? `<div class="candidate-list">${candidates.map((candidate) => `
-              <div class="candidate">
-                <span><strong>${escapeHTML(candidate.bridge_name)}</strong> <span class="pill">${Number(candidate.confidence || 0)}%</span><br><small>${escapeHTML(candidate.reason || "可能匹配")}</small></span>
-                <button class="small" type="button" data-bind-suggestion="${escapeHTML(item.id)}" data-bridge-id="${escapeHTML(candidate.bridge_id)}">绑定</button>
-              </div>
-            `).join("")}</div>` : `<div class="empty">未找到可靠候选，可确认为新中转站。</div>`}
-            <div class="actions">
-              <button class="ghost small" type="button" data-inspect="${escapeHTML(item.id)}">读取网页信息</button>
-              <button class="small" type="button" data-accept="${escapeHTML(item.id)}">采纳到表单</button>
-              <button class="secondary small" type="button" data-archive="${escapeHTML(item.id)}">忽略</button>
-              <button class="danger small" type="button" data-archive="${escapeHTML(item.id)}" data-status="hidden">隐藏</button>
-            </div>
-          </article>
-        `;
-      }
-
-      function renderBridges(items) {
-        const list = Array.isArray(items) ? items : [];
-        const term = String(document.querySelector("#bridge-filter")?.value || "").toLowerCase();
-        const filtered = list
-          .filter((bridge) => filterBridge(bridge))
-          .filter((bridge) => [bridge.name, bridge.slug, bridge.root_domain, bridge.homepage_url, ...(bridge.base_urls || []).map((item) => item.base_url)].join(" ").toLowerCase().includes(term));
-        if (!filtered.length) return `<div class="empty">还没有配置中转站。</div>`;
-        return filtered.map(renderBridge).join("");
-      }
-
-      function filterBridge(bridge) {
-        if (activeFilter === "pending") return true;
-        if (activeFilter === "duplicates") return (latestPayload?.duplicate_groups || []).some((group) => group.bridges.some((item) => item.id === bridge.id));
-        if (activeFilter === "popular") return Number(bridge.usage_count || 0) > 0;
-        if (activeFilter === "missing_icon") return !bridge.icon_url;
-        if (activeFilter === "missing_name") return !bridge.name || bridge.name === bridge.slug;
-        return true;
-      }
-
-      function renderBridge(bridge) {
-        const urls = bridge.base_urls || [];
-        const activeURLCount = urls.filter((item) => item.is_active).length;
-        return `
-          <article class="card" data-drop-bridge="${escapeHTML(bridge.id)}">
-            <header>
-              <div class="title">${renderIcon(bridge.icon_url, bridge.name)}<div><h3>${escapeHTML(bridge.name)}</h3><code>${escapeHTML(bridge.slug)}</code></div></div>
-              <span class="pill ${bridge.is_active ? "green" : "red"}">${escapeHTML(bridge.status || (bridge.is_active ? "confirmed" : "hidden"))}</span>
-            </header>
-            ${bridge.description ? `<p>${escapeHTML(bridge.description)}</p>` : ""}
-            ${bridge.homepage_url ? `<p><a href="${escapeHTML(bridge.homepage_url)}" target="_blank" rel="noreferrer">${escapeHTML(bridge.homepage_url)}</a></p>` : ""}
-            <div class="meta">
-              <span>API Base URL: ${activeURLCount}${urls.length !== activeURLCount ? ` / ${urls.length}` : ""}</span>
-              <span>使用: ${Number(bridge.usage_count || 0)}</span>
-              <span>用户: ${Number(bridge.user_count || 0)}</span>
-              <span>root: ${escapeHTML(bridge.root_domain || "-")}</span>
-            </div>
-            <div class="url-list">
-              ${urls.length ? urls.map((item) => `<div class="url-row">
-                <span><code>${escapeHTML(item.base_url)}</code>${item.is_primary ? ` <span class="pill green">主</span>` : ""}<br><small>${escapeHTML(item.host || "")} · 使用 ${Number(item.usage_count || 0)}</small></span>
-                <span class="actions" style="margin-top:0">
-                  <button class="ghost small" type="button" data-test-url="${escapeHTML(item.base_url)}">测试</button>
-                  <button class="secondary small" type="button" data-copy-url="${escapeHTML(item.base_url)}">复制</button>
-                  <button class="secondary small" type="button" data-alias-action="primary" data-alias-id="${escapeHTML(item.id)}">设主</button>
-                  <button class="secondary small" type="button" data-alias-action="${item.is_active ? "disable" : "enable"}" data-alias-id="${escapeHTML(item.id)}">${item.is_active ? "禁用" : "启用"}</button>
-                  <button class="danger small" type="button" data-alias-action="delete" data-alias-id="${escapeHTML(item.id)}">删除</button>
-                </span>
-              </div>`).join("") : `<div class="empty">没有 base URL。可以把待确认卡片拖到这里。</div>`}
-            </div>
-            <div class="actions">
-              <button class="ghost small" type="button" data-edit="${escapeHTML(bridge.id)}">编辑</button>
-            </div>
-          </article>
-        `;
-      }
-
-      function renderDuplicates(groups) {
-        if (activeFilter !== "duplicates") return "";
-        if (!groups.length) return `<div class="empty">暂时没有疑似重复中转站。</div>`;
-        return `<div class="list">${groups.map((group) => {
-          const [a, b] = group.bridges;
+        const list = items.filter((item) => [item.base_url, item.host, item.root_domain, item.submitted_name, item.detected_name, item.page_title].join(" ").toLowerCase().includes(term));
+        if (!list.length) return `<div class="empty">没有待归一 URL。</div>`;
+        return list.map((item) => {
+          const name = item.detected_name || item.submitted_name || item.page_title || item.host || "待归一 URL";
+          const candidate = (item.candidates || [])[0];
           return `
-            <article class="card">
+            <article class="card pending-card" data-suggestion-id="${escapeHTML(item.id)}">
               <header>
-                <div><h3>这两个站点可能是同一个中转站</h3><p>${escapeHTML(group.reason || "名称、域名或 icon 相似")} · ${Number(group.confidence || 0)}%</p></div>
-                <span class="pill amber">需要确认</span>
+                <div class="title">${renderIcon(item.icon_url, name)}<div><h3>${escapeHTML(name)}</h3><code>${escapeHTML(shortURL(item.base_url))}</code></div></div>
+                <span class="pill amber">${Number(item.confidence || 0)}%</span>
               </header>
-              <div class="split" style="margin-top:10px">
-                ${[a, b].map((item) => `
-                  <div class="preview-card">
-                    ${renderIcon(item.icon_url, item.name)}
-                    <div><strong>${escapeHTML(item.name)}</strong><br><code>${escapeHTML(item.homepage_url || item.root_domain || item.id)}</code>
-                    <p>使用 ${Number(item.usage_count || 0)} 次，用户 ${Number(item.user_count || 0)}，base URL ${(item.base_urls || []).length}</p></div>
-                  </div>
-                `).join("")}
+              <div class="meta">
+                <span>${escapeHTML(item.host || "-")}</span>
+                <span>出现 ${Number(item.occurrence_count || 0)}</span>
+                <span>用户 ${Number(item.user_count || 0)}</span>
               </div>
-              <div class="actions">
-                <button class="small" type="button" data-merge="${escapeHTML(a.id)}" data-merge-other="${escapeHTML(b.id)}">保留 ${escapeHTML(a.name)}</button>
-                <button class="small" type="button" data-merge="${escapeHTML(b.id)}" data-merge-other="${escapeHTML(a.id)}">保留 ${escapeHTML(b.name)}</button>
-                <button class="secondary small" type="button" data-ignore-merge="${escapeHTML(a.id)}" data-ignore-other="${escapeHTML(b.id)}">不再提醒</button>
+              ${candidate ? `<p>推荐：${escapeHTML(candidate.bridge_name)}，${Number(candidate.confidence || 0)}%</p>` : `<p>拖到右侧中转站，或新建中转站。</p>`}
+              <div class="button-row">
+                <button class="ghost" type="button" data-create-from="${escapeHTML(item.id)}">新建</button>
+                <button class="secondary" type="button" data-ignore="${escapeHTML(item.id)}">忽略</button>
               </div>
             </article>
           `;
-        }).join("")}</div>`;
+        }).join("");
       }
 
-      function rerenderSuggestions() {
-        document.querySelector("#suggestion-list").innerHTML = renderSuggestions(latestPayload?.suggestions || []);
-        document.querySelectorAll("[data-inspect]").forEach((button) => button.addEventListener("click", inspectSuggestion));
-        document.querySelectorAll("[data-accept]").forEach((button) => button.addEventListener("click", acceptSuggestion));
-        document.querySelectorAll("[data-bind-suggestion]").forEach((button) => button.addEventListener("click", bindSuggestion));
-        document.querySelectorAll("[data-archive]").forEach((button) => button.addEventListener("click", archiveSuggestion));
-        document.querySelectorAll("[draggable='true'][data-suggestion-id]").forEach((card) => {
-          card.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", card.dataset.suggestionId));
+      function renderBridges(items) {
+        const term = String(document.querySelector("#bridge-filter")?.value || "").toLowerCase();
+        const list = items.filter((bridge) => [bridge.name, bridge.slug, bridge.root_domain, bridge.homepage_url, ...(bridge.base_urls || []).map((item) => item.base_url)].join(" ").toLowerCase().includes(term));
+        if (!list.length) return `<div class="empty">还没有中转站。</div>`;
+        return list.map((bridge) => {
+          const activeURLs = (bridge.base_urls || []).filter((item) => item.is_active);
+          const preview = activeURLs.slice(0, 3).map((item) => `<div><code>${escapeHTML(shortURL(item.base_url))}</code><span>${Number(item.usage_count || 0)}</span></div>`).join("");
+          return `
+            <article class="card bridge-card" data-bridge-id="${escapeHTML(bridge.id)}">
+              <header>
+                <div class="title">${renderIcon(bridge.icon_url, bridge.name)}<div><h3>${escapeHTML(bridge.name)}</h3><code>${escapeHTML(bridge.homepage_url || bridge.root_domain || bridge.slug)}</code></div></div>
+                <span class="pill green">${activeURLs.length}</span>
+              </header>
+              <div class="meta">
+                <span>使用 ${Number(bridge.usage_count || 0)}</span>
+                <span>用户 ${Number(bridge.user_count || 0)}</span>
+                <span>${escapeHTML(bridge.root_domain || "-")}</span>
+              </div>
+              <div class="url-preview">${preview || `<div><span>暂无 API Base URL</span></div>`}</div>
+              <div class="drop-hint" data-bridge-drop="${escapeHTML(bridge.id)}">拖入待归一 URL 绑定到这里</div>
+              <div class="button-row"><button type="button" data-open-bridge="${escapeHTML(bridge.id)}">详情</button></div>
+            </article>
+          `;
+        }).join("");
+      }
+
+      function bindBoardEvents() {
+        document.querySelector("#suggestion-filter").addEventListener("input", () => {
+          document.querySelector("#pending-list").innerHTML = renderSuggestions(latestPayload?.suggestions || []);
+          bindBoardEvents();
+          initSuggestionDrag();
+        }, { once: true });
+        document.querySelector("#bridge-filter").addEventListener("input", () => {
+          document.querySelector("#bridge-list").innerHTML = renderBridges(latestPayload?.bridges || []);
+          bindBoardEvents();
+          initBridgeDrops();
+        }, { once: true });
+        document.querySelectorAll("[data-open-bridge]").forEach((button) => button.addEventListener("click", () => openBridgeDrawer(button.dataset.openBridge)));
+        document.querySelectorAll("[data-create-from]").forEach((button) => button.addEventListener("click", () => openSuggestionDrawer(button.dataset.createFrom)));
+        document.querySelectorAll("[data-ignore]").forEach((button) => button.addEventListener("click", () => archiveSuggestion(button.dataset.ignore)));
+      }
+
+      function initSuggestionDrag() {
+        const list = document.querySelector("#pending-list");
+        if (!list || !window.Sortable) return;
+        Sortable.create(list, {
+          group: { name: "bridge-suggestions", pull: "clone", put: false },
+          sort: false,
+          animation: 150,
+          draggable: ".pending-card",
+          ghostClass: "is-dragging",
         });
       }
 
-      function rerenderBridges() {
-        document.querySelector("#bridge-list").innerHTML = renderBridges(latestPayload?.bridges || []);
-        document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", editBridge));
-        document.querySelectorAll("[data-alias-action]").forEach((button) => button.addEventListener("click", aliasAction));
-        document.querySelectorAll("[data-test-url]").forEach((button) => button.addEventListener("click", testBaseURL));
-        document.querySelectorAll("[data-copy-url]").forEach((button) => button.addEventListener("click", copyBaseURL));
-        document.querySelectorAll("[data-drop-bridge]").forEach((card) => {
-          card.addEventListener("dragover", (event) => { event.preventDefault(); card.classList.add("is-drop-target"); });
-          card.addEventListener("dragleave", () => card.classList.remove("is-drop-target"));
-          card.addEventListener("drop", dropSuggestionOnBridge);
+      function initBridgeDrops() {
+        document.querySelectorAll("[data-bridge-drop]").forEach((drop) => {
+          Sortable.create(drop, {
+            group: { name: "bridge-suggestions", pull: false, put: true },
+            sort: false,
+            animation: 150,
+            onAdd: async (event) => {
+              const suggestionID = event.item.dataset.suggestionId;
+              event.item.remove();
+              await bindSuggestionToBridge(suggestionID, drop.dataset.bridgeDrop);
+            },
+          });
         });
-      }
-
-      function suggestionByID(id) {
-        return (latestPayload?.suggestions || []).find((item) => item.id === id);
       }
 
       function bridgeByID(id) {
         return (latestPayload?.bridges || []).find((item) => item.id === id);
       }
-
-      async function inspectSuggestion(event) {
-        const item = suggestionByID(event.currentTarget.dataset.inspect);
-        if (!item) return;
-        await inspectAndFill(item, true);
+      function suggestionByID(id) {
+        return (latestPayload?.suggestions || []).find((item) => item.id === id);
       }
 
-      async function inspectCurrent() {
-        const form = document.querySelector("#bridge-form");
-        const targetURL = form.homepage_or_base.value.trim() || form.homepage_url.value.trim() || firstBaseURL(form.base_urls.value);
-        if (!targetURL) return setStatus("请先填写主页 URL 或至少一个 base URL。", "error");
-        await inspectAndFill({ base_url: targetURL, homepage_url: targetURL, submitted_name: form.name.value, id: form.suggestion_id.value }, false);
+      function openDrawer(html) {
+        drawer.innerHTML = html;
+        drawer.classList.add("is-open");
+        drawerBackdrop.classList.add("is-open");
+        drawer.setAttribute("aria-hidden", "false");
+        drawer.querySelector("[data-close-drawer]")?.addEventListener("click", closeDrawer);
+      }
+      function closeDrawer() {
+        drawer.classList.remove("is-open");
+        drawerBackdrop.classList.remove("is-open");
+        drawer.setAttribute("aria-hidden", "true");
+        activeBridge = null;
+        activeSuggestion = null;
+      }
+      drawerBackdrop.addEventListener("click", closeDrawer);
+      document.querySelector("#new-bridge").addEventListener("click", () => openBridgeDrawer(""));
+
+      function openSuggestionDrawer(id) {
+        const suggestion = suggestionByID(id);
+        if (!suggestion) return;
+        activeSuggestion = suggestion;
+        openEditDrawer({
+          title: "新建中转站",
+          bridge: null,
+          name: suggestion.detected_name || suggestion.submitted_name || suggestion.page_title || suggestion.host || "",
+          homepage_url: suggestion.homepage_url || "",
+          icon_url: suggestion.icon_url || "",
+          base_urls: [suggestion.base_url].filter(Boolean),
+        });
       }
 
-      async function inspectAndFill(item, keepSuggestion) {
-        setStatus("正在读取网页 title 和 icon...");
-        const response = await fetch("/api/v1/admin/bridges/identify", {
+      function openBridgeDrawer(id) {
+        const bridge = id ? bridgeByID(id) : null;
+        activeBridge = bridge || null;
+        openEditDrawer({
+          title: bridge ? "中转站详情" : "新建中转站",
+          bridge,
+          name: bridge?.name || "",
+          homepage_url: bridge?.homepage_url || "",
+          icon_url: bridge?.icon_url || "",
+          base_urls: (bridge?.base_urls || []).filter((item) => item.is_active).map((item) => item.base_url),
+        });
+      }
+
+      function openEditDrawer({ title, bridge, name, homepage_url, icon_url, base_urls }) {
+        openDrawer(`
+          <div class="drawer-head">
+            <div><h2>${escapeHTML(title)}</h2><p>${bridge ? "维护名称、主页和 API Base URL。" : "只填最少信息即可保存。"}</p></div>
+            <button class="secondary icon-button" type="button" data-close-drawer>×</button>
+          </div>
+          <form id="bridge-form">
+            <div class="field"><span>名称</span><input name="name" value="${escapeHTML(name)}" required maxlength="128" /></div>
+            <div class="field"><span>主页 URL</span><input name="homepage_url" value="${escapeHTML(homepage_url)}" maxlength="512" placeholder="https://example.com" /></div>
+            <div class="field"><span>API Base URLs</span><textarea name="base_urls" spellcheck="false" placeholder="https://api.example.com/v1">${escapeHTML(base_urls.join("\\n"))}</textarea></div>
+            <div class="button-row">
+              <button type="submit">保存</button>
+              <button class="ghost" type="button" id="refresh-site">刷新站点信息</button>
+            </div>
+          </form>
+          ${bridge ? renderAliasManager(bridge) : ""}
+          <p class="status" id="status">就绪。</p>
+        `);
+        drawer.querySelector("#bridge-form").addEventListener("submit", saveBridge);
+        drawer.querySelector("#refresh-site").addEventListener("click", refreshSiteInfo);
+        drawer.querySelectorAll("[data-copy-url]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyUrl)));
+        drawer.querySelectorAll("[data-disable-url]").forEach((button) => button.addEventListener("click", () => aliasAction(button.dataset.disableUrl, "disable")));
+        initAliasSort();
+      }
+
+      function renderAliasManager(bridge) {
+        const urls = bridge.base_urls || [];
+        if (!urls.length) return `<section class="field"><span>已绑定 API Base URL</span><div class="empty">暂无 API Base URL。</div></section>`;
+        return `
+          <section class="field">
+            <span>已绑定 API Base URL（拖拽排序，第一条为主）</span>
+            <div id="alias-list" data-bridge-id="${escapeHTML(bridge.id)}">
+              ${urls.map((item) => `
+                <div class="alias-row" data-alias-id="${escapeHTML(item.id)}">
+                  <span><b class="drag-handle">⋮⋮</b> <code>${escapeHTML(item.base_url)}</code><br><small>${escapeHTML(item.host || "")} · 使用 ${Number(item.usage_count || 0)}${item.is_active ? "" : " · 已禁用"}</small></span>
+                  <span class="button-row" style="margin-top:0">
+                    <button class="secondary icon-button" type="button" title="复制" data-copy-url="${escapeHTML(item.base_url)}">⧉</button>
+                    ${item.is_active ? `<button class="danger icon-button" type="button" title="禁用" data-disable-url="${escapeHTML(item.id)}">−</button>` : ""}
+                  </span>
+                </div>
+              `).join("")}
+            </div>
+          </section>
+        `;
+      }
+
+      function initAliasSort() {
+        const list = drawer.querySelector("#alias-list");
+        if (!list || !window.Sortable) return;
+        if (aliasSortable) aliasSortable.destroy();
+        aliasSortable = Sortable.create(list, {
+          animation: 150,
+          handle: ".drag-handle",
+          ghostClass: "sortable-ghost",
+          onEnd: () => reorderAliases(list),
+        });
+      }
+
+      async function reorderAliases(list) {
+        const ids = [...list.querySelectorAll("[data-alias-id]")].map((item) => item.dataset.aliasId);
+        const response = await fetch("/api/v1/admin/bridge-base-urls/reorder", {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ base_url: item.base_url, homepage_url: item.homepage_url || "", submitted_name: item.submitted_name || "", suggestion_id: keepSuggestion ? item.id || "" : "" }),
+          body: JSON.stringify({ bridge_id: list.dataset.bridgeId, base_url_ids: ids }),
         });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) return setStatus(payload.error || "读取失败", "error");
-        fillForm({ ...item, ...payload }, { preserveTypedName: !keepSuggestion });
-        setStatus(`已读取：${payload.page_title || payload.host || payload.base_url}`, "success");
-      }
-
-      function acceptSuggestion(event) {
-        const item = suggestionByID(event.currentTarget.dataset.accept);
-        if (!item) return;
-        fillForm(item);
-        setStatus("候选已填入表单，确认名称和 URL 后保存。", "success");
-      }
-
-      async function archiveSuggestion(event) {
-        const item = suggestionByID(event.currentTarget.dataset.archive);
-        const nextStatus = event.currentTarget.dataset.status || "ignored";
-        if (!item || !confirm(`${nextStatus === "hidden" ? "隐藏" : "忽略"}候选？\\n${item.base_url}`)) return;
-        const response = await fetch("/api/v1/admin/bridge-suggestions/status", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id: item.id, status: nextStatus }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) return setStatus(payload.error || "归档失败", "error");
-        setStatus("候选已归档。", "success");
+        if (!response.ok) return setStatus(payload.error || "排序保存失败", "error");
+        setStatus("排序已保存。", "success");
         await load();
       }
 
-      async function bindSuggestion(event) {
-        const suggestionID = event.currentTarget.dataset.bindSuggestion;
-        const bridgeID = event.currentTarget.dataset.bridgeId;
-        await bindSuggestionToBridge(suggestionID, bridgeID);
-      }
-
-      async function dropSuggestionOnBridge(event) {
-        event.preventDefault();
-        const card = event.currentTarget;
-        card.classList.remove("is-drop-target");
-        const suggestionID = event.dataTransfer.getData("text/plain");
-        const bridgeID = card.dataset.dropBridge;
-        await bindSuggestionToBridge(suggestionID, bridgeID);
-      }
-
-      async function bindSuggestionToBridge(suggestionID, bridgeID) {
-        const suggestion = suggestionByID(suggestionID);
-        const bridge = bridgeByID(bridgeID);
-        if (!suggestion || !bridge) return;
-        if (!confirm(`绑定到 ${bridge.name}？\\n${suggestion.base_url}`)) return;
-        const response = await fetch("/api/v1/admin/bridge-suggestions/bind", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ suggestion_id: suggestionID, bridge_id: bridgeID }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) return setStatus(payload.error || "绑定失败", "error");
-        setStatus(`已绑定到 ${bridge.name}`, "success");
-        await load();
-      }
-
-      async function aliasAction(event) {
-        const id = event.currentTarget.dataset.aliasId;
-        const action = event.currentTarget.dataset.aliasAction;
-        if (action === "delete" && !confirm("删除这个 base URL alias？")) return;
-        const response = await fetch("/api/v1/admin/bridge-base-urls/action", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id, action }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) return setStatus(payload.error || "操作失败", "error");
-        setStatus("alias 已更新。", "success");
-        await load();
-      }
-
-      async function testBaseURL(event) {
-        const baseURL = event.currentTarget.dataset.testUrl;
-        setStatus(`正在测试 ${baseURL} ...`);
-        const response = await fetch("/api/v1/admin/bridge-base-urls/test", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ base_url: baseURL }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.ok) return setStatus(payload.error || `测试未通过，HTTP ${payload.status || "-"}`, "error");
-        setStatus(`测试可达：HTTP ${payload.status}，${payload.latency_ms}ms`, "success");
-      }
-
-      async function copyBaseURL(event) {
-        const baseURL = event.currentTarget.dataset.copyUrl || "";
-        try {
-          await navigator.clipboard.writeText(baseURL);
-          setStatus("已复制 base URL。", "success");
-        } catch {
-          setStatus(`复制失败，请手动复制：${baseURL}`, "error");
-        }
-      }
-
-      async function mergeBridge(event) {
-        const keep = event.currentTarget.dataset.merge;
-        const merge = event.currentTarget.dataset.mergeOther;
-        if (!confirm("合并后 losing 中转站会标记为已合并，base URL 和提交记录会迁移。继续？")) return;
-        await mergeRequest({ keep_bridge_id: keep, merge_bridge_id: merge, action: "merge" });
-      }
-
-      async function ignoreMerge(event) {
-        await mergeRequest({ keep_bridge_id: event.currentTarget.dataset.ignoreMerge, merge_bridge_id: event.currentTarget.dataset.ignoreOther, action: "ignore" });
-      }
-
-      async function mergeRequest(body) {
-        const response = await fetch("/api/v1/admin/bridges/merge", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) return setStatus(payload.error || "合并操作失败", "error");
-        setStatus(payload.ignored ? "已忽略这组重复提醒。" : "中转站已合并。", "success");
-        await load();
-      }
-
-      function editBridge(event) {
-        const bridge = bridgeByID(event.currentTarget.dataset.edit);
-        if (!bridge) return;
-        fillForm({
-          ...bridge,
-          base_url: "",
-          base_urls: (bridge.base_urls || []).filter((item) => item.is_active).map((item) => item.base_url).join("\\n"),
-          primary_base_url: (bridge.base_urls || []).find((item) => item.is_primary)?.base_url || "",
-        });
-        setStatus(`正在编辑：${bridge.name}`, "success");
-      }
-
-      function fillForm(item, options = {}) {
-        const form = document.querySelector("#bridge-form");
-        const suggestedName = item.detected_name || item.submitted_name || item.page_title || item.name || item.host || "";
-        form.suggestion_id.value = item.id && item.base_url ? item.id : "";
-        form.homepage_or_base.value = item.homepage_url || item.base_url || "";
-        if (!options.preserveTypedName || !form.name.value.trim()) form.name.value = suggestedName;
-        form.slug.value = typeof item.slug === "string" ? item.slug : slugify(form.name.value);
-        form.slug.dataset.manual = form.slug.value ? "1" : "";
-        form.icon_url.value = item.icon_url || "";
-        form.homepage_url.value = item.homepage_url || "";
-        form.description.value = item.description || item.page_description || "";
-        form.base_urls.value = item.base_urls || item.base_url || "";
-        form.status.value = item.status || (item.is_active === false ? "hidden" : "confirmed");
-        form.primary_base_url.value = item.primary_base_url || (Array.isArray(item.base_urls) ? item.base_urls.find((url) => url.is_primary)?.base_url || "" : "");
-        document.querySelector("#form-title").textContent = item.slug && !item.base_url ? "编辑中转站" : "保存中转站";
-        form.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-
-      function firstBaseURL(value) {
-        return String(value).split(/\\n|,/).map((item) => item.trim()).filter(Boolean)[0] || "";
-      }
-
-      function resetForm() {
-        const form = document.querySelector("#bridge-form");
-        form.reset();
-        form.slug.dataset.manual = "";
-        form.status.value = "confirmed";
-        document.querySelector("#form-title").textContent = "新建中转站";
-        setStatus("表单已清空。");
-      }
-
-      async function save(event) {
+      async function saveBridge(event) {
         event.preventDefault();
         const form = event.currentTarget;
-        setStatus("正在保存...");
+        const name = form.name.value.trim();
         const body = {
-          suggestion_id: form.suggestion_id.value,
-          name: form.name.value.trim(),
-          slug: form.slug.value.trim(),
-          icon_url: form.icon_url.value.trim(),
+          suggestion_id: activeSuggestion?.id || "",
+          name,
+          slug: activeBridge?.slug || slugify(name),
+          icon_url: activeBridge?.icon_url || activeSuggestion?.icon_url || "",
           homepage_url: form.homepage_url.value.trim(),
-          description: form.description.value.trim(),
-          status: form.status.value,
-          primary_base_url: form.primary_base_url.value.trim(),
+          description: activeBridge?.description || activeSuggestion?.page_description || "",
+          status: "confirmed",
+          primary_base_url: "",
           base_urls: form.base_urls.value.split(/\\n|,/).map((value) => value.trim()).filter(Boolean),
         };
+        setStatus("正在保存...");
         const response = await fetch("/api/v1/admin/bridges", {
           method: "POST",
           credentials: "same-origin",
@@ -682,19 +372,85 @@
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) return setStatus(payload.error || "保存失败", "error");
-        setStatus(`已保存：${payload.slug}，更新时间 ${payload.updated_at}`, "success");
+        setStatus("已保存。", "success");
+        await load();
+        closeDrawer();
+      }
+
+      async function refreshSiteInfo() {
+        const form = drawer.querySelector("#bridge-form");
+        const target = form.homepage_url.value.trim() || form.base_urls.value.split(/\\n|,/).map((value) => value.trim()).filter(Boolean)[0] || "";
+        if (!target) return setStatus("先填写主页 URL 或 API Base URL。", "error");
+        setStatus("正在读取站点信息...");
+        const response = await fetch("/api/v1/admin/bridges/identify", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ base_url: target, homepage_url: target, submitted_name: form.name.value.trim(), suggestion_id: activeSuggestion?.id || "" }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return setStatus(payload.error || "读取失败", "error");
+        if (!form.name.value.trim()) form.name.value = payload.detected_name || payload.page_title || form.name.value;
+        form.homepage_url.value = payload.homepage_url || form.homepage_url.value;
+        if (activeBridge) activeBridge.icon_url = payload.icon_url || activeBridge.icon_url;
+        if (activeSuggestion) activeSuggestion.icon_url = payload.icon_url || activeSuggestion.icon_url;
+        setStatus("站点信息已刷新，保存后生效。", "success");
+      }
+
+      async function bindSuggestionToBridge(suggestionID, bridgeID) {
+        const suggestion = suggestionByID(suggestionID);
+        const bridge = bridgeByID(bridgeID);
+        if (!suggestion || !bridge) return;
+        const response = await fetch("/api/v1/admin/bridge-suggestions/bind", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ suggestion_id: suggestionID, bridge_id: bridgeID }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return alert(payload.error || "绑定失败");
         await load();
       }
 
-      function setStatus(message, type = "") {
-        const status = document.querySelector("#status");
-        if (!status) return;
-        status.className = `status ${type}`.trim();
-        status.textContent = message;
+      async function archiveSuggestion(id) {
+        const suggestion = suggestionByID(id);
+        if (!suggestion) return;
+        const response = await fetch("/api/v1/admin/bridge-suggestions/status", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, status: "ignored" }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return alert(payload.error || "忽略失败");
+        await load();
+      }
+
+      async function aliasAction(id, action) {
+        const response = await fetch("/api/v1/admin/bridge-base-urls/action", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, action }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return setStatus(payload.error || "操作失败", "error");
+        setStatus("已更新。", "success");
+        await load();
+        if (activeBridge) openBridgeDrawer(activeBridge.id);
+      }
+
+      async function copyText(value) {
+        try {
+          await navigator.clipboard.writeText(value || "");
+          setStatus("已复制。", "success");
+        } catch {
+          setStatus(`复制失败：${value}`, "error");
+        }
       }
 
       load().catch((error) => {
-        app.innerHTML = `<p class="error">${escapeHTML(error.message || "加载失败")}</p>`;
+        app.innerHTML = `<section class="panel"><p class="error">${escapeHTML(error.message || "加载失败")}</p></section>`;
       });
     </script>
   </body>

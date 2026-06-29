@@ -71,6 +71,7 @@ export default {
 
       if (request.method === "GET" && matches(path, "/", "/account")) return withCommonHeaders(await accountPage(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/admin") return withCommonHeaders(await adminPage(request, env), request, env, requestID);
+      if (request.method === "GET" && path === "/admin/bridges/sortable.min.js") return withCommonHeaders(await adminAsset(request, env), request, env, requestID);
       if (matches(request.method, "GET", "HEAD") && matches(path, "/admin/questions/", "/admin/bridges/")) {
         return withCommonHeaders(redirect(path.replace(/\/$/, "") + url.search), request, env, requestID);
       }
@@ -85,6 +86,7 @@ export default {
       if (request.method === "POST" && path === "/api/v1/admin/bridges/identify") return withCommonHeaders(await adminBridgeIdentifyPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges/merge") return withCommonHeaders(await adminBridgesMergePost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridge-base-urls/action") return withCommonHeaders(await adminBridgeBaseURLActionPost(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/admin/bridge-base-urls/reorder") return withCommonHeaders(await adminBridgeBaseURLReorderPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridge-base-urls/test") return withCommonHeaders(await adminBridgeBaseURLTestPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridge-suggestions/bind") return withCommonHeaders(await adminBridgeSuggestionBindPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridge-suggestions/status") return withCommonHeaders(await adminBridgeSuggestionStatusPost(request, env), request, env, requestID);
@@ -644,6 +646,40 @@ async function adminBridgeBaseURLActionPost(request: Request, env: Env): Promise
   return json({ ok: true, id, action });
 }
 
+async function adminBridgeBaseURLReorderPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const body = await readJson<any>(request);
+  const bridgeID = str(body.bridge_id, MAX_STRING_LENGTH);
+  const ids = Array.isArray(body.base_url_ids)
+    ? body.base_url_ids.map((id: unknown) => str(id, MAX_STRING_LENGTH)).filter(Boolean)
+    : [];
+  if (!bridgeID || !ids.length) return jsonError("bridge_id and base_url_ids are required", 400, "bad_request");
+  const rows = await env.DB.prepare(
+    `SELECT id FROM bridge_base_urls WHERE bridge_id = ? AND id IN (${ids.map(() => "?").join(",")})`
+  )
+    .bind(bridgeID, ...ids)
+    .all<any>();
+  const existing = new Set((rows.results ?? []).map((row: any) => row.id));
+  if (existing.size !== ids.length) return jsonError("base_url_ids must belong to the bridge", 400, "bad_request");
+  const now = iso(new Date());
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`UPDATE bridge_base_urls SET is_primary = 0, updated_at = ? WHERE bridge_id = ?`).bind(now, bridgeID),
+  ];
+  ids.forEach((id, index) => {
+    statements.push(
+      env.DB.prepare(`UPDATE bridge_base_urls SET sort_order = ?, is_primary = ?, updated_at = ? WHERE bridge_id = ? AND id = ?`)
+        .bind(index, index === 0 ? 1 : 0, now, bridgeID, id)
+    );
+  });
+  statements.push(env.DB.prepare(`UPDATE bridges SET primary_base_url_id = ?, updated_at = ? WHERE id = ?`).bind(ids[0], now, bridgeID));
+  statements.push(adminEventStatement(env, user.id, "base_url_reorder", bridgeID, "", "", "", { base_url_ids: ids }, now));
+  await env.DB.batch(statements);
+  return json({ ok: true, bridge_id: bridgeID, base_url_ids: ids });
+}
+
 async function adminBridgeBaseURLTestPost(request: Request, env: Env): Promise<Response> {
   enforceSameOrigin(request, env);
   const user = await getWebUser(request, env);
@@ -811,6 +847,16 @@ async function adminStaticPage(request: Request, env: Env): Promise<Response> {
   const nonce = cspNonce();
   const body = (await assetResp.text()).replace(/<script>/g, `<script nonce="${nonce}">`);
   return html(body, assetResp.status, nonce);
+}
+
+async function adminAsset(request: Request, env: Env): Promise<Response> {
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  return env.ASSETS.fetch(new Request(request.url, {
+    method: "GET",
+    headers: { accept: "*/*" },
+  }));
 }
 
 async function deviceStart(request: Request, env: Env): Promise<Response> {
