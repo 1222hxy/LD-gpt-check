@@ -198,6 +198,7 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	report.PrintQuestionPrompts(out, lang, []questions.Question{selectedQuestion}, color)
 	summary, err := runBenchmark(ctx, runner.Options{
 		Model:            model,
 		ReasoningEffort:  effort,

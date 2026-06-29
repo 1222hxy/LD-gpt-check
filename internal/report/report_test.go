@@ -81,7 +81,7 @@ func TestPrintProgressErrorDoesNotRepeatQuestionPrompt(t *testing.T) {
 	}
 }
 
-func TestPrintProgressStartIncludesQuestionPrompt(t *testing.T) {
+func TestPrintProgressStartDoesNotPrintQuestionPrompt(t *testing.T) {
 	var out bytes.Buffer
 	progress := PrintProgress(&out, i18n.ZH, "gpt-5.4", "medium", false)
 	progress(runner.ProgressEvent{
@@ -96,9 +96,25 @@ func TestPrintProgressStartIncludesQuestionPrompt(t *testing.T) {
 		},
 	})
 	text := out.String()
-	for _, want := range []string{"正在运行", "测试题目：原题标题", "这里是完整原题内容"} {
+	if !strings.Contains(text, "正在运行") {
+		t.Fatalf("progress output missing start:\n%s", text)
+	}
+	if strings.Contains(text, "测试题目：原题标题") || strings.Contains(text, "这里是完整原题内容") {
+		t.Fatalf("case start should not print question prompt:\n%s", text)
+	}
+}
+
+func TestPrintQuestionPromptsPrintsSelectedQuestion(t *testing.T) {
+	var out bytes.Buffer
+	PrintQuestionPrompts(&out, i18n.ZH, []questions.Question{{
+		ID:     "q1",
+		Title:  "原题标题",
+		Prompt: "这里是完整原题内容",
+	}}, false)
+	text := out.String()
+	for _, want := range []string{"测试题目：原题标题", "这里是完整原题内容"} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("progress output missing %q:\n%s", want, text)
+			t.Fatalf("question output missing %q:\n%s", want, text)
 		}
 	}
 }

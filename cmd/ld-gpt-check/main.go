@@ -302,6 +302,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if *upload && strings.TrimSpace(*codexStartupArgs) != "" {
 		fmt.Fprintln(progressOut, l.S("codex_args_upload_notice"))
 	}
+	report.PrintQuestionPrompts(progressOut, lang, selected, report.ColorEnabled(progressOut))
 	progress := report.PrintProgress(progressOut, lang, resolvedProgressModel, *effort, report.ColorEnabled(progressOut))
 	summary, err := runner.Run(ctx, runner.Options{
 		Model:            *model,

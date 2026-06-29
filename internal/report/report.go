@@ -59,7 +59,6 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 			fmt.Fprintln(w, Colorize(l.S("run_status_start", model, effort, ev.Total), colorCyan, color))
 		case runner.ProgressCaseStart:
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_start", ev.Current, ev.Total, ev.Question.ID, ev.TestIndex), colorBlue, color))
-			printQuestionPrompt(w, l, ev.Question, l.S("run_status_question"), color)
 		case runner.ProgressCaseDone:
 			label := Colorize("FAIL", colorRed, color)
 			if ev.CaseResult.OK {
@@ -69,6 +68,13 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 		case runner.ProgressCaseError:
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_error", ev.Current, ev.Total, ev.Error), colorRed, color))
 		}
+	}
+}
+
+func PrintQuestionPrompts(w io.Writer, lang i18n.Lang, qs []questions.Question, color bool) {
+	l := i18n.New(lang)
+	for _, q := range qs {
+		printQuestionPrompt(w, l, q, l.S("run_status_question"), color)
 	}
 }
 
