@@ -83,6 +83,7 @@ export default {
       if (request.method === "POST" && path === "/api/v1/admin/questions") return withCommonHeaders(await adminQuestionsPost(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesGet(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges") return withCommonHeaders(await adminBridgesPost(request, env), request, env, requestID);
+      if (request.method === "POST" && path === "/api/v1/admin/bridges/sync") return withCommonHeaders(await adminBridgesSyncPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges/identify") return withCommonHeaders(await adminBridgeIdentifyPost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridges/merge") return withCommonHeaders(await adminBridgesMergePost(request, env), request, env, requestID);
       if (request.method === "POST" && path === "/api/v1/admin/bridge-base-urls/action") return withCommonHeaders(await adminBridgeBaseURLActionPost(request, env), request, env, requestID);
@@ -241,6 +242,7 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
     return json({ error: "login required", code: "unauthorized", login_url: `/auth/linuxdo/start?next=${encodeURIComponent("/admin/bridges")}` }, 401);
   }
   if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const syncResult = await syncBridgeAdminFromSubmissions(env);
   const rows = await env.DB.prepare(
     `SELECT bridges.id, bridges.name, bridges.slug, bridges.icon_url, bridges.homepage_url,
             bridges.description, bridges.status, bridges.primary_base_url_id, bridges.root_domain,
@@ -355,7 +357,23 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
     merged_count: int(mergedRow?.count),
     suggestions: enrichedSuggestions,
     duplicate_groups: duplicateBridgeGroups(bridges),
+    sync_result: syncResult,
   });
+}
+
+async function adminBridgesSyncPost(request: Request, env: Env): Promise<Response> {
+  enforceSameOrigin(request, env);
+  const user = await getWebUser(request, env);
+  if (!user) return jsonError("login required", 401, "unauthorized");
+  if (!isAdminUser(user, env)) return jsonError("forbidden", 403, "forbidden");
+  const result = await syncBridgeAdminFromSubmissions(env);
+  await env.DB.prepare(
+    `INSERT INTO bridge_admin_events (id, admin_user_id, action, details_json, created_at)
+     VALUES (?, ?, 'bridge_submission_sync', ?, ?)`
+  )
+    .bind(crypto.randomUUID(), user.id, JSON.stringify(result), iso(new Date()))
+    .run();
+  return json({ ok: true, sync_result: result });
 }
 
 async function loadBridgeAdminStats(env: Env): Promise<{ bridges: Map<string, any>; baseURLs: Map<string, any> }> {
@@ -2098,6 +2116,7 @@ function knownPath(path: string): boolean {
     "/api/dashboard/overview",
     "/api/v1/admin/questions",
     "/api/v1/admin/bridges",
+    "/api/v1/admin/bridges/sync",
     "/api/v1/admin/bridges/identify",
     "/api/v1/admin/bridges/merge",
     "/api/v1/admin/bridge-base-urls/action",
@@ -2655,6 +2674,159 @@ async function upsertBridgeSuggestion(
     )
     .run();
   return { id, base_url: input.baseURL, status: "pending", detected_name: detected.detected_name, icon_url: detected.icon_url, candidate_bridge_id: detected.candidate_bridge_id, confidence: detected.confidence };
+}
+
+async function syncBridgeAdminFromSubmissions(env: Env): Promise<{ scanned: number; created: number; updated: number; reconciled: number; skipped: number; synced_at: string }> {
+  const now = iso(new Date());
+  const rows = await env.DB.prepare(
+    `SELECT codex_provider_base_url AS base_url,
+            MAX(codex_provider_host) AS provider_host,
+            COUNT(*) AS occurrence_count,
+            COUNT(DISTINCT user_id) AS user_count,
+            MAX(created_at) AS last_seen_at
+     FROM benchmark_submissions
+     WHERE codex_channel != 'official'
+       AND codex_provider_base_url IS NOT NULL
+       AND codex_provider_base_url != ''
+     GROUP BY codex_provider_base_url
+     ORDER BY last_seen_at DESC
+     LIMIT 200`
+  ).all<any>();
+  let scanned = 0;
+  let created = 0;
+  let updated = 0;
+  let reconciled = 0;
+  let skipped = 0;
+  const refreshedBridgeIDs = new Set<string>();
+  for (const row of rows.results ?? []) {
+    scanned++;
+    const baseURL = normalizeProviderBaseURL(row.base_url);
+    if (!baseURL || officialProviderBaseURL(baseURL)) {
+      skipped++;
+      continue;
+    }
+    const host = hostFromProviderBaseURL(baseURL) || str(row.provider_host, MAX_STRING_LENGTH);
+    const classification = await classifyProviderBaseURL(env, baseURL);
+    if (classification.bridgeID) {
+      await reconcileBridgeSubmissions(env, classification.bridgeID, [baseURL], now);
+      await env.DB.prepare(
+        `UPDATE bridge_suggestions
+         SET status = 'approved',
+             bridge_id = ?,
+             candidate_bridge_id = ?,
+             candidate_bridge_name = ?,
+             occurrence_count = ?,
+             user_count = ?,
+             last_seen_at = COALESCE(?, last_seen_at),
+             updated_at = ?
+         WHERE base_url = ?`
+      )
+        .bind(
+          classification.bridgeID,
+          classification.bridgeID,
+          classification.bridgeName,
+          int(row.occurrence_count),
+          int(row.user_count),
+          row.last_seen_at || now,
+          now,
+          baseURL
+        )
+        .run();
+      refreshedBridgeIDs.add(classification.bridgeID);
+      reconciled++;
+      continue;
+    }
+    const existing = await env.DB.prepare(`SELECT id, status, bridge_id FROM bridge_suggestions WHERE base_url = ?`).bind(baseURL).first<any>();
+    if (existing?.bridge_id && existing.status === "approved") {
+      await reconcileBridgeSubmissions(env, str(existing.bridge_id, MAX_STRING_LENGTH), [baseURL], now);
+      refreshedBridgeIDs.add(str(existing.bridge_id, MAX_STRING_LENGTH));
+      reconciled++;
+      continue;
+    }
+    const rootDomain = rootDomainFromHost(host);
+    const homepageURL = providerHomepageURL(baseURL);
+    const candidate = await bestBridgeCandidate(env, {
+      baseURL,
+      host,
+      rootDomain,
+      homepageURL,
+      canonicalURL: "",
+      title: "",
+      name: rootDomain || host,
+      iconURL: "",
+    });
+    const detectedName = rootDomain || host.replace(/^api\./, "") || "待归一中转站";
+    if (existing?.id) {
+      await env.DB.prepare(
+        `UPDATE bridge_suggestions
+         SET host = ?,
+             source = CASE WHEN source IN ('upload', 'user') THEN source ELSE 'submission_sync' END,
+             homepage_url = CASE WHEN homepage_url != '' THEN homepage_url ELSE ? END,
+             detected_name = CASE WHEN detected_name != '' THEN detected_name ELSE ? END,
+             root_domain = CASE WHEN root_domain != '' THEN root_domain ELSE ? END,
+             confidence = MAX(confidence, ?),
+             candidate_bridge_id = CASE WHEN ? != '' THEN ? ELSE candidate_bridge_id END,
+             candidate_bridge_name = CASE WHEN ? != '' THEN ? ELSE candidate_bridge_name END,
+             candidate_reason = CASE WHEN ? != '' THEN ? ELSE candidate_reason END,
+             user_count = ?,
+             occurrence_count = ?,
+             last_seen_at = COALESCE(?, last_seen_at),
+             updated_at = ?
+         WHERE id = ?`
+      )
+        .bind(
+          host,
+          homepageURL,
+          detectedName,
+          rootDomain,
+          int(candidate.confidence),
+          candidate.bridgeID,
+          candidate.bridgeID,
+          candidate.bridgeName,
+          candidate.bridgeName,
+          candidate.reason,
+          candidate.reason,
+          int(row.user_count),
+          int(row.occurrence_count),
+          row.last_seen_at || now,
+          now,
+          existing.id
+        )
+        .run();
+      updated++;
+      continue;
+    }
+    await env.DB.prepare(
+      `INSERT INTO bridge_suggestions
+         (id, user_id, base_url, host, source, submitted_name, page_title, page_description,
+          icon_url, homepage_url, canonical_url, og_image_url, detected_name, root_domain,
+          confidence, candidate_bridge_id, candidate_bridge_name, candidate_reason, user_count,
+          status, occurrence_count, created_at, updated_at, last_seen_at)
+       VALUES (?, NULL, ?, ?, 'submission_sync', '', '', '', '', ?, '', '', ?, ?,
+          ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
+    )
+      .bind(
+        crypto.randomUUID(),
+        baseURL,
+        host,
+        homepageURL,
+        detectedName,
+        rootDomain,
+        int(candidate.confidence),
+        candidate.bridgeID || null,
+        candidate.bridgeName,
+        candidate.reason,
+        int(row.user_count),
+        int(row.occurrence_count),
+        now,
+        now,
+        row.last_seen_at || now
+      )
+      .run();
+    created++;
+  }
+  if (refreshedBridgeIDs.size) await refreshBridgeStats(env, [...refreshedBridgeIDs], now);
+  return { scanned, created, updated, reconciled, skipped, synced_at: now };
 }
 
 async function identifyBridgeCandidate(env: Env, rawBaseURL: unknown, submittedName = ""): Promise<Record<string, unknown>> {

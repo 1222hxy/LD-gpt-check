@@ -14,11 +14,11 @@
       h1{margin:0;font-size:30px;line-height:1.12;letter-spacing:0}h2{margin:0;font-size:18px}h3{margin:0;font-size:15px}p{margin:8px 0 0;color:var(--muted)}a{color:#1d4ed8}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1d4ed8;overflow-wrap:anywhere}
       .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:16px}.stat{border:1px solid #dbeafe;border-radius:8px;background:#f8fafc;padding:12px}.stat span,.stat small{display:block;color:var(--muted);font-size:12px;font-weight:700}.stat strong{display:block;margin-top:4px;font-size:22px}
       .board{display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px}.panel{padding:14px}.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px}.toolbar input{max-width:320px}
-      input,textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 11px;font:600 14px system-ui,sans-serif;background:#fff}textarea{min-height:130px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}input:focus,textarea:focus{outline:3px solid rgba(37,99,235,.16);border-color:var(--brand)}
+      input,textarea,select{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 11px;font:600 14px system-ui,sans-serif;background:#fff}textarea{min-height:130px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}input:focus,textarea:focus,select:focus{outline:3px solid rgba(37,99,235,.16);border-color:var(--brand)}
       button,.button{appearance:none;border:1px solid var(--brand);border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--cyan));color:#fff;min-height:36px;padding:7px 11px;font:750 13px system-ui,sans-serif;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.secondary{border-color:#cbd5e1;background:#fff;color:#334155}.ghost{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}.danger{border-color:#fecdd3;background:#fff1f2;color:var(--red)}.icon-button{width:32px;min-height:32px;padding:0}.button-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
       .list{display:grid;gap:10px}.card{padding:12px;box-shadow:none}.card header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.card.is-drop-target{outline:3px solid rgba(37,99,235,.2);border-color:#2563eb}.card.is-dragging{opacity:.65}.title{display:flex;align-items:center;gap:10px;min-width:0}.icon{width:34px;height:34px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;object-fit:contain;flex:0 0 auto}.icon-fallback{display:grid;place-items:center;color:#1d4ed8;font-weight:800;background:#eff6ff}.meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;color:#64748b;font-size:13px}.empty{border:1px dashed #bfdbfe;border-radius:8px;padding:16px;background:#f8fafc;color:var(--muted)}
       .bridge-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.drop-hint{margin-top:10px;border:1px dashed #bfdbfe;border-radius:8px;background:#f8fafc;padding:9px;color:#64748b;font-size:13px}.url-preview{margin-top:10px;display:grid;gap:5px}.url-preview div,.alias-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid #e2e8f0;border-radius:7px;background:#fff;padding:7px 9px}.alias-row.sortable-ghost{opacity:.45}.drag-handle{cursor:grab;color:#64748b;font-weight:900}
-      .drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.2);display:none;z-index:20}.drawer-backdrop.is-open{display:block}.drawer{position:fixed;right:16px;top:16px;bottom:16px;width:min(520px,calc(100vw - 32px));padding:16px;overflow:auto;z-index:21;transform:translateX(calc(100% + 24px));transition:transform .18s ease}.drawer.is-open{transform:translateX(0)}.drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.field{display:grid;gap:5px;margin-top:12px}.field span{font-size:12px;color:#64748b;text-transform:uppercase;font-weight:800}.status{border-top:1px solid #e2e8f0;margin-top:14px;padding-top:12px;font-size:14px;color:#64748b}.error{color:var(--red)}.success{color:var(--green)}
+      .drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.2);display:none;z-index:20}.drawer-backdrop.is-open{display:block}.drawer{position:fixed;right:16px;top:16px;bottom:16px;width:min(520px,calc(100vw - 32px));padding:16px;overflow:auto;z-index:21;transform:translateX(calc(100% + 24px));transition:transform .18s ease}.drawer.is-open{transform:translateX(0)}.drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.field{display:grid;gap:5px;margin-top:12px}.field span{font-size:12px;color:#64748b;text-transform:uppercase;font-weight:800}.advanced{margin-top:14px;border-top:1px solid #e2e8f0;padding-top:12px}.advanced summary{cursor:pointer;color:#1d4ed8;font-size:13px;font-weight:800}.sync-note{margin-top:10px;font-size:13px;color:#64748b}.status{border-top:1px solid #e2e8f0;margin-top:14px;padding-top:12px;font-size:14px;color:#64748b}.error{color:var(--red)}.success{color:var(--green)}
       @media(max-width:980px){body{padding:12px}.board,.stats{grid-template-columns:1fr}.hero-head,.toolbar{display:block}.toolbar input{max-width:none;margin-top:8px}.bridge-grid{grid-template-columns:1fr}button,.button{width:100%}.icon-button{width:100%}}
     </style>
   </head>
@@ -35,8 +35,12 @@
             <h1>中转站归一管理</h1>
             <p>把待归一 API Base URL 拖到正确中转站。主页、图标和名称只在详情里轻量维护。</p>
           </div>
-          <button class="secondary" type="button" id="new-bridge">新建中转站</button>
+          <div class="button-row" style="margin-top:0">
+            <button class="secondary" type="button" id="sync-bridges">同步数据库</button>
+            <button class="secondary" type="button" id="new-bridge">新建中转站</button>
+          </div>
         </div>
+        <div class="sync-note" id="sync-note">加载时会自动同步 dashboard 提交里的中转站 URL。</div>
         <div class="stats" id="stats"></div>
       </section>
       <section id="app" class="board">
@@ -51,6 +55,7 @@
     <script>
       const app = document.querySelector("#app");
       const stats = document.querySelector("#stats");
+      const syncNote = document.querySelector("#sync-note");
       const drawer = document.querySelector("#drawer");
       const drawerBackdrop = document.querySelector("#drawer-backdrop");
       let latestPayload = null;
@@ -90,8 +95,16 @@
           return;
         }
         latestPayload = payload;
+        renderSyncNote(payload.sync_result);
         renderStats(payload);
         renderBoard(payload);
+      }
+
+      function renderSyncNote(result) {
+        if (!result) return;
+        const changed = Number(result.created || 0) + Number(result.updated || 0) + Number(result.reconciled || 0);
+        syncNote.textContent = `已同步数据库：扫描 ${Number(result.scanned || 0)}，新增 ${Number(result.created || 0)}，更新 ${Number(result.updated || 0)}，关联提交 ${Number(result.reconciled || 0)}。`;
+        syncNote.className = changed ? "sync-note success" : "sync-note";
       }
 
       function renderStats(payload) {
@@ -102,7 +115,7 @@
           <article class="stat"><span>有效中转站</span><strong>${bridges.length}</strong></article>
           <article class="stat"><span>待归一 URL</span><strong>${suggestions.length}</strong></article>
           <article class="stat"><span>启用 API Base URL</span><strong>${activeURLs}</strong></article>
-          <article class="stat"><span>已合并历史</span><strong>${Number(payload.merged_count || 0)}</strong></article>
+          <article class="stat"><span>数据库同步新增</span><strong>${Number(payload.sync_result?.created || 0)}</strong></article>
         `;
       }
 
@@ -248,6 +261,7 @@
       }
       drawerBackdrop.addEventListener("click", closeDrawer);
       document.querySelector("#new-bridge").addEventListener("click", () => openBridgeDrawer(""));
+      document.querySelector("#sync-bridges").addEventListener("click", syncBridges);
 
       function openSuggestionDrawer(id) {
         const suggestion = suggestionByID(id);
@@ -259,6 +273,11 @@
           name: suggestion.detected_name || suggestion.submitted_name || suggestion.page_title || suggestion.host || "",
           homepage_url: suggestion.homepage_url || "",
           icon_url: suggestion.icon_url || "",
+          description: suggestion.page_description || "",
+          slug: "",
+          canonical_url: suggestion.canonical_url || "",
+          og_image_url: suggestion.og_image_url || "",
+          status: "confirmed",
           base_urls: [suggestion.base_url].filter(Boolean),
         });
       }
@@ -272,11 +291,16 @@
           name: bridge?.name || "",
           homepage_url: bridge?.homepage_url || "",
           icon_url: bridge?.icon_url || "",
+          description: bridge?.description || "",
+          slug: bridge?.slug || "",
+          canonical_url: bridge?.canonical_url || "",
+          og_image_url: bridge?.og_image_url || "",
+          status: bridge?.status || "confirmed",
           base_urls: (bridge?.base_urls || []).filter((item) => item.is_active).map((item) => item.base_url),
         });
       }
 
-      function openEditDrawer({ title, bridge, name, homepage_url, icon_url, base_urls }) {
+      function openEditDrawer({ title, bridge, name, homepage_url, icon_url, description, slug, canonical_url, og_image_url, status, base_urls }) {
         openDrawer(`
           <div class="drawer-head">
             <div><h2>${escapeHTML(title)}</h2><p>${bridge ? "维护名称、主页和 API Base URL。" : "只填最少信息即可保存。"}</p></div>
@@ -286,6 +310,19 @@
             <div class="field"><span>名称</span><input name="name" value="${escapeHTML(name)}" required maxlength="128" /></div>
             <div class="field"><span>主页 URL</span><input name="homepage_url" value="${escapeHTML(homepage_url)}" maxlength="512" placeholder="https://example.com" /></div>
             <div class="field"><span>API Base URLs</span><textarea name="base_urls" spellcheck="false" placeholder="https://api.example.com/v1">${escapeHTML(base_urls.join("\\n"))}</textarea></div>
+            <details class="advanced">
+              <summary>高级配置</summary>
+              <div class="field"><span>Slug</span><input name="slug" value="${escapeHTML(slug)}" maxlength="128" /></div>
+              <div class="field"><span>状态</span><select name="status">
+                <option value="confirmed"${status === "confirmed" ? " selected" : ""}>已确认</option>
+                <option value="pending"${status === "pending" ? " selected" : ""}>待确认</option>
+                <option value="hidden"${status === "hidden" ? " selected" : ""}>隐藏</option>
+              </select></div>
+              <div class="field"><span>Icon / Logo</span><input name="icon_url" value="${escapeHTML(icon_url)}" maxlength="98304" /></div>
+              <div class="field"><span>描述</span><textarea name="description" maxlength="1024">${escapeHTML(description)}</textarea></div>
+              <div class="field"><span>Canonical URL</span><input name="canonical_url" value="${escapeHTML(canonical_url)}" maxlength="512" /></div>
+              <div class="field"><span>OG Image</span><input name="og_image_url" value="${escapeHTML(og_image_url)}" maxlength="512" /></div>
+            </details>
             <div class="button-row">
               <button type="submit">保存</button>
               <button class="ghost" type="button" id="refresh-site">刷新站点信息</button>
@@ -355,11 +392,13 @@
         const body = {
           suggestion_id: activeSuggestion?.id || "",
           name,
-          slug: activeBridge?.slug || slugify(name),
-          icon_url: activeBridge?.icon_url || activeSuggestion?.icon_url || "",
+          slug: form.slug.value.trim() || activeBridge?.slug || slugify(name),
+          icon_url: form.icon_url.value.trim() || activeBridge?.icon_url || activeSuggestion?.icon_url || "",
           homepage_url: form.homepage_url.value.trim(),
-          description: activeBridge?.description || activeSuggestion?.page_description || "",
-          status: "confirmed",
+          description: form.description.value.trim() || activeBridge?.description || activeSuggestion?.page_description || "",
+          status: form.status.value || "confirmed",
+          canonical_url: form.canonical_url.value.trim(),
+          og_image_url: form.og_image_url.value.trim(),
           primary_base_url: "",
           base_urls: form.base_urls.value.split(/\\n|,/).map((value) => value.trim()).filter(Boolean),
         };
@@ -392,9 +431,32 @@
         if (!response.ok) return setStatus(payload.error || "读取失败", "error");
         if (!form.name.value.trim()) form.name.value = payload.detected_name || payload.page_title || form.name.value;
         form.homepage_url.value = payload.homepage_url || form.homepage_url.value;
+        form.icon_url.value = payload.icon_url || form.icon_url.value;
+        form.description.value = payload.page_description || form.description.value;
+        form.canonical_url.value = payload.canonical_url || form.canonical_url.value;
+        form.og_image_url.value = payload.og_image_url || form.og_image_url.value;
         if (activeBridge) activeBridge.icon_url = payload.icon_url || activeBridge.icon_url;
         if (activeSuggestion) activeSuggestion.icon_url = payload.icon_url || activeSuggestion.icon_url;
         setStatus("站点信息已刷新，保存后生效。", "success");
+      }
+
+      async function syncBridges() {
+        syncNote.textContent = "正在同步数据库...";
+        syncNote.className = "sync-note";
+        const response = await fetch("/api/v1/admin/bridges/sync", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          syncNote.textContent = payload.error || "同步失败";
+          syncNote.className = "sync-note error";
+          return;
+        }
+        renderSyncNote(payload.sync_result);
+        await load();
       }
 
       async function bindSuggestionToBridge(suggestionID, bridgeID) {
