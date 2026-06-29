@@ -146,6 +146,7 @@ func Run(ctx context.Context, opts Options) error {
 	if ccSwitchResolution.ProviderBaseURL != "" {
 		report.PrintSuccess(out, l.S("wizard_cc_switch_detected", ccSwitchResolution.ProviderBaseURL), color)
 	}
+	printCodexConfigLocation(out, l, color, ccSwitchResolution.ProviderBaseURL != "")
 	if codexErr == nil {
 		backend = runner.BackendCodex
 		report.PrintSuccess(out, l.S("wizard_backend_codex_auto"), color)
@@ -340,6 +341,28 @@ func printExtractedRunConfig(out io.Writer, l i18n.Localizer, color bool, backen
 	if strings.TrimSpace(credentialSource) != "" {
 		report.PrintInfo(out, l.S("wizard_extracted_credential"), credentialSource, color)
 	}
+}
+
+func printCodexConfigLocation(out io.Writer, l i18n.Localizer, color bool, ccSwitchDetected bool) {
+	info, err := system.CodexConfigInfo()
+	if err != nil {
+		report.PrintWarning(out, l.S("wizard_codex_config_read_failed", err), color)
+		return
+	}
+	if strings.TrimSpace(info.ConfigPath) != "" {
+		report.PrintInfo(out, l.S("wizard_codex_config_path"), info.ConfigPath, color)
+	}
+	if ccSwitchDetected {
+		return
+	}
+	if strings.TrimSpace(info.ProviderBaseURL) != "" {
+		label := info.ProviderBaseURL
+		if strings.TrimSpace(info.ModelProvider) != "" {
+			label = info.ModelProvider + " -> " + label
+		}
+		report.PrintInfo(out, l.S("wizard_codex_config_provider"), label, color)
+	}
+	report.PrintWarning(out, l.S("wizard_codex_config_notice"), color)
 }
 
 func wizardBackendSummary(l i18n.Localizer, backend runner.Backend) string {

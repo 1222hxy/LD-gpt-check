@@ -63,6 +63,22 @@ func TestCodexConfigInfoDefaultsProviderBaseURLToOpenAI(t *testing.T) {
 	}
 }
 
+func TestCodexDefaultConfigPathsIncludesMacApplicationSupport(t *testing.T) {
+	home := filepath.Join("Users", "tester")
+	paths := codexDefaultConfigPaths(home, "darwin")
+	want := filepath.Join(home, "Library", "Application Support", "Codex", "config.toml")
+	found := false
+	for _, path := range paths {
+		if path == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("mac Codex config path missing from %#v", paths)
+	}
+}
+
 func TestCodexConfigInfoResolvesCCSwitchUpstreamForLocalProxy(t *testing.T) {
 	home := t.TempDir()
 	codexHome := filepath.Join(home, "codex")
@@ -202,6 +218,63 @@ INSERT INTO provider_endpoints(provider_id, app_type, url) VALUES
 	cfg := ccSwitchCodexProviderConfigFromSQLiteDB(dbPath, "")
 	if cfg.BaseURL != "https://codex-right.example/v1" || cfg.APIKey != "sk-codex-secret" || cfg.APIFormat != "openai-responses" {
 		t.Fatalf("provider config = %#v", cfg)
+	}
+}
+
+func TestCCSwitchProviderConfigReadsDirectDBPath(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "custom-cc-switch.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  sort_index INTEGER,
+  PRIMARY KEY (id, app_type)
+);
+CREATE TABLE provider_endpoints (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider_id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  url TEXT NOT NULL
+);
+INSERT INTO providers(id, app_type, name, settings_config, is_current, sort_index) VALUES
+  ('codex-krill', 'codex', 'Krill Codex', '{"config":"base_url = \"https://mac-krill.example/codex/v1\"\nwire_api = \"responses\"\n","auth":{"OPENAI_API_KEY":"sk-mac-secret"}}', 1, 1);
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", "")
+	t.Setenv("CC_SWITCH_CONFIG_DIR", "")
+	t.Setenv("CC_SWITCH_HOME", "")
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DB", dbPath)
+	cfg := CCSwitchCodexProviderConfig()
+	if cfg.BaseURL != "https://mac-krill.example/codex/v1" || cfg.APIKey != "sk-mac-secret" ||
+		cfg.APIFormat != "openai-responses" || cfg.ConfigDir != dir {
+		t.Fatalf("provider config = %#v", cfg)
+	}
+}
+
+func TestCCSwitchDefaultConfigDirsIncludesMacApplicationSupport(t *testing.T) {
+	home := filepath.Join("Users", "tester")
+	dirs := ccSwitchDefaultConfigDirs(home, "darwin")
+	want := filepath.Join(home, "Library", "Application Support", "CC Switch")
+	found := false
+	for _, dir := range dirs {
+		if dir == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("mac application support dir missing from %#v", dirs)
 	}
 }
 

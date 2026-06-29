@@ -23,6 +23,7 @@ type CodexConfig struct {
 	ModelProvider   string
 	ProviderHost    string
 	ProviderBaseURL string
+	ConfigPath      string
 }
 
 type CCSwitchResolution struct {
@@ -38,15 +39,95 @@ type CCSwitchProviderConfig struct {
 	BaseURL   string
 	APIKey    string
 	APIFormat string
+	ConfigDir string
+}
+
+type ccSwitchConfigLocation struct {
+	Dir         string
+	DBPaths     []string
+	ConfigPaths []string
 }
 
 func CodexPath() (string, error) {
-	if runtime.GOOS == "windows" {
-		if p, err := exec.LookPath("codex.cmd"); err == nil {
+	for _, name := range codexExecutableNames() {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
+	}
+	for _, p := range candidateCodexExecutablePaths() {
+		if executableExists(p) {
 			return p, nil
 		}
 	}
 	return exec.LookPath("codex")
+}
+
+func codexExecutableNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"codex.cmd", "codex.exe", "codex"}
+	}
+	return []string{"codex"}
+}
+
+func candidateCodexExecutablePaths() []string {
+	home, _ := os.UserHomeDir()
+	var out []string
+	switch runtime.GOOS {
+	case "darwin":
+		if home != "" {
+			out = append(out,
+				filepath.Join(home, ".local", "bin", "codex"),
+				filepath.Join(home, "bin", "codex"),
+			)
+		}
+		out = append(out,
+			"/opt/homebrew/bin/codex",
+			"/usr/local/bin/codex",
+			"/Applications/Codex.app/Contents/MacOS/codex",
+			"/Applications/Codex.app/Contents/MacOS/Codex",
+		)
+		if home != "" {
+			out = append(out,
+				filepath.Join(home, "Applications", "Codex.app", "Contents", "MacOS", "codex"),
+				filepath.Join(home, "Applications", "Codex.app", "Contents", "MacOS", "Codex"),
+			)
+		}
+	case "linux":
+		out = append(out, "/usr/local/bin/codex", "/usr/bin/codex")
+	case "windows":
+		for _, env := range []string{"APPDATA", "LOCALAPPDATA"} {
+			base := strings.TrimSpace(os.Getenv(env))
+			if base == "" {
+				continue
+			}
+			out = append(out,
+				filepath.Join(base, "Codex", "codex.cmd"),
+				filepath.Join(base, "Codex", "codex.exe"),
+				filepath.Join(base, "OpenAI", "Codex", "codex.cmd"),
+				filepath.Join(base, "OpenAI", "Codex", "codex.exe"),
+			)
+		}
+	}
+	return out
+}
+
+func executableExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0111 != 0
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func CodexVersion() string {
@@ -77,14 +158,79 @@ func UploadCodexVersion(codexSandbox string) string {
 }
 
 func CodexConfigPath() string {
+	for _, path := range CandidateCodexConfigPaths() {
+		if fileExists(path) {
+			return path
+		}
+	}
+	candidates := CandidateCodexConfigPaths()
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+	return ""
+}
+
+func CandidateCodexConfigPaths() []string {
 	if v := strings.TrimSpace(os.Getenv("CODEX_HOME")); v != "" {
-		return filepath.Join(v, "config.toml")
+		return []string{filepath.Join(v, "config.toml")}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return nil
 	}
-	return filepath.Join(home, ".codex", "config.toml")
+	out := codexDefaultConfigPaths(home, runtime.GOOS)
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		out = append(out, filepath.Join(xdg, "Codex", "config.toml"))
+	}
+	seen := map[string]bool{}
+	deduped := make([]string, 0, len(out))
+	for _, path := range out {
+		key := filepath.Clean(path)
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(key)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, path)
+	}
+	return deduped
+}
+
+func codexDefaultConfigPaths(home, goos string) []string {
+	if home == "" {
+		return nil
+	}
+	out := []string{filepath.Join(home, ".codex", "config.toml")}
+	switch goos {
+	case "darwin":
+		out = append(out,
+			filepath.Join(home, "Library", "Application Support", "Codex", "config.toml"),
+			filepath.Join(home, "Library", "Application Support", "OpenAI", "Codex", "config.toml"),
+			filepath.Join(home, "Library", "Application Support", "com.openai.codex", "config.toml"),
+		)
+	case "windows":
+		for _, env := range []string{"APPDATA", "LOCALAPPDATA"} {
+			base := strings.TrimSpace(os.Getenv(env))
+			if base == "" {
+				continue
+			}
+			out = append(out,
+				filepath.Join(base, "Codex", "config.toml"),
+				filepath.Join(base, "OpenAI", "Codex", "config.toml"),
+				filepath.Join(base, "com.openai.codex", "config.toml"),
+			)
+		}
+	default:
+		out = append(out,
+			filepath.Join(home, ".config", "Codex", "config.toml"),
+			filepath.Join(home, ".config", "OpenAI", "Codex", "config.toml"),
+			filepath.Join(home, ".config", "openai-codex", "config.toml"),
+			filepath.Join(home, ".config", "com.openai.codex", "config.toml"),
+		)
+	}
+	return out
 }
 
 func CodexConfiguredModel() (string, error) {
@@ -106,7 +252,7 @@ func CodexConfigInfo() (CodexConfig, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return CodexConfig{ProviderHost: "api.openai.com", ProviderBaseURL: "https://api.openai.com/v1"}, nil
+			return CodexConfig{ConfigPath: path, ProviderHost: "api.openai.com", ProviderBaseURL: "https://api.openai.com/v1"}, nil
 		}
 		return CodexConfig{}, err
 	}
@@ -134,7 +280,7 @@ func CodexConfigInfo() (CodexConfig, error) {
 	if baseURL == "" && !localPrivateBaseURL {
 		baseURL = "https://api.openai.com/v1"
 	}
-	return CodexConfig{Model: model, ModelProvider: provider, ProviderHost: hostFromURL(baseURL), ProviderBaseURL: baseURL}, nil
+	return CodexConfig{Model: model, ModelProvider: provider, ProviderHost: hostFromURL(baseURL), ProviderBaseURL: baseURL, ConfigPath: path}, nil
 }
 
 func ConcreteCodexModel(model string) bool {
@@ -283,9 +429,9 @@ func CCSwitchAutoResolveEnabled() bool {
 }
 
 func DetectCCSwitchCodexResolution() CCSwitchResolution {
-	configDir := CCSwitchConfigDir()
 	providerConfig := CCSwitchCodexProviderConfig()
 	resolved := providerConfig.BaseURL
+	configDir := firstNonEmptyString(providerConfig.ConfigDir, CCSwitchConfigDir())
 	localBaseURL := ""
 	path := CodexConfigPath()
 	if path != "" {
@@ -305,7 +451,7 @@ func DetectCCSwitchCodexResolution() CCSwitchResolution {
 	}
 	if resolved == "" {
 		if localBaseURL == "" {
-			if _, err := os.Stat(configDir); err != nil {
+			if !ccSwitchConfigDirExists(configDir) {
 				return CCSwitchResolution{}
 			}
 		}
@@ -322,16 +468,155 @@ func DetectCCSwitchCodexResolution() CCSwitchResolution {
 }
 
 func CCSwitchConfigDir() string {
+	locations := ccSwitchConfigLocations()
+	for _, loc := range locations {
+		if ccSwitchConfigLocationExists(loc) {
+			return loc.Dir
+		}
+	}
+	if len(locations) > 0 {
+		return locations[0].Dir
+	}
+	return ""
+}
+
+func ccSwitchConfigLocations() []ccSwitchConfigLocation {
+	var locations []ccSwitchConfigLocation
 	for _, key := range []string{"LD_GPT_CHECK_CC_SWITCH_DIR", "CC_SWITCH_CONFIG_DIR", "CC_SWITCH_HOME"} {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-			return v
+			addCCSwitchConfigLocation(&locations, v)
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("LD_GPT_CHECK_CC_SWITCH_DB")); v != "" {
+		addCCSwitchConfigLocation(&locations, v)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return locations
 	}
-	return filepath.Join(home, ".cc-switch")
+	for _, path := range ccSwitchDefaultConfigDirs(home, runtime.GOOS) {
+		addCCSwitchConfigLocation(&locations, path)
+	}
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+		addCCSwitchConfigLocation(&locations, filepath.Join(xdg, "cc-switch"))
+	}
+	addCCSwitchConfigLocation(&locations, filepath.Join(home, ".config", "cc-switch"))
+	return locations
+}
+
+func ccSwitchDefaultConfigDirs(home, goos string) []string {
+	if home == "" {
+		return nil
+	}
+	dirs := []string{filepath.Join(home, ".cc-switch")}
+	if goos == "darwin" {
+		appSupport := filepath.Join(home, "Library", "Application Support")
+		for _, name := range []string{"cc-switch", "CC Switch", "CCSwitch", "ccswitch", "com.cc-switch", "com.ccswitch", "app.cc-switch"} {
+			dirs = append(dirs, filepath.Join(appSupport, name))
+		}
+		for _, pattern := range []string{
+			filepath.Join(home, "Library", "Containers", "*cc-switch*", "Data", "Library", "Application Support", "*"),
+			filepath.Join(home, "Library", "Containers", "*ccswitch*", "Data", "Library", "Application Support", "*"),
+			filepath.Join(home, "Library", "Containers", "*CC Switch*", "Data", "Library", "Application Support", "*"),
+		} {
+			matches, _ := filepath.Glob(pattern)
+			for _, match := range matches {
+				dirs = append(dirs, match)
+			}
+		}
+	}
+	return dirs
+}
+
+func addCCSwitchConfigLocation(locations *[]ccSwitchConfigLocation, raw string) {
+	path := expandHomePath(strings.TrimSpace(raw))
+	if path == "" {
+		return
+	}
+	path = filepath.Clean(path)
+	lower := strings.ToLower(path)
+	if strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, ".sqlite") || strings.HasSuffix(lower, ".sqlite3") {
+		addCCSwitchConfigLocationValue(locations, ccSwitchConfigLocation{
+			Dir:         filepath.Dir(path),
+			DBPaths:     []string{path},
+			ConfigPaths: ccSwitchConfigPaths(filepath.Dir(path)),
+		})
+		return
+	}
+	addCCSwitchConfigLocationValue(locations, ccSwitchConfigLocation{
+		Dir:         path,
+		DBPaths:     ccSwitchDBPaths(path),
+		ConfigPaths: ccSwitchConfigPaths(path),
+	})
+}
+
+func addCCSwitchConfigLocationValue(locations *[]ccSwitchConfigLocation, loc ccSwitchConfigLocation) {
+	if loc.Dir == "" {
+		return
+	}
+	for _, existing := range *locations {
+		if existing.Dir == loc.Dir {
+			return
+		}
+	}
+	*locations = append(*locations, loc)
+}
+
+func ccSwitchDBPaths(dir string) []string {
+	names := []string{"cc-switch.db", "cc_switch.db", "ccswitch.db", "database.db", "data.db", "app.db", "db.sqlite", "database.sqlite", "cc-switch.sqlite", "ccswitch.sqlite"}
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return paths
+}
+
+func ccSwitchConfigPaths(dir string) []string {
+	names := []string{"config.json", "providers.json", "settings.json", "cc-switch.json"}
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return paths
+}
+
+func expandHomePath(path string) string {
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return home
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
+func ccSwitchConfigDirExists(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	return ccSwitchConfigLocationExists(ccSwitchConfigLocation{Dir: dir, DBPaths: ccSwitchDBPaths(dir), ConfigPaths: ccSwitchConfigPaths(dir)})
+}
+
+func ccSwitchConfigLocationExists(loc ccSwitchConfigLocation) bool {
+	if loc.Dir != "" {
+		if _, err := os.Stat(loc.Dir); err == nil {
+			return true
+		}
+	}
+	for _, path := range append(append([]string{}, loc.DBPaths...), loc.ConfigPaths...) {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func CCSwitchCodexProviderBaseURL() string {
@@ -339,22 +624,54 @@ func CCSwitchCodexProviderBaseURL() string {
 }
 
 func CCSwitchCodexProviderConfig() CCSwitchProviderConfig {
-	dir := CCSwitchConfigDir()
-	if dir == "" {
-		return CCSwitchProviderConfig{}
+	for _, loc := range ccSwitchConfigLocations() {
+		if !ccSwitchConfigLocationExists(loc) {
+			continue
+		}
+		if cfg := ccSwitchCodexProviderConfigFromLocation(loc); !cfg.empty() {
+			return cfg
+		}
 	}
-	currentID := ccSwitchCurrentCodexProviderID(filepath.Join(dir, "config.json"))
-	if cfg := ccSwitchCodexProviderConfigFromSQLite(filepath.Join(dir, "cc-switch.db"), currentID); !cfg.empty() {
-		return cfg
-	}
-	if cfg := ccSwitchCodexProviderConfigFromDBText(filepath.Join(dir, "cc-switch.db"), currentID); !cfg.empty() {
-		return cfg
-	}
-	return ccSwitchCodexProviderConfigFromFiles(dir, currentID)
+	return CCSwitchProviderConfig{}
 }
 
 func (c CCSwitchProviderConfig) empty() bool {
 	return c.BaseURL == "" && c.APIKey == "" && c.APIFormat == ""
+}
+
+func ccSwitchCodexProviderConfigFromLocation(loc ccSwitchConfigLocation) CCSwitchProviderConfig {
+	currentID := ccSwitchCurrentCodexProviderIDFromLocation(loc)
+	for _, dbPath := range loc.DBPaths {
+		if cfg := ccSwitchCodexProviderConfigFromSQLite(dbPath, currentID); !cfg.empty() {
+			cfg.ConfigDir = loc.Dir
+			return cfg
+		}
+	}
+	for _, dbPath := range loc.DBPaths {
+		if cfg := ccSwitchCodexProviderConfigFromDBText(dbPath, currentID); !cfg.empty() {
+			cfg.ConfigDir = loc.Dir
+			return cfg
+		}
+	}
+	if cfg := ccSwitchCodexProviderConfigFromFiles(loc.Dir, currentID); !cfg.empty() {
+		cfg.ConfigDir = loc.Dir
+		return cfg
+	}
+	return CCSwitchProviderConfig{}
+}
+
+func ccSwitchCurrentCodexProviderIDFromLocation(loc ccSwitchConfigLocation) string {
+	for _, path := range loc.ConfigPaths {
+		if v := ccSwitchCurrentCodexProviderID(path); v != "" {
+			return v
+		}
+	}
+	for _, dbPath := range loc.DBPaths {
+		if v := ccSwitchCurrentCodexProviderIDFromSQLite(dbPath); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func ccSwitchCurrentCodexProviderID(path string) string {
@@ -369,6 +686,68 @@ func ccSwitchCurrentCodexProviderID(path string) string {
 	for _, key := range []string{"currentProviderCodex", "current_provider_codex"} {
 		if v := jsonStringAtPath(data, key); v != "" {
 			return v
+		}
+	}
+	return ""
+}
+
+func ccSwitchCurrentCodexProviderIDFromSQLite(dbPath string) string {
+	if _, err := os.Stat(dbPath); err != nil {
+		return ""
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, `SELECT key, value FROM settings`)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+		keyLower := strings.ToLower(key)
+		if strings.Contains(keyLower, "codex") && strings.Contains(keyLower, "provider") {
+			if v := strings.Trim(strings.TrimSpace(value), `"' ,`); v != "" && !strings.HasPrefix(v, "{") && !strings.HasPrefix(v, "[") {
+				return v
+			}
+		}
+		if v := ccSwitchCurrentCodexProviderIDFromText(key + "\n" + value); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func ccSwitchCurrentCodexProviderIDFromText(text string) string {
+	var data any
+	if json.Unmarshal([]byte(text), &data) == nil {
+		for _, key := range []string{"currentProviderCodex", "current_provider_codex", "currentCodexProvider", "current_codex_provider", "currentCodexProviderID", "current_codex_provider_id"} {
+			if v := jsonStringAtPath(data, key); v != "" {
+				return v
+			}
+		}
+	}
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "codex") || !strings.Contains(lower, "provider") {
+		return ""
+	}
+	for _, line := range strings.Split(text, "\n") {
+		lineLower := strings.ToLower(line)
+		if !strings.Contains(lineLower, "codex") || !strings.Contains(lineLower, "provider") {
+			continue
+		}
+		if _, value, ok := strings.Cut(line, "="); ok {
+			return strings.Trim(strings.TrimSpace(value), `"' ,`)
+		}
+		if _, value, ok := strings.Cut(line, ":"); ok {
+			return strings.Trim(strings.TrimSpace(value), `"' ,`)
 		}
 	}
 	return ""
