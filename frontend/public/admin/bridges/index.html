@@ -190,14 +190,15 @@
       function renderStats(payload) {
         const bridges = payload.bridges || [];
         const activeURLs = bridges.flatMap((bridge) => bridge.base_urls || []).filter((item) => item.is_active).length;
+        const mergedCount = Number(payload.merged_count || 0);
         const suggestions = payload.suggestions || [];
         const unknownUploads = suggestions.filter((item) => item.source === "upload").reduce((sum, item) => sum + Number(item.occurrence_count || 0), 0);
         const duplicateGroups = payload.duplicate_groups || [];
         stats.innerHTML = `
-          <article class="stat"><span>中转站</span><strong>${bridges.length}</strong></article>
-          <article class="stat"><span>启用 Base URL</span><strong>${activeURLs}</strong></article>
+          <article class="stat"><span>有效中转站</span><strong>${bridges.length}</strong></article>
+          <article class="stat"><span>启用 API Base URL</span><strong>${activeURLs}</strong></article>
           <article class="stat"><span>待处理候选</span><strong>${suggestions.length}</strong></article>
-          <article class="stat"><span>疑似重复</span><strong>${duplicateGroups.length}</strong></article>
+          <article class="stat"><span>疑似重复</span><strong>${duplicateGroups.length}</strong><small>已合并 ${mergedCount}</small></article>
         `;
       }
 
@@ -222,7 +223,7 @@
               </div>
               <form id="bridge-form">
                 <input type="hidden" name="suggestion_id" />
-                <label><span>主页 URL 或 Base URL</span><input name="homepage_or_base" maxlength="512" placeholder="https://example.com 或 https://api.example.com/v1" /></label>
+                <label><span>主页 URL 或 API Base URL</span><input name="homepage_or_base" maxlength="512" placeholder="https://example.com 或 https://api.example.com/v1" /></label>
                 <div class="form-grid">
                   <label><span>名称</span><input name="name" maxlength="128" placeholder="例如 Linux.do Bridge" required /></label>
                   <label><span>Slug</span><input name="slug" maxlength="64" placeholder="自动从名称生成" /></label>
@@ -230,10 +231,10 @@
                   <label><span>主页 URL</span><input name="homepage_url" maxlength="512" placeholder="https://example.com/" /></label>
                 </div>
                 <label style="margin-top: 12px"><span>描述</span><input name="description" maxlength="300" placeholder="自动从网页 description / og:description 填充" /></label>
-                <label style="margin-top: 12px"><span>Base URLs（每行一个，可粘贴逗号分隔，可稍后拖入候选）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1"></textarea></label>
+                <label style="margin-top: 12px"><span>API Base URLs（每行一个，不要填写官网主页）</span><textarea name="base_urls" spellcheck="false" placeholder="https://bridge.example.com/v1"></textarea></label>
                 <div class="form-grid" style="margin-top: 10px">
                   <label><span>状态</span><select name="status"><option value="confirmed">已确认</option><option value="pending">待确认</option><option value="hidden">隐藏</option></select></label>
-                  <label><span>主要 Base URL</span><input name="primary_base_url" maxlength="256" placeholder="默认使用第一条" /></label>
+                  <label><span>主要 API Base URL</span><input name="primary_base_url" maxlength="256" placeholder="默认使用第一条" /></label>
                 </div>
                 <div class="help">推荐流程：粘贴主页 URL 自动填充，确认卡片预览，再把候选拖到已有中转站或一键绑定。</div>
                 <div class="actions">
@@ -373,6 +374,7 @@
 
       function renderBridge(bridge) {
         const urls = bridge.base_urls || [];
+        const activeURLCount = urls.filter((item) => item.is_active).length;
         return `
           <article class="card" data-drop-bridge="${escapeHTML(bridge.id)}">
             <header>
@@ -382,7 +384,7 @@
             ${bridge.description ? `<p>${escapeHTML(bridge.description)}</p>` : ""}
             ${bridge.homepage_url ? `<p><a href="${escapeHTML(bridge.homepage_url)}" target="_blank" rel="noreferrer">${escapeHTML(bridge.homepage_url)}</a></p>` : ""}
             <div class="meta">
-              <span>base URL: ${urls.length}</span>
+              <span>API Base URL: ${activeURLCount}${urls.length !== activeURLCount ? ` / ${urls.length}` : ""}</span>
               <span>使用: ${Number(bridge.usage_count || 0)}</span>
               <span>用户: ${Number(bridge.user_count || 0)}</span>
               <span>root: ${escapeHTML(bridge.root_domain || "-")}</span>

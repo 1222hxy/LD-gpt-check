@@ -253,8 +253,11 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
             bridge_base_urls.is_active AS base_url_active
      FROM bridges
      LEFT JOIN bridge_base_urls ON bridge_base_urls.bridge_id = bridges.id
+     WHERE bridges.status != 'merged'
+       AND bridges.merged_into_bridge_id IS NULL
      ORDER BY bridges.updated_at DESC, bridge_base_urls.sort_order ASC, bridge_base_urls.base_url ASC`
   ).all();
+  const stats = await loadBridgeAdminStats(env);
   const byID = new Map<string, any>();
   for (const row of rows.results ?? []) {
     const r = row as any;
@@ -315,11 +318,28 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
      ORDER BY bridge_suggestions.occurrence_count DESC, bridge_suggestions.updated_at DESC
      LIMIT 50`
   ).all();
-  const bridges = [...byID.values()].map((bridge) => ({
-    ...bridge,
-    root_domain: bridge.root_domain || rootDomainFromURL(bridge.homepage_url) || rootDomainFromHost(bridge.base_urls?.[0]?.host || ""),
-    primary_base_url_id: bridge.primary_base_url_id || bridge.base_urls?.find((item: any) => item.is_primary)?.id || bridge.base_urls?.[0]?.id || "",
-  }));
+  const mergedRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM bridges WHERE status = 'merged' OR merged_into_bridge_id IS NOT NULL`
+  ).first<any>();
+  const bridges = [...byID.values()].map((bridge) => {
+    const bridgeStats = stats.bridges.get(bridge.id);
+    return {
+      ...bridge,
+      usage_count: int(bridgeStats?.usage_count ?? bridge.usage_count),
+      user_count: int(bridgeStats?.user_count ?? bridge.user_count),
+      last_seen_at: bridgeStats?.last_seen_at || bridge.last_seen_at,
+      root_domain: bridge.root_domain || rootDomainFromURL(bridge.homepage_url) || rootDomainFromHost(bridge.base_urls?.[0]?.host || ""),
+      primary_base_url_id: bridge.primary_base_url_id || bridge.base_urls?.find((item: any) => item.is_primary)?.id || bridge.base_urls?.[0]?.id || "",
+      base_urls: (bridge.base_urls || []).map((item: any) => {
+        const baseStats = stats.baseURLs.get(item.id);
+        return {
+          ...item,
+          usage_count: int(baseStats?.usage_count ?? item.usage_count),
+          last_seen_at: baseStats?.last_seen_at || item.last_seen_at,
+        };
+      }),
+    };
+  });
   const enrichedSuggestions = (suggestions.results ?? []).map((row: any) => ({
     ...row,
     confidence: int(row.confidence),
@@ -330,9 +350,42 @@ async function adminBridgesGet(request: Request, env: Env): Promise<Response> {
   return json({
     user: publicUser(user),
     bridges,
+    merged_count: int(mergedRow?.count),
     suggestions: enrichedSuggestions,
     duplicate_groups: duplicateBridgeGroups(bridges),
   });
+}
+
+async function loadBridgeAdminStats(env: Env): Promise<{ bridges: Map<string, any>; baseURLs: Map<string, any> }> {
+  const bridgeRows = await env.DB.prepare(
+    `SELECT bridges.id AS bridge_id,
+            COUNT(DISTINCT benchmark_submissions.id) AS usage_count,
+            COUNT(DISTINCT benchmark_submissions.user_id) AS user_count,
+            MAX(benchmark_submissions.created_at) AS last_seen_at
+     FROM bridges
+     LEFT JOIN bridge_base_urls
+       ON bridge_base_urls.bridge_id = bridges.id
+      AND bridge_base_urls.is_active = 1
+     LEFT JOIN benchmark_submissions
+       ON benchmark_submissions.codex_bridge_id = bridges.id
+       OR benchmark_submissions.codex_provider_base_url = bridge_base_urls.base_url
+     WHERE bridges.status != 'merged'
+       AND bridges.merged_into_bridge_id IS NULL
+     GROUP BY bridges.id`
+  ).all<any>();
+  const baseURLRows = await env.DB.prepare(
+    `SELECT bridge_base_urls.id AS base_url_id,
+            COUNT(DISTINCT benchmark_submissions.id) AS usage_count,
+            MAX(benchmark_submissions.created_at) AS last_seen_at
+     FROM bridge_base_urls
+     LEFT JOIN benchmark_submissions
+       ON benchmark_submissions.codex_provider_base_url = bridge_base_urls.base_url
+     GROUP BY bridge_base_urls.id`
+  ).all<any>();
+  return {
+    bridges: new Map((bridgeRows.results ?? []).map((row: any) => [row.bridge_id, row])),
+    baseURLs: new Map((baseURLRows.results ?? []).map((row: any) => [row.base_url_id, row])),
+  };
 }
 
 async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
@@ -347,9 +400,10 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
   const slug = slugify(str(body.slug, MAX_STRING_LENGTH).trim() || name) || `bridge-${crypto.randomUUID().slice(0, 8)}`;
   const status = normalizeBridgeStatus(body.status, body.is_active === false ? "hidden" : "confirmed");
   const isActive = status === "hidden" || status === "merged" || body.is_active === false ? 0 : 1;
-  const baseURLs = normalizeBridgeBaseURLs(body.base_urls);
   const iconURL = normalizeIconValue(str(body.icon_url, MAX_ICON_VALUE_LENGTH));
   const homepageURL = normalizePublicHTTPURL(str(body.homepage_url, MAX_URL_LENGTH));
+  const homepageBaseURL = normalizeProviderBaseURL(homepageURL);
+  const baseURLs = normalizeBridgeBaseURLs(body.base_urls).filter((item) => item.baseURL !== homepageBaseURL);
   if (baseURLs.length < 1 && !homepageURL) return jsonError("at least one valid https base_url or homepage_url is required", 400, "bad_request");
   const description = str(body.description, MAX_PREVIEW_LENGTH).trim();
   const canonicalURL = normalizePublicHTTPURL(str(body.canonical_url, MAX_URL_LENGTH));
@@ -363,7 +417,8 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
        FROM bridge_base_urls
        JOIN bridges ON bridges.id = bridge_base_urls.bridge_id
        WHERE bridge_base_urls.base_url IN (${baseURLs.map(() => "?").join(",")})
-         AND bridges.slug != ?`
+         AND bridges.slug != ?
+         AND bridges.status != 'merged'`
     )
       .bind(...baseURLs.map((item) => item.baseURL), slug)
       .first<any>();
@@ -375,7 +430,8 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
   const now = iso(new Date());
   const existing = await env.DB.prepare(`SELECT id FROM bridges WHERE slug = ?`).bind(slug).first<any>();
   const bridgeID = existing?.id || crypto.randomUUID();
-  const primaryBaseURL = str(body.primary_base_url || baseURLs[0]?.baseURL || "", MAX_BASE_URL_LENGTH);
+  const requestedPrimaryBaseURL = normalizeProviderBaseURL(str(body.primary_base_url, MAX_BASE_URL_LENGTH));
+  const primaryBaseURL = baseURLs.some((item) => item.baseURL === requestedPrimaryBaseURL) ? requestedPrimaryBaseURL : baseURLs[0]?.baseURL || "";
   const primaryBaseURLID = primaryBaseURL ? crypto.randomUUID() : "";
   const statements = [
     env.DB.prepare(
@@ -430,6 +486,7 @@ async function adminBridgesPost(request: Request, env: Env): Promise<Response> {
   }
   statements.push(adminEventStatement(env, user.id, "bridge_save", bridgeID, "", suggestionID, primaryBaseURL, { name, slug, status, base_url_count: baseURLs.length }, now));
   await env.DB.batch(statements);
+  await reconcileBridgeSubmissions(env, bridgeID, baseURLs.map((item) => item.baseURL), now);
   return json({ ok: true, id: bridgeID, slug, updated_at: now });
 }
 
@@ -533,6 +590,7 @@ async function adminBridgeSuggestionBindPost(request: Request, env: Env): Promis
     ).bind(int(suggestion.occurrence_count), int(suggestion.user_count), suggestion.last_seen_at || now, now, bridgeID),
     adminEventStatement(env, user.id, "suggestion_bind", bridgeID, "", suggestionID, baseURL, { candidate_confidence: int(suggestion.confidence) }, now),
   ]);
+  await reconcileBridgeSubmissions(env, bridgeID, [baseURL], now);
   return json({ ok: true, bridge_id: bridgeID, suggestion_id: suggestionID, base_url: baseURL });
 }
 
@@ -582,6 +640,7 @@ async function adminBridgeBaseURLActionPost(request: Request, env: Env): Promise
   }
   statements.push(adminEventStatement(env, user.id, `base_url_${action}`, row.bridge_id, "", "", row.base_url, {}, now));
   await env.DB.batch(statements);
+  await refreshBridgeStats(env, [row.bridge_id], now);
   return json({ ok: true, id, action });
 }
 
@@ -645,6 +704,7 @@ async function adminBridgesMergePost(request: Request, env: Env): Promise<Respon
     env.DB.prepare(`UPDATE bridges SET status = 'merged', is_active = 0, merged_into_bridge_id = ?, updated_at = ? WHERE id = ?`).bind(keepID, now, mergeID),
     adminEventStatement(env, user.id, "bridge_merge", keepID, mergeID, "", "", {}, now),
   ]);
+  await refreshBridgeStats(env, [keepID, mergeID], now);
   return json({ ok: true, keep_bridge_id: keepID, merged_bridge_id: mergeID });
 }
 
@@ -2982,6 +3042,52 @@ async function updateBridgeUsage(env: Env, bridgeID: string | null, baseURL: str
        WHERE id = ?`
     ).bind(bridgeID, now, now, bridgeID),
   ]);
+}
+
+async function reconcileBridgeSubmissions(env: Env, bridgeID: string, baseURLs: string[], now: string): Promise<void> {
+  const normalized = [...new Set(baseURLs.map((value) => normalizeProviderBaseURL(value)).filter(Boolean))];
+  if (!bridgeID || !normalized.length) {
+    await refreshBridgeStats(env, bridgeID ? [bridgeID] : [], now);
+    return;
+  }
+  await env.DB.prepare(
+    `UPDATE benchmark_submissions
+     SET codex_bridge_id = ?,
+         codex_channel = 'bridge'
+     WHERE codex_channel != 'official'
+       AND codex_provider_base_url IN (${normalized.map(() => "?").join(",")})`
+  )
+    .bind(bridgeID, ...normalized)
+    .run();
+  await refreshBridgeStats(env, [bridgeID], now);
+}
+
+async function refreshBridgeStats(env: Env, bridgeIDs: string[], now = iso(new Date())): Promise<void> {
+  const ids = [...new Set(bridgeIDs.map((id) => str(id, MAX_STRING_LENGTH)).filter(Boolean))];
+  if (!ids.length) return;
+  const statements: D1PreparedStatement[] = [];
+  for (const bridgeID of ids) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE bridge_base_urls
+         SET usage_count = (SELECT COUNT(*) FROM benchmark_submissions WHERE benchmark_submissions.codex_provider_base_url = bridge_base_urls.base_url),
+             last_seen_at = (SELECT MAX(created_at) FROM benchmark_submissions WHERE benchmark_submissions.codex_provider_base_url = bridge_base_urls.base_url),
+             updated_at = ?
+         WHERE bridge_id = ?`
+      ).bind(now, bridgeID)
+    );
+    statements.push(
+      env.DB.prepare(
+        `UPDATE bridges
+         SET usage_count = (SELECT COUNT(*) FROM benchmark_submissions WHERE codex_bridge_id = ?),
+             user_count = (SELECT COUNT(DISTINCT user_id) FROM benchmark_submissions WHERE codex_bridge_id = ?),
+             last_seen_at = (SELECT MAX(created_at) FROM benchmark_submissions WHERE codex_bridge_id = ?),
+             updated_at = ?
+         WHERE id = ?`
+      ).bind(bridgeID, bridgeID, bridgeID, now, bridgeID)
+    );
+  }
+  await env.DB.batch(statements);
 }
 
 async function bestBridgeCandidate(
