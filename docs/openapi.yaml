@@ -648,13 +648,17 @@ components:
 
     DeviceAuthorizationAuthorizedResponse:
       type: object
-      required: [status, access_token, user]
+      required: [status, device_token, user]
       properties:
         status:
           type: string
           const: authorized
+        device_token:
+          type: string
+          description: Secret CLI device token. Store only in the local authorization file.
         access_token:
           type: string
+          description: Deprecated compatibility alias for device_token.
         user:
           $ref: "#/components/schemas/User"
 

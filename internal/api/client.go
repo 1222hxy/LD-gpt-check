@@ -117,6 +117,7 @@ type DeviceStartResponse struct {
 
 type DevicePollResponse struct {
 	Status      string      `json:"status"`
+	DeviceToken string      `json:"device_token"`
 	AccessToken string      `json:"access_token"`
 	User        config.User `json:"user"`
 }

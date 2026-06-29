@@ -104,17 +104,19 @@ func LoginWithOptions(ctx context.Context, opts LoginOptions) (config.User, erro
 		case "expired":
 			return config.User{}, fmt.Errorf("%s", l.S("auth_expired"))
 		case "authorized":
-			if poll.AccessToken == "" {
+			deviceToken := poll.DeviceToken
+			if deviceToken == "" {
+				deviceToken = poll.AccessToken
+			}
+			if deviceToken == "" {
 				return config.User{}, fmt.Errorf("%s", l.S("auth_missing_access_token"))
 			}
-			if poll.User.ID == "" {
-				return config.User{}, fmt.Errorf("%s", l.S("auth_missing_user_id"))
-			}
 			cfg := config.Config{
-				APIBaseURL:  apiBaseURL,
-				AccessToken: poll.AccessToken,
-				Language:    string(lang),
-				User:        poll.User,
+				APIBaseURL: apiBaseURL,
+				Language:   string(lang),
+				DeviceAuthorization: config.DeviceAuthorization{
+					Secret: deviceToken,
+				},
 			}
 			if err := config.Save(cfg); err != nil {
 				return config.User{}, err

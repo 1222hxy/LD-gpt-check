@@ -28,7 +28,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.2.11"
+var version = "0.2.12"
 var assetSuffix = ""
 var gitCommit = ""
 var gitCommitDate = ""
@@ -561,7 +561,11 @@ func loginCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf(l.S("login_success")+"\n", user.Username, user.ID)
+	name := user.Username
+	if name == "" {
+		name = "device"
+	}
+	fmt.Printf(l.S("login_success")+"\n", name)
 	if path, err := config.Path(); err == nil {
 		fmt.Printf(l.S("credential_saved")+"\n", path)
 	}
@@ -620,15 +624,7 @@ func configCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		fmt.Println(l.S("config_not_logged_in"))
 		return nil
 	}
-	name := cfg.User.Username
-	if name == "" {
-		name = cfg.User.ID
-	}
-	fmt.Print(l.S("config_logged_in"))
-	if name != "" {
-		fmt.Printf("（%s）", name)
-	}
-	fmt.Println()
+	fmt.Println(l.S("config_logged_in"))
 	return nil
 }
 

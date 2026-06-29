@@ -965,6 +965,7 @@ async function devicePoll(request: Request, env: Env): Promise<Response> {
   const user = await env.DB.prepare(`SELECT id, username FROM users WHERE id = ?`).bind(row.user_id).first<any>();
   return json({
     status: "authorized",
+    device_token: token,
     access_token: token,
     user: { id: user?.id ?? row.user_id, username: user?.username ?? "" },
   });
@@ -1167,7 +1168,7 @@ async function accountPage(request: Request, env: Env): Promise<Response> {
       </div>
     </section>
     <section class="grid">
-      <article><span>用户 ID</span><strong>${escapeHTML(user.id)}</strong></article>
+      <article><span>账号状态</span><strong>已登录</strong></article>
       <article><span>累计上传</span><strong>${int(stats?.total_submissions)} 次</strong></article>
       <article><span>平均正确率</span><strong>${stats?.avg_accuracy == null ? "-" : formatPercent(num(stats.avg_accuracy))}</strong></article>
     </section>

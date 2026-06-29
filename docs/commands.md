@@ -132,7 +132,7 @@ ld-gpt-check logout
 登录流程：
 
 ```text
-CLI -> Cloudflare Worker -> Linux.do OAuth -> Worker 生成平台 token -> CLI 保存 token
+CLI -> Cloudflare Worker -> Linux.do OAuth -> Worker 生成设备 token -> CLI 保存设备授权 secret
 ```
 
 本地配置文件：
@@ -151,13 +151,13 @@ ld-gpt-check.example.toml
 
 ```toml
 api_base_url = "https://codexgo.yhklab.com"
-access_token = "..."
 language = "zh-CN"
 
-[user]
-id = "..."
-username = "..."
+[device_authorization]
+secret = "ldgc_..."
 ```
+
+`device_authorization.secret` 是设备授权密钥，等同登录凭证，必须保密；不要提交到 Git，也不要贴到日志或工单里。
 
 自托管后端登录：
 

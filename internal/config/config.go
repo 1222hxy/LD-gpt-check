@@ -24,11 +24,16 @@ type User struct {
 	Username string `json:"username"`
 }
 
+type DeviceAuthorization struct {
+	Secret string `json:"secret"`
+}
+
 type Config struct {
-	APIBaseURL  string `json:"api_base_url"`
-	AccessToken string `json:"access_token"`
-	Language    string `json:"language"`
-	User        User   `json:"user"`
+	APIBaseURL          string              `json:"api_base_url"`
+	AccessToken         string              `json:"access_token"`
+	Language            string              `json:"language"`
+	User                User                `json:"user"`
+	DeviceAuthorization DeviceAuthorization `json:"device_authorization"`
 }
 
 func DefaultAPIBaseURL() string {
@@ -135,6 +140,7 @@ func DeleteToken() error {
 		return err
 	}
 	cfg.AccessToken = ""
+	cfg.DeviceAuthorization = DeviceAuthorization{}
 	cfg.User = User{}
 	return Save(cfg)
 }
@@ -146,6 +152,12 @@ func normalize(cfg Config) Config {
 		cfg.APIBaseURL = strings.TrimSpace(cfg.APIBaseURL)
 	}
 	cfg.Language = string(i18n.Normalize(cfg.Language))
+	if strings.TrimSpace(cfg.DeviceAuthorization.Secret) == "" {
+		cfg.DeviceAuthorization.Secret = strings.TrimSpace(cfg.AccessToken)
+	} else {
+		cfg.DeviceAuthorization.Secret = strings.TrimSpace(cfg.DeviceAuthorization.Secret)
+	}
+	cfg.AccessToken = cfg.DeviceAuthorization.Secret
 	return cfg
 }
 
@@ -173,7 +185,7 @@ func parseTOML(b []byte) (Config, error) {
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
-			if section != "user" {
+			if section != "user" && section != "device_authorization" {
 				return Config{}, fmt.Errorf("invalid config line %d: unknown section [%s]", lineNo, section)
 			}
 			continue
@@ -195,6 +207,8 @@ func parseTOML(b []byte) (Config, error) {
 			cfg.AccessToken = s
 		case ".language":
 			cfg.Language = s
+		case "device_authorization.secret":
+			cfg.DeviceAuthorization.Secret = s
 		case "user.id":
 			cfg.User.ID = s
 		case "user.username":
@@ -216,11 +230,9 @@ func marshalTOML(cfg Config) string {
 	var b strings.Builder
 	b.WriteString("# LD-gpt-check local config. Keep this file private.\n")
 	b.WriteString("api_base_url = " + strconv.Quote(cfg.APIBaseURL) + "\n")
-	b.WriteString("access_token = " + strconv.Quote(cfg.AccessToken) + "\n")
 	b.WriteString("language = " + strconv.Quote(cfg.Language) + "\n\n")
-	b.WriteString("[user]\n")
-	b.WriteString("id = " + strconv.Quote(cfg.User.ID) + "\n")
-	b.WriteString("username = " + strconv.Quote(cfg.User.Username) + "\n")
+	b.WriteString("[device_authorization]\n")
+	b.WriteString("secret = " + strconv.Quote(cfg.DeviceAuthorization.Secret) + "\n")
 	return b.String()
 }
 
