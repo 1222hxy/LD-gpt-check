@@ -212,6 +212,130 @@ func PrintSummaryPanel(w io.Writer, s runner.Summary, lang i18n.Lang, color bool
 	fmt.Fprintf(w, Colorize(l.S("report_summary"), colorSummary(s), color), s.Correct, s.Tests, s.Accuracy, s.AvgTimeSeconds, s.AvgTPS)
 }
 
+type WizardRunRecord struct {
+	Backend          runner.Backend
+	APIFormat        runner.APIFormat
+	Model            string
+	ModelAPIBaseURL  string
+	CodexStartupArgs string
+	ReasoningEffort  string
+	Tests            int
+	Timeout          time.Duration
+	Upload           bool
+	Anonymous        bool
+	UploadStatus     string
+	UploadStatusOK   bool
+	Question         questions.Question
+	QuestionSource   string
+	Summary          runner.Summary
+}
+
+func PrintWizardRunRecord(w io.Writer, r WizardRunRecord, lang i18n.Lang, color bool) {
+	l := i18n.New(lang)
+	const lineWidth = 62
+	fmt.Fprintln(w)
+	printPanelTop(w, l.S("wizard_record_title"), lineWidth, color)
+	printPanelSection(w, l.S("wizard_record_section_config"), lineWidth, color)
+	printPanelRow(w, l.S("wizard_record_backend"), wizardBackendLabel(l, r.Backend), lineWidth, color, "")
+	if r.Backend == runner.BackendAPI {
+		printPanelRow(w, l.S("wizard_record_api_format"), wizardAPIFormatLabel(l, r.APIFormat), lineWidth, color, "")
+		if strings.TrimSpace(r.ModelAPIBaseURL) != "" {
+			printPanelRow(w, l.S("wizard_record_api_base"), r.ModelAPIBaseURL, lineWidth, color, "")
+		}
+	}
+	printPanelRow(w, l.S("wizard_record_model"), firstNonEmpty(r.Model, l.S("model_local_config")), lineWidth, color, "")
+	if strings.TrimSpace(r.CodexStartupArgs) != "" {
+		printPanelRow(w, l.S("wizard_record_codex_args"), Truncate(r.CodexStartupArgs, 80), lineWidth, color, colorYellow)
+	}
+	printPanelRow(w, l.S("wizard_record_effort"), r.ReasoningEffort, lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_tests"), strconv.Itoa(r.Tests), lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_timeout"), r.Timeout.String(), lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_upload"), boolLabel(l, r.Upload), lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_anonymous"), boolLabel(l, r.Anonymous), lineWidth, color, "")
+
+	printPanelSection(w, l.S("wizard_record_section_question"), lineWidth, color)
+	printPanelRow(w, l.S("wizard_record_question_title"), firstNonEmpty(r.Question.Title, r.Question.ID), lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_question_id"), r.Question.ID, lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_question_version"), r.Question.Version, lineWidth, color, "")
+	printPanelRow(w, l.S("wizard_record_question_source"), wizardQuestionSourceLabel(l, r.QuestionSource), lineWidth, color, "")
+
+	printPanelSection(w, l.S("wizard_record_section_result"), lineWidth, color)
+	printPanelRow(w, l.S("wizard_record_accuracy"), fmt.Sprintf("%.1f%%", r.Summary.Accuracy), lineWidth, color, colorSummary(r.Summary))
+	printPanelRow(w, l.S("wizard_record_correct"), fmt.Sprintf("%d/%d", r.Summary.Correct, r.Summary.Tests), lineWidth, color, colorSummary(r.Summary))
+	printPanelRow(w, l.S("wizard_record_avg_time"), fmt.Sprintf("%.1fs", r.Summary.AvgTimeSeconds), lineWidth, color, colorYellow)
+	printPanelRow(w, l.S("wizard_record_avg_tps"), fmt.Sprintf("%.1f", r.Summary.AvgTPS), lineWidth, color, colorYellow)
+	printPanelRow(w, l.S("wizard_record_tokens"), l.S("wizard_record_tokens_value", r.Summary.AvgInputTokens, r.Summary.AvgOutputTokens, r.Summary.AvgReasoningTokens), lineWidth, color, "")
+	uploadColor := colorYellow
+	if r.UploadStatusOK {
+		uploadColor = colorGreen
+	}
+	printPanelRow(w, l.S("wizard_record_upload_status"), r.UploadStatus, lineWidth, color, uploadColor)
+	printPanelBottom(w, lineWidth, color)
+}
+
+func printPanelTop(w io.Writer, title string, width int, color bool) {
+	fmt.Fprintln(w, Colorize("┌─ "+title+" "+strings.Repeat("─", max(1, width-DisplayWidth(title)-4))+"┐", colorCyan, color))
+}
+
+func printPanelSection(w io.Writer, title string, width int, color bool) {
+	fmt.Fprintln(w, Colorize("├─ "+title+" "+strings.Repeat("─", max(1, width-DisplayWidth(title)-4))+"┤", colorCyan, color))
+}
+
+func printPanelBottom(w io.Writer, width int, color bool) {
+	fmt.Fprintln(w, Colorize("└"+strings.Repeat("─", width)+"┘", colorCyan, color))
+}
+
+func printPanelRow(w io.Writer, label, value string, width int, color bool, valueColor string) {
+	const labelWidth = 14
+	valueWidth := width - labelWidth - 5
+	value = Truncate(firstNonEmpty(value, "-"), valueWidth)
+	fmt.Fprintf(w, "│ %s  %s │\n",
+		PadRight(Colorize(label, colorGray, color), labelWidth),
+		PadRight(Colorize(value, valueColor, color), valueWidth),
+	)
+}
+
+func boolLabel(l i18n.Localizer, v bool) string {
+	if v {
+		return l.S("yes")
+	}
+	return l.S("no")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func wizardBackendLabel(l i18n.Localizer, backend runner.Backend) string {
+	if backend == runner.BackendAPI {
+		return l.S("wizard_record_backend_api")
+	}
+	return l.S("wizard_record_backend_codex")
+}
+
+func wizardAPIFormatLabel(l i18n.Localizer, format runner.APIFormat) string {
+	switch format {
+	case runner.APIFormatOpenAIResponses:
+		return l.S("wizard_record_api_format_responses")
+	case runner.APIFormatAnthropic:
+		return l.S("wizard_record_api_format_anthropic")
+	default:
+		return l.S("wizard_record_api_format_chat")
+	}
+}
+
+func wizardQuestionSourceLabel(l i18n.Localizer, source string) string {
+	if source == "remote" {
+		return l.S("wizard_record_question_source_remote")
+	}
+	return l.S("wizard_record_question_source_classic")
+}
+
 func printRow(w io.Writer, cols []string, widths []int) {
 	for i, col := range cols {
 		if i > 0 {

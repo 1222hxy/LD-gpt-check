@@ -119,6 +119,54 @@ func TestPrintQuestionPromptsPrintsSelectedQuestion(t *testing.T) {
 	}
 }
 
+func TestPrintWizardRunRecordIncludesConfigAndResults(t *testing.T) {
+	var out bytes.Buffer
+	longArgs := "--profile fair-test " + strings.Repeat("x", 100)
+	PrintWizardRunRecord(&out, WizardRunRecord{
+		Backend:          runner.BackendAPI,
+		APIFormat:        runner.APIFormatOpenAIChat,
+		Model:            "deepseek-reasoner",
+		ModelAPIBaseURL:  "https://api.deepseek.com/v1",
+		CodexStartupArgs: longArgs,
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Timeout:          5,
+		Upload:           true,
+		Anonymous:        false,
+		UploadStatus:     "已上传 run_123",
+		UploadStatusOK:   true,
+		Question: questions.Question{
+			ID:      "remote_1",
+			Version: "1",
+			Title:   "远程题",
+		},
+		QuestionSource: "remote",
+		Summary: runner.Summary{
+			Tests:               1,
+			Correct:             1,
+			Accuracy:            100,
+			AvgInputTokens:      10,
+			AvgOutputTokens:     5,
+			AvgReasoningTokens:  2,
+			AvgTimeSeconds:      3.4,
+			AvgTPS:              1.5,
+			UploadSchemaVersion: 4,
+		},
+	}, i18n.ZH, false)
+	text := out.String()
+	for _, want := range []string{"向导运行记录", "API 模式", "OpenAI Chat Completions", "deepseek-reasoner", "https://api.deepseek.com/v1", "远程题", "remote_1", "100.0%", "1/1", "输入 10 / 输出 5 / 推理 2", "已上传 run_123"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("wizard record missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, longArgs) || !strings.Contains(text, "...") {
+		t.Fatalf("long codex args should be truncated:\n%s", text)
+	}
+	if strings.Contains(text, "secret-key") {
+		t.Fatalf("record should not include API keys:\n%s", text)
+	}
+}
+
 type assertError string
 
 func (e assertError) Error() string { return string(e) }

@@ -220,6 +220,8 @@ func Run(ctx context.Context, opts Options) error {
 	report.PrintTableWithWriter(out, summary, lang, color)
 
 	report.PrintSection(out, 4, l.S("wizard_step_upload"), color)
+	uploadStatus := l.S("wizard_upload_skipped")
+	uploadStatusOK := false
 	if upload {
 		codexVersion := system.UploadCodexVersion(summary.CodexSandbox)
 		payload := api.PayloadFromSummary(opts.Version, summary, runtime.GOOS, runtime.GOARCH, codexVersion)
@@ -229,16 +231,44 @@ func Run(ctx context.Context, opts Options) error {
 			return err
 		}
 		if id, _ := resp["id"].(string); id != "" {
-			report.PrintSuccess(out, l.S("uploaded_run", id), color)
+			uploadStatus = l.S("uploaded_run", id)
+			uploadStatusOK = true
+			report.PrintSuccess(out, uploadStatus, color)
 		} else {
-			report.PrintSuccess(out, l.S("uploaded_run_no_id"), color)
+			uploadStatus = l.S("uploaded_run_no_id")
+			uploadStatusOK = true
+			report.PrintSuccess(out, uploadStatus, color)
 		}
 	} else {
 		report.PrintWarning(out, l.S("wizard_upload_skipped"), color)
 	}
 
+	report.PrintWizardRunRecord(out, report.WizardRunRecord{
+		Backend:          backend,
+		APIFormat:        apiFormat,
+		Model:            model,
+		ModelAPIBaseURL:  modelAPIBase,
+		CodexStartupArgs: codexStartupArgs,
+		ReasoningEffort:  effort,
+		Tests:            tests,
+		Timeout:          timeout,
+		Upload:           upload,
+		Anonymous:        anonymous,
+		UploadStatus:     uploadStatus,
+		UploadStatusOK:   uploadStatusOK,
+		Question:         selectedQuestion,
+		QuestionSource:   wizardQuestionSource(selectedQuestion),
+		Summary:          summary,
+	}, lang, color)
 	report.PrintSuccess(out, l.S("wizard_done"), color)
 	return nil
+}
+
+func wizardQuestionSource(q questions.Question) string {
+	if q.ID == questions.DefaultSuite {
+		return "classic"
+	}
+	return "remote"
 }
 
 func promptQuestion(ctx context.Context, r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool, apiBase string) (questions.Question, error) {

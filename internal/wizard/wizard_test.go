@@ -308,4 +308,12 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	if got := strings.Count(out.String(), "不使用任何外部工具回答以下问题"); got != 1 {
 		t.Fatalf("question prompt should print once, got %d:\n%s", got, out.String())
 	}
+	for _, want := range []string{"向导运行记录", "https://api.example.com/v1", "100.0%", "未上传"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("wizard output missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "wizard-key") {
+		t.Fatalf("wizard output should not include API key:\n%s", out.String())
+	}
 }
