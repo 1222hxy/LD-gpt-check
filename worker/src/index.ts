@@ -742,9 +742,12 @@ async function adminStaticPage(request: Request, env: Env): Promise<Response> {
   if (!isAdminUser(user, env)) return html(resultPage("无权访问", "当前 Linux.do 账号不在管理员列表中。"), 403);
   const assetURL = new URL(request.url);
   assetURL.pathname = `${canonicalPath}/index.html`;
-  const assetResp = await env.ASSETS.fetch(new Request(assetURL.toString(), request));
+  const assetResp = await env.ASSETS.fetch(new Request(assetURL.toString(), {
+    method: "GET",
+    headers: { accept: "text/html" },
+  }));
   if (!assetResp.ok) return assetResp;
-  if (request.method === "HEAD") return assetResp;
+  if (request.method === "HEAD") return new Response(null, { status: assetResp.status, headers: assetResp.headers });
   const nonce = cspNonce();
   const body = (await assetResp.text()).replace(/<script>/g, `<script nonce="${nonce}">`);
   return html(body, assetResp.status, nonce);
