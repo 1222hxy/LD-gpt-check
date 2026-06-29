@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -29,14 +30,19 @@ const (
 )
 
 type Options struct {
-	Model           string
-	ReasoningEffort string
-	Tests           int
-	Timeout         time.Duration
-	Lang            i18n.Lang
-	QuestionSuite   string
-	Questions       []questions.Question
-	Progress        func(ProgressEvent)
+	Model            string
+	ReasoningEffort  string
+	Tests            int
+	Timeout          time.Duration
+	Lang             i18n.Lang
+	Backend          Backend
+	APIFormat        APIFormat
+	ModelAPIBaseURL  string
+	ModelAPIKey      string
+	APIHTTPTransport http.RoundTripper
+	QuestionSuite    string
+	Questions        []questions.Question
+	Progress         func(ProgressEvent)
 }
 
 type ProgressEvent struct {
@@ -150,12 +156,54 @@ type QuestionSummary struct {
 	AvgTPS          float64 `json:"avg_tps"`
 }
 
+type Backend string
+
+const (
+	BackendAuto  Backend = "auto"
+	BackendCodex Backend = "codex"
+	BackendAPI   Backend = "api"
+)
+
+type APIFormat string
+
+const (
+	APIFormatOpenAIChat      APIFormat = "openai-chat"
+	APIFormatOpenAIResponses APIFormat = "openai-responses"
+	APIFormatAnthropic       APIFormat = "anthropic-messages"
+)
+
 func ValidReasoningEffort(v string) bool {
 	switch v {
 	case "low", "medium", "high", "xhigh":
 		return true
 	default:
 		return false
+	}
+}
+
+func NormalizeBackend(v Backend) (Backend, bool) {
+	switch strings.ToLower(strings.TrimSpace(string(v))) {
+	case "", "auto":
+		return BackendAuto, true
+	case "codex", "local", "cli":
+		return BackendCodex, true
+	case "api", "http":
+		return BackendAPI, true
+	default:
+		return "", false
+	}
+}
+
+func NormalizeAPIFormat(v APIFormat) (APIFormat, bool) {
+	switch strings.ToLower(strings.TrimSpace(string(v))) {
+	case "", "openai-chat", "chat", "chat-completions", "completion", "completions", "openai-completion", "openai-completions":
+		return APIFormatOpenAIChat, true
+	case "openai-response", "openai-responses", "response", "responses":
+		return APIFormatOpenAIResponses, true
+	case "anthropic", "anthropic-message", "anthropic-messages", "message", "messages":
+		return APIFormatAnthropic, true
+	default:
+		return "", false
 	}
 }
 
@@ -182,13 +230,27 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	if len(opts.Questions) == 0 {
 		opts.Questions = questions.Builtin()
 	}
-	displayModel, err := displayModelName(opts.Model)
+	backend, err := resolveBackend(opts.Backend, opts.Lang)
 	if err != nil {
 		return Summary{}, err
 	}
-	codex, err := system.CodexPath()
+	displayModel, err := displayModelName(opts, backend)
 	if err != nil {
-		return Summary{}, errors.New(l.S("runner_codex_missing"))
+		return Summary{}, err
+	}
+	var codex string
+	var api *apiBackend
+	switch backend {
+	case BackendCodex:
+		codex, err = system.CodexPath()
+		if err != nil {
+			return Summary{}, errors.New(l.S("runner_codex_missing"))
+		}
+	case BackendAPI:
+		api, err = newAPIBackend(opts)
+		if err != nil {
+			return Summary{}, err
+		}
 	}
 
 	total := opts.Tests * len(opts.Questions)
@@ -199,7 +261,13 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		for i := 1; i <= opts.Tests; i++ {
 			current++
 			emitProgress(opts.Progress, ProgressEvent{Type: ProgressCaseStart, Current: current, Total: total, Question: q, TestIndex: i})
-			res, err := runOne(ctx, codex, opts, q, i)
+			var res CaseResult
+			var err error
+			if backend == BackendAPI {
+				res, err = api.runOne(ctx, opts, q, i)
+			} else {
+				res, err = runOneCodex(ctx, codex, opts, q, i)
+			}
 			if err != nil {
 				emitProgress(opts.Progress, ProgressEvent{Type: ProgressCaseError, Current: current, Total: total, Question: q, TestIndex: i, Error: err})
 				return Summary{}, err
@@ -208,7 +276,21 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 			results = append(results, res)
 		}
 	}
-	return summarize(opts, displayModel, results), nil
+	return summarize(opts, backend, displayModel, results), nil
+}
+
+func resolveBackend(v Backend, lang i18n.Lang) (Backend, error) {
+	backend, ok := NormalizeBackend(v)
+	if !ok {
+		return "", fmt.Errorf("%s", i18n.New(lang).S("runner_backend_invalid", v))
+	}
+	if backend == BackendAuto {
+		if _, err := system.CodexPath(); err == nil {
+			return BackendCodex, nil
+		}
+		return BackendAPI, nil
+	}
+	return backend, nil
 }
 
 func emitProgress(fn func(ProgressEvent), ev ProgressEvent) {
@@ -217,7 +299,7 @@ func emitProgress(fn func(ProgressEvent), ev ProgressEvent) {
 	}
 }
 
-func runOne(ctx context.Context, codex string, opts Options, q questions.Question, index int) (CaseResult, error) {
+func runOneCodex(ctx context.Context, codex string, opts Options, q questions.Question, index int) (CaseResult, error) {
 	runCtx := ctx
 	cancel := func() {}
 	if opts.Timeout > 0 {
@@ -264,7 +346,10 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		return CaseResult{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_codex_failed", msg))
 	}
 
-	finished := time.Now()
+	return caseResultFromParsed(opts, q, index, parsed, start, time.Now()), nil
+}
+
+func caseResultFromParsed(opts Options, q questions.Question, index int, parsed ParsedEvents, start, finished time.Time) CaseResult {
 	elapsed := finished.Sub(start).Seconds()
 	tps := 0.0
 	if elapsed > 0 {
@@ -304,7 +389,7 @@ func runOne(ctx context.Context, codex string, opts Options, q questions.Questio
 		StartedAt:              start.UTC().Format(time.RFC3339Nano),
 		FinishedAt:             finished.UTC().Format(time.RFC3339Nano),
 		TimeoutSeconds:         opts.Timeout.Seconds(),
-	}, nil
+	}
 }
 
 func codexArgs(model, effort string) []string {
@@ -369,7 +454,7 @@ func parseEvents(r io.Reader, lang i18n.Lang) (ParsedEvents, error) {
 	return out, nil
 }
 
-func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
+func summarize(opts Options, backend Backend, displayModel string, cases []CaseResult) Summary {
 	var correct, in, out, reason int
 	var secs, tps float64
 	for _, c := range cases {
@@ -384,22 +469,26 @@ func summarize(opts Options, displayModel string, cases []CaseResult) Summary {
 	}
 	n := float64(len(cases))
 	s := Summary{
-		Model:                 displayModel,
-		ReasoningEffort:       opts.ReasoningEffort,
-		Tests:                 len(cases),
-		Correct:               correct,
-		QuestionSuite:         strings.TrimSpace(opts.QuestionSuite),
-		ClientTimezone:        time.Now().Format("-07:00"),
-		UploadSchemaVersion:   4,
-		CodexSandbox:          "read-only",
-		CodexEphemeral:        true,
-		CodexSkipGitRepoCheck: true,
-		CodexDisabledFeatures: []string{"memories"},
-		CodexInvocation:       sanitizedInvocation(opts.Model, opts.ReasoningEffort),
-		Questions:             summarizeQuestions(opts.Questions, cases),
-		Cases:                 cases,
+		Model:               displayModel,
+		ReasoningEffort:     opts.ReasoningEffort,
+		Tests:               len(cases),
+		Correct:             correct,
+		QuestionSuite:       strings.TrimSpace(opts.QuestionSuite),
+		ClientTimezone:      time.Now().Format("-07:00"),
+		UploadSchemaVersion: 4,
+		Questions:           summarizeQuestions(opts.Questions, cases),
+		Cases:               cases,
 	}
-	applyCodexConfigMetadata(&s, opts.Model)
+	if backend == BackendAPI {
+		applyAPIMetadata(&s, opts)
+	} else {
+		s.CodexSandbox = "read-only"
+		s.CodexEphemeral = true
+		s.CodexSkipGitRepoCheck = true
+		s.CodexDisabledFeatures = []string{"memories"}
+		s.CodexInvocation = sanitizedInvocation(opts.Model, opts.ReasoningEffort)
+		applyCodexConfigMetadata(&s, opts.Model)
+	}
 	if n > 0 {
 		s.Accuracy = float64(correct) * 100 / n
 		s.AvgInputTokens = float64(in) / n
@@ -468,10 +557,13 @@ func sanitizedInvocation(model, effort string) string {
 	return string(b)
 }
 
-func displayModelName(requested string) (string, error) {
-	requested = strings.TrimSpace(requested)
+func displayModelName(opts Options, backend Backend) (string, error) {
+	requested := strings.TrimSpace(opts.Model)
 	if system.ConcreteCodexModel(requested) {
 		return requested, nil
+	}
+	if backend == BackendAPI {
+		return "", errors.New(i18n.New(opts.Lang).S("runner_model_required"))
 	}
 	configured, err := system.CodexConfiguredModel()
 	if err != nil {

@@ -2,11 +2,15 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
@@ -126,7 +130,7 @@ func TestDisplayModelNameUsesCodexConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`model = "gpt-5.4"`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := displayModelName("")
+	got, err := displayModelName(Options{Lang: i18n.ZH}, BackendCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,5 +158,244 @@ func TestRunOptionValidation(t *testing.T) {
 	}
 	if _, err := Run(context.Background(), Options{Model: "x", ReasoningEffort: "medium", Tests: -1}); err == nil {
 		t.Fatal("expected negative tests error")
+	}
+}
+
+func TestRunWithOpenAIChatAPIBackend(t *testing.T) {
+	q := apiTestQuestion()
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/codex/v1/chat/completions" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != "gpt-5.4" || body["reasoning_effort"] != "medium" {
+			t.Fatalf("body = %#v", body)
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) != 2 {
+			t.Fatalf("messages = %#v", body["messages"])
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"id": "chatcmpl_1",
+			"choices": []map[string]any{{
+				"message": map[string]any{"content": "答案是 21。"},
+			}},
+			"usage": map[string]any{
+				"prompt_tokens":     10,
+				"completion_tokens": 5,
+				"completion_tokens_details": map[string]any{
+					"reasoning_tokens": 2,
+				},
+			},
+		})
+	})
+
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Timeout:          5 * time.Second,
+		Lang:             i18n.ZH,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIBaseURL:  "https://api.test/codex/v1/chat/completions?token=secret#fragment",
+		ModelAPIKey:      "test-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{q},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Cases[0].OK || summary.Cases[0].InputTokens != 10 || summary.Cases[0].OutputTokens != 5 || summary.Cases[0].ReasoningTokens != 2 {
+		t.Fatalf("case = %#v", summary.Cases[0])
+	}
+	if summary.CodexProviderBaseURL != "https://api.test/codex/v1" || summary.CodexProviderHost != "api.test" || strings.Contains(summary.CodexInvocation, "test-key") {
+		t.Fatalf("metadata = base=%q host=%q invocation=%s", summary.CodexProviderBaseURL, summary.CodexProviderHost, summary.CodexInvocation)
+	}
+}
+
+func TestRunWithOpenAIResponsesAPIBackend(t *testing.T) {
+	q := apiTestQuestion()
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer response-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["input"] != q.Prompt || body["instructions"] == "" {
+			t.Fatalf("body = %#v", body)
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"id":          "resp_1",
+			"output_text": "最终答案：21",
+			"usage": map[string]any{
+				"input_tokens":  11,
+				"output_tokens": 6,
+				"output_tokens_details": map[string]any{
+					"reasoning_tokens": 3,
+				},
+			},
+		})
+	})
+
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "high",
+		Tests:            1,
+		Timeout:          5 * time.Second,
+		Lang:             i18n.ZH,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIResponses,
+		ModelAPIBaseURL:  "https://api.test/v1",
+		ModelAPIKey:      "response-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{q},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Cases[0].OK || summary.Cases[0].InputTokens != 11 || summary.Cases[0].ReasoningTokens != 3 {
+		t.Fatalf("case = %#v", summary.Cases[0])
+	}
+}
+
+func TestRunWithAnthropicMessagesAPIBackend(t *testing.T) {
+	q := apiTestQuestion()
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/messages" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "anthropic-key" {
+			t.Fatalf("x-api-key = %q", got)
+		}
+		if got := r.Header.Get("anthropic-version"); got == "" {
+			t.Fatal("missing anthropic-version")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != "claude-sonnet-4-5" || body["max_tokens"] == nil {
+			t.Fatalf("body = %#v", body)
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"id": "msg_1",
+			"content": []map[string]any{{
+				"type": "text",
+				"text": "21",
+			}},
+			"usage": map[string]any{
+				"input_tokens":      12,
+				"output_tokens":     7,
+				"cache_read_tokens": 0,
+			},
+		})
+	})
+
+	summary, err := Run(context.Background(), Options{
+		Model:            "claude-sonnet-4-5",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Timeout:          5 * time.Second,
+		Lang:             i18n.ZH,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatAnthropic,
+		ModelAPIBaseURL:  "https://api.test/v1/messages",
+		ModelAPIKey:      "anthropic-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{q},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Cases[0].OK || summary.Cases[0].InputTokens != 12 || summary.Cases[0].OutputTokens != 7 {
+		t.Fatalf("case = %#v", summary.Cases[0])
+	}
+}
+
+func TestAPIBackendRequiresKey(t *testing.T) {
+	_, err := Run(context.Background(), Options{
+		Model:           "gpt-5.4",
+		ReasoningEffort: "medium",
+		Tests:           1,
+		Backend:         BackendAPI,
+		APIFormat:       APIFormatOpenAIChat,
+		ModelAPIBaseURL: "https://api.example.com/v1",
+		Questions:       []questions.Question{apiTestQuestion()},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Key") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAPIBackendRedactsKeyFromErrorBody(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return textResponse(http.StatusUnauthorized, "bad key secret-key"), nil
+	})
+
+	_, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIBaseURL:  "https://api.test/v1",
+		ModelAPIKey:      "secret-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{apiTestQuestion()},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "secret-key") || !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return fn(r)
+}
+
+func jsonResponse(status int, body any) (*http.Response, error) {
+	var b strings.Builder
+	if err := json.NewEncoder(&b).Encode(body); err != nil {
+		return nil, err
+	}
+	return textResponse(status, b.String()), nil
+}
+
+func textResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func apiTestQuestion() questions.Question {
+	return questions.Question{
+		ID:      "api_21",
+		Version: "1",
+		Title:   "API test",
+		Prompt:  "What is 20 + 1?",
+		Grader: questions.Grader{
+			Type:             "number",
+			Expected:         "21",
+			IndependentMatch: true,
+		},
 	}
 }

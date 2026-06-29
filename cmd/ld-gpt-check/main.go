@@ -22,7 +22,7 @@ import (
 	"github.com/1222hxy/LD-gpt-check/internal/wizard"
 )
 
-var version = "0.1.0"
+var version = "0.2.1"
 
 var runWizard = wizard.Run
 
@@ -91,6 +91,10 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	modelLong := fs.String("model", "", l.S("flag_model"))
 	effort := fs.String("r", "medium", l.S("flag_effort"))
 	effortLong := fs.String("reasoning-effort", "", l.S("flag_effort"))
+	backend := fs.String("backend", string(runner.BackendAuto), l.S("flag_backend"))
+	apiFormat := fs.String("api-format", "", l.S("flag_api_format"))
+	modelAPIBase := fs.String("model-api-base-url", os.Getenv("LD_GPT_CHECK_MODEL_API_BASE_URL"), l.S("flag_model_api_base"))
+	modelAPIKey := fs.String("model-api-key", "", l.S("flag_model_api_key"))
 	tests := fs.Int("n", runner.DefaultTests, l.S("flag_tests"))
 	testsLong := fs.Int("tests", 0, l.S("flag_tests"))
 	timeout := fs.Duration("timeout", runner.DefaultTimeout, l.S("flag_timeout"))
@@ -101,7 +105,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	noRemoteQuestions := fs.Bool("no-remote-questions", false, "do not fetch the default remote question bank")
 	listSuites := fs.Bool("list-suites", false, "list available question suites")
 	upload := fs.Bool("upload", false, l.S("flag_upload"))
-	anonymous := fs.Bool("anonymous", false, "upload without showing your Linux.do identity in public/community views")
+	anonymous := fs.Bool("anonymous", false, l.S("flag_anonymous"))
 	jsonOut := fs.Bool("json", false, l.S("flag_json"))
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -169,6 +173,10 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		Tests:           *tests,
 		Timeout:         *timeout,
 		Lang:            lang,
+		Backend:         runner.Backend(*backend),
+		APIFormat:       runner.APIFormat(*apiFormat),
+		ModelAPIBaseURL: *modelAPIBase,
+		ModelAPIKey:     *modelAPIKey,
 		QuestionSuite:   *suite,
 		Questions:       selected,
 		Progress:        progress,
@@ -192,7 +200,8 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		}
 		lang = i18n.Detect(cfg.Language)
 		l = i18n.New(lang)
-		payload := api.PayloadFromSummary(version, summary, runtime.GOOS, runtime.GOARCH, system.CodexVersion())
+		codexVersion := system.UploadCodexVersion(summary.CodexSandbox)
+		payload := api.PayloadFromSummary(version, summary, runtime.GOOS, runtime.GOARCH, codexVersion)
 		payload.Anonymous = *anonymous
 		client := api.NewWithLang(cfg.APIBaseURL, cfg.AccessToken, lang)
 		resp, err := client.UploadRun(ctx, payload)

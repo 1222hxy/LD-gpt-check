@@ -24,10 +24,10 @@ ld-gpt-check_SYSTEM_ARCH
 
 所有二进制文件和校验文件都在 [GitHub Releases](https://github.com/1222hxy/LD-gpt-check/releases/latest)。
 
-前提：
+测试后端：
 
-- 已安装并登录 Codex CLI
-- macOS/Linux 下 `codex` 在 PATH 中，Windows 下可找到 `codex.cmd`
+- 本机 Codex：macOS/Linux 下 `codex` 在 PATH 中，Windows 下可找到 `codex.cmd`。
+- API 模式：不需要本机 Codex，按向导输入模型 API Base URL 和 Key。
 
 ## 🪄 向导模式
 
@@ -35,24 +35,33 @@ ld-gpt-check_SYSTEM_ARCH
 ld-gpt-check
 ```
 
-向导会引导完成模型选择、reasoning effort、测试次数、登录和上传。
+向导会先检测本机是否有 Codex。没有 Codex 时会询问是否改用 API 模式；有 Codex 时也可以选择 API 模式。
+
+API 模式会提示输入 Base URL 和 Key。建议创建新的临时 API Key，测试完成后立即销毁。
 
 ## 🧪 直接运行
 
 ```bash
 ld-gpt-check run -r xhigh -n 5
 ld-gpt-check run -m gpt-5.5 -r xhigh -n 5
+LD_GPT_CHECK_MODEL_API_KEY="你的临时 API Key" ld-gpt-check run --backend api --api-format openai-chat --model-api-base-url "https://api.krill-ai.com/codex/v1" -m gpt-5.4 -n 1
 ```
 
 如果不传 `-m`，CLI 会尽量读取本机 Codex 配置中的具体模型。识别不到时，会让用户选择 GPT 5.5、GPT 5.4 或自定义模型。
 
+API 模式必须提供模型名，可以用 `-m` 或 `--model`。
+
 常用参数：
 
 - `-m, --model`：指定模型
+- `--backend`：`auto`、`codex`、`api`，默认 `auto`
+- `--api-format`：`openai-chat`、`openai-responses`、`anthropic-messages`
+- `--model-api-base-url`：模型 API Base URL，例如 `https://api.openai.com/v1` 或中转站地址
+- `--model-api-key`：模型 API Key；更推荐用 `LD_GPT_CHECK_MODEL_API_KEY`
 - `-r, --reasoning-effort`：`low`、`medium`、`high`、`xhigh`
 - `-n, --tests`：测试次数，默认 5
 - `--upload`：上传结果
-- `--anonymous`：匿名上传
+- `--anonymous`：匿名展示上传结果，社区页面会隐藏 Linux.do 用户名、头像和主页链接；测试摘要仍会提交并参与统计
 - `--json`：输出 JSON
 - `--timeout`：单轮 Codex 超时，默认 `30m`
 
@@ -64,6 +73,48 @@ ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload --anonymous
 ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --json
 ld-gpt-check run -r high -n 10 --timeout 10m
 ```
+
+### API 调用格式
+
+OpenAI Chat Completions：
+
+```bash
+LD_GPT_CHECK_MODEL_API_KEY="你的临时 API Key" \
+ld-gpt-check run --backend api \
+  --api-format openai-chat \
+  --model-api-base-url "https://api.krill-ai.com/codex/v1" \
+  -m gpt-5.4 -n 1
+```
+
+OpenAI Responses：
+
+```bash
+LD_GPT_CHECK_MODEL_API_KEY="你的临时 API Key" \
+ld-gpt-check run --backend api \
+  --api-format openai-responses \
+  --model-api-base-url "https://api.openai.com/v1" \
+  -m gpt-5.4 -n 1
+```
+
+Anthropic Messages：
+
+```bash
+LD_GPT_CHECK_MODEL_API_KEY="你的临时 API Key" \
+ld-gpt-check run --backend api \
+  --api-format anthropic-messages \
+  --model-api-base-url "https://api.anthropic.com/v1" \
+  -m claude-sonnet-4-5 -n 1
+```
+
+可用环境变量：
+
+```text
+LD_GPT_CHECK_MODEL_API_KEY
+LD_GPT_CHECK_MODEL_API_BASE_URL
+LD_GPT_CHECK_API_FORMAT
+```
+
+Base URL 可以是 provider base URL，也可以误填完整 endpoint，例如 `.../chat/completions`、`.../responses` 或 `.../messages`。CLI 会避免重复拼接路径；上传摘要里的 provider base URL 会去除 query、fragment 和 user info，方便识别官方渠道或中转站。
 
 ## 🔐 登录、上传和退出
 

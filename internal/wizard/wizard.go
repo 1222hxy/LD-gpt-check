@@ -18,6 +18,7 @@ import (
 	"github.com/1222hxy/LD-gpt-check/internal/report"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
 	"github.com/1222hxy/LD-gpt-check/internal/system"
+	"golang.org/x/term"
 )
 
 type Options struct {
@@ -26,6 +27,8 @@ type Options struct {
 	Stdin   io.Reader
 	Stdout  io.Writer
 }
+
+var runBenchmark = runner.Run
 
 func Run(ctx context.Context, opts Options) error {
 	in := opts.Stdin
@@ -109,8 +112,47 @@ func Run(ctx context.Context, opts Options) error {
 		return nil
 	}
 
-	report.PrintSuccess(out, l.S("wizard_ready_run"), color)
-	model, err := promptModel(reader, out, l, color)
+	backend := runner.BackendCodex
+	apiFormat := runner.APIFormat("")
+	modelAPIBase := ""
+	modelAPIKey := ""
+	codexPath, codexErr := system.CodexPath()
+	if codexErr == nil {
+		report.PrintSuccess(out, l.S("wizard_codex_found", codexPath), color)
+	} else {
+		report.PrintWarning(out, l.S("wizard_codex_missing"), color)
+	}
+	backend, err = promptBackend(reader, out, l, color, codexErr == nil)
+	if err != nil {
+		return err
+	}
+	if backend == runner.BackendCodex && codexErr != nil {
+		report.PrintWarning(out, l.S("wizard_need_api_without_codex"), color)
+		report.PrintSuccess(out, l.S("wizard_done_next"), color)
+		return nil
+	}
+	if backend == runner.BackendAPI {
+		report.PrintSuccess(out, l.S("wizard_ready_api_run"), color)
+		apiFormat, err = promptAPIFormat(reader, out, l, color)
+		if err != nil {
+			return err
+		}
+		modelAPIBase, err = promptString(reader, out, l, l.S("wizard_model_api_base"), defaultAPIBaseURL(apiFormat))
+		if err != nil {
+			return err
+		}
+		report.PrintWarning(out, l.S("wizard_api_key_warning"), color)
+		modelAPIKey = strings.TrimSpace(os.Getenv("LD_GPT_CHECK_MODEL_API_KEY"))
+		if modelAPIKey == "" {
+			modelAPIKey, err = promptMaskedString(reader, out, l, l.S("wizard_model_api_key"), in)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		report.PrintSuccess(out, l.S("wizard_ready_run"), color)
+	}
+	model, err := promptRunModel(reader, out, l, color, backend)
 	if err != nil {
 		return err
 	}
@@ -135,13 +177,25 @@ func Run(ctx context.Context, opts Options) error {
 	if upload && cfg.AccessToken == "" {
 		return fmt.Errorf("%s", l.S("wizard_upload_needs_login"))
 	}
+	anonymous := false
+	if upload {
+		report.PrintWarning(out, l.S("wizard_anonymous_note"), color)
+		anonymous, err = promptBool(reader, out, l, l.S("wizard_anonymous_upload"), false)
+		if err != nil {
+			return err
+		}
+	}
 
-	summary, err := runner.Run(ctx, runner.Options{
+	summary, err := runBenchmark(ctx, runner.Options{
 		Model:           model,
 		ReasoningEffort: effort,
 		Tests:           tests,
 		Timeout:         timeout,
 		Lang:            lang,
+		Backend:         backend,
+		APIFormat:       apiFormat,
+		ModelAPIBaseURL: modelAPIBase,
+		ModelAPIKey:     modelAPIKey,
 		Progress:        report.PrintProgress(out, lang, progressModel(model), effort, color),
 	})
 	if err != nil {
@@ -151,7 +205,9 @@ func Run(ctx context.Context, opts Options) error {
 
 	report.PrintSection(out, 4, l.S("wizard_step_upload"), color)
 	if upload {
-		payload := api.PayloadFromSummary(opts.Version, summary, runtime.GOOS, runtime.GOARCH, system.CodexVersion())
+		codexVersion := system.UploadCodexVersion(summary.CodexSandbox)
+		payload := api.PayloadFromSummary(opts.Version, summary, runtime.GOOS, runtime.GOARCH, codexVersion)
+		payload.Anonymous = anonymous
 		resp, err := api.NewWithLang(cfg.APIBaseURL, cfg.AccessToken, lang).UploadRun(ctx, payload)
 		if err != nil {
 			return err
@@ -212,6 +268,186 @@ func progressModel(model string) string {
 		return configured
 	}
 	return ""
+}
+
+func promptBackend(r *bufio.Reader, out io.Writer, l i18n.Localizer, color, codexAvailable bool) (runner.Backend, error) {
+	if codexAvailable {
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_codex"), color))
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api"), color))
+		for {
+			choice, err := promptString(r, out, l, l.S("wizard_backend"), "1")
+			if err != nil {
+				return "", err
+			}
+			switch strings.ToLower(strings.TrimSpace(choice)) {
+			case "1", "codex", "local", "cli":
+				return runner.BackendCodex, nil
+			case "2", "api", "http":
+				return runner.BackendAPI, nil
+			default:
+				if backend, ok := runner.NormalizeBackend(runner.Backend(choice)); ok && backend != runner.BackendAuto {
+					return backend, nil
+				}
+				fmt.Fprintln(out, l.S("wizard_backend_invalid"))
+			}
+		}
+	}
+
+	fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api_primary"), color))
+	fmt.Fprintln(out, report.Muted(l.S("wizard_backend_exit"), color))
+	for {
+		choice, err := promptString(r, out, l, l.S("wizard_backend"), "1")
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "1", "api", "http":
+			return runner.BackendAPI, nil
+		case "2", "exit", "quit", "skip", "取消", "退出":
+			return runner.BackendCodex, nil
+		default:
+			fmt.Fprintln(out, l.S("wizard_backend_invalid"))
+		}
+	}
+}
+
+func promptRunModel(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool, backend runner.Backend) (string, error) {
+	if backend == runner.BackendAPI {
+		return promptAPIModel(r, out, l, color)
+	}
+	return promptModel(r, out, l, color)
+}
+
+func promptAPIFormat(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) (runner.APIFormat, error) {
+	fmt.Fprintln(out, report.Muted(l.S("wizard_api_format_chat"), color))
+	fmt.Fprintln(out, report.Muted(l.S("wizard_api_format_responses"), color))
+	fmt.Fprintln(out, report.Muted(l.S("wizard_api_format_anthropic"), color))
+	for {
+		choice, err := promptString(r, out, l, l.S("wizard_api_format"), "1")
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "1", "openai-chat", "chat", "completion", "completions", "chat-completions":
+			return runner.APIFormatOpenAIChat, nil
+		case "2", "openai-responses", "responses", "response":
+			return runner.APIFormatOpenAIResponses, nil
+		case "3", "anthropic", "anthropic-messages", "messages":
+			return runner.APIFormatAnthropic, nil
+		default:
+			if format, ok := runner.NormalizeAPIFormat(runner.APIFormat(choice)); ok {
+				return format, nil
+			}
+			fmt.Fprintln(out, l.S("runner_api_format_invalid", choice))
+		}
+	}
+}
+
+func promptAPIModel(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) (string, error) {
+	report.PrintWarning(out, l.S("model_choose"), color)
+	fmt.Fprintln(out, report.Muted(l.S("model_choice_55"), color))
+	fmt.Fprintln(out, report.Muted(l.S("model_choice_54"), color))
+	fmt.Fprintln(out, report.Muted(l.S("model_choice_other"), color))
+	for {
+		choice, err := promptString(r, out, l, l.S("wizard_model"), "2")
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "1", "gpt-5.5", "gpt 5.5":
+			return "gpt-5.5", nil
+		case "2", "gpt-5.4", "gpt 5.4":
+			return "gpt-5.4", nil
+		case "3", "other", "custom", "其他", "自定义":
+			return promptString(r, out, l, l.S("model_custom"), "gpt-5.4")
+		default:
+			if system.ConcreteCodexModel(choice) {
+				return strings.TrimSpace(choice), nil
+			}
+			fmt.Fprintln(out, l.S("prompt_non_empty"))
+		}
+	}
+}
+
+func defaultAPIBaseURL(format runner.APIFormat) string {
+	switch format {
+	case runner.APIFormatAnthropic:
+		return "https://api.anthropic.com/v1"
+	default:
+		return "https://api.openai.com/v1"
+	}
+}
+
+func promptMaskedString(r *bufio.Reader, out io.Writer, l i18n.Localizer, label string, in io.Reader) (string, error) {
+	for {
+		fmt.Fprintf(out, "%s: ", label)
+		var s string
+		var err error
+		if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+			s, err = readMaskedTerminal(f, out)
+		} else {
+			s, err = readLine(r)
+		}
+		if err != nil {
+			return "", err
+		}
+		if s = strings.TrimSpace(s); s != "" {
+			return s, nil
+		}
+		fmt.Fprintln(out, l.S("prompt_non_empty"))
+	}
+}
+
+func readMaskedTerminal(in *os.File, out io.Writer) (string, error) {
+	fd := int(in.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = term.Restore(fd, oldState)
+	}()
+
+	var b []byte
+	buf := make([]byte, 1)
+	for {
+		n, err := in.Read(buf)
+		if err != nil {
+			fmt.Fprintln(out)
+			return "", err
+		}
+		if n == 0 {
+			continue
+		}
+		switch c := buf[0]; c {
+		case '\r', '\n':
+			fmt.Fprintln(out)
+			return string(b), nil
+		case 3:
+			fmt.Fprintln(out)
+			return "", fmt.Errorf("interrupted")
+		case 4:
+			if len(b) == 0 {
+				fmt.Fprintln(out)
+				return "", io.EOF
+			}
+		case 8, 127:
+			if len(b) > 0 {
+				b = b[:len(b)-1]
+				fmt.Fprint(out, "\b \b")
+			}
+		case 21:
+			for len(b) > 0 {
+				b = b[:len(b)-1]
+				fmt.Fprint(out, "\b \b")
+			}
+		default:
+			if c >= 32 && c != 127 {
+				b = append(b, c)
+				fmt.Fprint(out, "*")
+			}
+		}
+	}
 }
 
 func promptString(r *bufio.Reader, out io.Writer, l i18n.Localizer, label, def string) (string, error) {

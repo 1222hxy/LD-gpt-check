@@ -38,7 +38,7 @@
 
 LD-gpt-check 是一个开源 Go CLI。
 
-它会调用你本机已经登录好的 Codex CLI，运行固定 benchmark 题，然后自动统计：
+它可以调用你本机已经登录好的 Codex CLI，也可以直接走兼容 API，运行固定 benchmark 题，然后自动统计：
 
 - 答案对不对
 - 正确率是多少
@@ -61,7 +61,7 @@ LD-gpt-check 是一个开源 Go CLI。
 - `medium / high / xhigh` 到底有没有提升
 - 同一个模型在不同时间是否波动
 - reasoning tokens 高不高，和答对有没有关系
-- Codex CLI 版本、系统环境会不会影响结果
+- Codex/API 后端、中转站和系统环境会不会影响结果
 
 说白了，就是把“我感觉它今天不太行”变成一组能贴出来的数据。
 
@@ -70,8 +70,7 @@ LD-gpt-check 是一个开源 Go CLI。
 前提：
 
 - 已安装 Go 1.22+
-- 已安装并登录 Codex CLI
-- 终端里能直接运行 `codex`
+- 已安装并登录 Codex CLI，或准备好兼容 API 的 Base URL 和临时 Key
 
 安装：
 
@@ -92,6 +91,18 @@ ld-gpt-check run -m gpt-5.5 -r xhigh -n 5
 ```
 
 不传 `-m` 的话，会使用你本机 Codex 配置里的默认模型。
+
+没有本机 Codex 时可以走 API 模式：
+
+```bash
+LD_GPT_CHECK_MODEL_API_KEY="你的临时 API Key" \
+ld-gpt-check run --backend api \
+  --api-format openai-chat \
+  --model-api-base-url "https://api.krill-ai.com/codex/v1" \
+  -m gpt-5.4 -n 5
+```
+
+建议新建一个临时 Key，跑完马上销毁。
 
 支持的 reasoning effort：
 

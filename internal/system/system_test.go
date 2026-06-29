@@ -123,3 +123,9 @@ func TestConcreteCodexModel(t *testing.T) {
 		}
 	}
 }
+
+func TestUploadCodexVersionUsesAPIPlaceholder(t *testing.T) {
+	if got := UploadCodexVersion("api"); got != "api" {
+		t.Fatalf("UploadCodexVersion(api) = %q, want api", got)
+	}
+}

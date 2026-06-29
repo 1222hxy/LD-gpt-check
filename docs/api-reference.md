@@ -520,15 +520,15 @@ Query 参数：
 | `client_timezone` | string | 客户端本地时区偏移，例如 `+08:00` |
 | `os` | string | 客户端操作系统 |
 | `arch` | string | 客户端架构 |
-| `codex_version` | string | 本地 Codex CLI 版本 |
+| `codex_version` | string | 本地 Codex CLI 版本；API 模式可为空 |
 | `codex_model_source` | string | 模型来源：`explicit`、`codex_config` 或 `unknown` |
-| `codex_model_provider` | string | Codex 配置中的 provider 名称，可能为空 |
+| `codex_model_provider` | string | Codex 配置中的 provider 名称，或 API 模式的调用格式 |
 | `codex_provider_host` | string | provider `base_url` 的 host，不含协议、路径或 query |
 | `codex_provider_base_url` | string | 规范化后的 HTTPS provider base URL，保留 path，去除 query/fragment；用于区分官方渠道、中转站和未知中转站 |
 | `codex_channel` | string | 服务端落库分类：`official`、`bridge`、`unknown_bridge`；上传方无需传入 |
 | `codex_bridge_name` | string | 命中管理员配置的中转站映射时返回的中转站名称 |
-| `codex_sandbox` | string | CLI 本次实际使用的 Codex sandbox，当前为 `read-only` |
-| `codex_disabled_features` | array | 本次禁用的 Codex 功能摘要，当前包含 `memories` |
+| `codex_sandbox` | string | CLI 本次实际使用的 Codex sandbox；API 模式为 `api` |
+| `codex_disabled_features` | array | 本次禁用的 Codex 功能摘要；API 模式可为空 |
 | `questions` | array | 每道题的汇总结果 |
 | `attempts` | array | 每轮尝试结果，当前服务端最多保存 500 条 |
 | `attempts[].answer_hash` | string | 完整回答的 SHA-256，用于去重和对比，不暴露原文 |

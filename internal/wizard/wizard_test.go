@@ -12,6 +12,7 @@ import (
 
 	"github.com/1222hxy/LD-gpt-check/internal/config"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/runner"
 )
 
 func TestRunWizardUsesProductionAPIWithoutAsking(t *testing.T) {
@@ -65,6 +66,31 @@ func TestPromptBoolDefaultsAndChineseInput(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected false for Chinese no")
+	}
+}
+
+func TestPromptBackendSelectsAPIWhenCodexAvailable(t *testing.T) {
+	var out bytes.Buffer
+	got, err := promptBackend(bufio.NewReader(strings.NewReader("2\n")), &out, i18n.New(i18n.ZH), false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != runner.BackendAPI {
+		t.Fatalf("backend = %q", got)
+	}
+	if !strings.Contains(out.String(), "API 模式") {
+		t.Fatalf("missing API option:\n%s", out.String())
+	}
+}
+
+func TestPromptBackendDefaultsToAPIWithoutCodex(t *testing.T) {
+	var out bytes.Buffer
+	got, err := promptBackend(bufio.NewReader(strings.NewReader("\n")), &out, i18n.New(i18n.ZH), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != runner.BackendAPI {
+		t.Fatalf("backend = %q", got)
 	}
 }
 
@@ -136,5 +162,70 @@ func TestPromptDuration(t *testing.T) {
 	}
 	if got != 90*time.Second {
 		t.Fatalf("duration = %s", got)
+	}
+}
+
+func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), config.ConfigFileName)
+	t.Setenv(config.ConfigEnvVarName, configPath)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("LD_GPT_CHECK_MODEL_API_KEY", "")
+
+	oldRunBenchmark := runBenchmark
+	defer func() { runBenchmark = oldRunBenchmark }()
+	var captured runner.Options
+	runBenchmark = func(ctx context.Context, opts runner.Options) (runner.Summary, error) {
+		captured = opts
+		return runner.Summary{
+			Model:        opts.Model,
+			Tests:        1,
+			Correct:      1,
+			Accuracy:     100,
+			CodexSandbox: "api",
+			Cases: []runner.CaseResult{{
+				Index:         1,
+				OK:            true,
+				Status:        "completed",
+				AnswerPreview: "21",
+			}},
+		}, nil
+	}
+
+	input := strings.Join([]string{
+		"否",
+		"是",
+		"",
+		"1",
+		"https://api.example.com/v1",
+		"wizard-key",
+		"",
+		"",
+		"1",
+		"5s",
+		"否",
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	if err := Run(context.Background(), Options{
+		Version: "test",
+		Lang:    i18n.ZH,
+		Stdin:   strings.NewReader(input),
+		Stdout:  &out,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "wizard-key") {
+		t.Fatalf("API key was written to config:\n%s", raw)
+	}
+	if captured.Backend != runner.BackendAPI || captured.APIFormat != runner.APIFormatOpenAIChat ||
+		captured.ModelAPIBaseURL != "https://api.example.com/v1" || captured.ModelAPIKey != "wizard-key" {
+		t.Fatalf("captured options = %#v", captured)
+	}
+	if !strings.Contains(out.String(), "API 模式") || !strings.Contains(out.String(), "临时 API Key") {
+		t.Fatalf("missing API prompts:\n%s", out.String())
 	}
 }

@@ -47,6 +47,13 @@ func CodexVersion() string {
 	return strings.TrimSpace(out.String())
 }
 
+func UploadCodexVersion(codexSandbox string) string {
+	if strings.TrimSpace(codexSandbox) == "api" {
+		return "api"
+	}
+	return CodexVersion()
+}
+
 func CodexConfigPath() string {
 	if v := strings.TrimSpace(os.Getenv("CODEX_HOME")); v != "" {
 		return filepath.Join(v, "config.toml")
