@@ -62,6 +62,76 @@ func TestCodexConfigInfoDefaultsProviderBaseURLToOpenAI(t *testing.T) {
 	}
 }
 
+func TestCodexConfigInfoResolvesCCSwitchUpstreamForLocalProxy(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex")
+	ccSwitchHome := filepath.Join(home, ".cc-switch")
+	if err := os.MkdirAll(codexHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ccSwitchHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", ccSwitchHome)
+	t.Setenv("LD_GPT_CHECK_DISABLE_CC_SWITCH", "")
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
+model = "gpt-5.5"
+model_provider = "cc-switch"
+
+[model_providers.cc-switch]
+base_url = "http://127.0.0.1:18443/v1"
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ccSwitchHome, "config.json"), []byte(`{
+  "currentProviderCodex": "krill",
+  "providers": {
+    "krill": {
+      "settingsConfig": {
+        "config": "model_provider = \"krill\"\n[model_providers.krill]\nbase_url = \"https://api.cdn-krill-ai.com/codex/v1?token=secret#fragment\"\n"
+      }
+    }
+  }
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CodexConfigInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProviderBaseURL != "https://api.cdn-krill-ai.com/codex/v1" || got.ProviderHost != "api.cdn-krill-ai.com" {
+		t.Fatalf("config = %#v", got)
+	}
+	resolution := DetectCCSwitchCodexResolution()
+	if resolution.LocalBaseURL != "http://127.0.0.1:18443/v1" || resolution.ProviderBaseURL != "https://api.cdn-krill-ai.com/codex/v1" {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+}
+
+func TestCodexConfigInfoDoesNotDefaultLocalProxyToOpenAI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", filepath.Join(home, ".cc-switch-missing"))
+	t.Setenv("LD_GPT_CHECK_DISABLE_CC_SWITCH", "")
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(`
+model = "gpt-5.5"
+model_provider = "cc-switch"
+
+[model_providers.cc-switch]
+base_url = "http://127.0.0.1:18443/v1"
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CodexConfigInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProviderBaseURL != "" || got.ProviderHost != "" {
+		t.Fatalf("config = %#v, want empty provider for unresolved local proxy", got)
+	}
+}
+
 func TestNormalizeProviderBaseURL(t *testing.T) {
 	tests := map[string]string{
 		" https://API.EXAMPLE.com/v1/ ":                     "https://api.example.com/v1",

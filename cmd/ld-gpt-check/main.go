@@ -390,6 +390,11 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if *upload && strings.TrimSpace(*codexStartupArgs) != "" {
 		fmt.Fprintln(progressOut, l.S("codex_args_upload_notice"))
 	}
+	if runner.Backend(*backend) != runner.BackendAPI {
+		if resolution := system.DetectCCSwitchCodexResolution(); resolution.ProviderBaseURL != "" && system.CCSwitchAutoResolveEnabled() {
+			fmt.Fprintf(progressOut, l.S("cc_switch_auto_using")+"\n", resolution.ProviderBaseURL)
+		}
+	}
 	report.PrintQuestionPrompts(progressOut, lang, selected, report.ColorEnabled(progressOut))
 	progress := report.PrintProgress(progressOut, lang, resolvedProgressModel, *effort, report.ColorEnabled(progressOut))
 	summary, err := runner.Run(ctx, runner.Options{

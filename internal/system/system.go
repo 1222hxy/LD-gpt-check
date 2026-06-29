@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/url"
 	"os"
 	"os/exec"
@@ -19,6 +20,13 @@ type CodexConfig struct {
 	ModelProvider   string
 	ProviderHost    string
 	ProviderBaseURL string
+}
+
+type CCSwitchResolution struct {
+	LocalBaseURL    string
+	ProviderBaseURL string
+	ProviderHost    string
+	ConfigDir       string
 }
 
 func CodexPath() (string, error) {
@@ -98,10 +106,18 @@ func CodexConfigInfo() (CodexConfig, error) {
 		provider = strings.TrimSpace(values["provider"])
 	}
 	baseURL := ""
+	rawBaseURL := ""
 	if provider != "" {
+		rawBaseURL = providerBaseURLRaw(values, provider)
 		baseURL = providerBaseURL(values, provider)
 	}
-	if baseURL == "" {
+	localPrivateBaseURL := IsPrivateProviderBaseURL(rawBaseURL) || IsPrivateProviderBaseURL(baseURL)
+	if CCSwitchAutoResolveEnabled() && localPrivateBaseURL {
+		if resolved := CCSwitchCodexProviderBaseURL(); resolved != "" {
+			baseURL = resolved
+		}
+	}
+	if baseURL == "" && !localPrivateBaseURL {
 		baseURL = "https://api.openai.com/v1"
 	}
 	return CodexConfig{Model: model, ModelProvider: provider, ProviderHost: hostFromURL(baseURL), ProviderBaseURL: baseURL}, nil
@@ -176,8 +192,12 @@ func providerHost(values map[string]string, provider string) string {
 }
 
 func providerBaseURL(values map[string]string, provider string) string {
+	return NormalizeProviderBaseURL(providerBaseURLRaw(values, provider))
+}
+
+func providerBaseURLRaw(values map[string]string, provider string) string {
 	for _, key := range providerBaseURLKeys(provider) {
-		if baseURL := NormalizeProviderBaseURL(values[key]); baseURL != "" {
+		if baseURL := strings.TrimSpace(values[key]); baseURL != "" {
 			return baseURL
 		}
 	}
@@ -228,6 +248,381 @@ func NormalizeProviderBaseURL(raw string) string {
 		u.Path = ""
 	}
 	return u.String()
+}
+
+func IsPrivateProviderBaseURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	return privateHostname(u.Hostname())
+}
+
+func CCSwitchAutoResolveEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("LD_GPT_CHECK_DISABLE_CC_SWITCH")))
+	return v != "1" && v != "true" && v != "yes"
+}
+
+func DetectCCSwitchCodexResolution() CCSwitchResolution {
+	path := CodexConfigPath()
+	if path == "" {
+		return CCSwitchResolution{}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return CCSwitchResolution{}
+	}
+	values, err := parseSimpleTOMLStrings(b)
+	if err != nil {
+		return CCSwitchResolution{}
+	}
+	provider := strings.TrimSpace(values["model_provider"])
+	if provider == "" {
+		provider = strings.TrimSpace(values["provider"])
+	}
+	if provider == "" {
+		return CCSwitchResolution{}
+	}
+	localBaseURL := providerBaseURLRaw(values, provider)
+	if !IsPrivateProviderBaseURL(localBaseURL) {
+		return CCSwitchResolution{}
+	}
+	resolved := CCSwitchCodexProviderBaseURL()
+	if resolved == "" {
+		return CCSwitchResolution{LocalBaseURL: localBaseURL, ConfigDir: CCSwitchConfigDir()}
+	}
+	return CCSwitchResolution{
+		LocalBaseURL:    localBaseURL,
+		ProviderBaseURL: resolved,
+		ProviderHost:    hostFromURL(resolved),
+		ConfigDir:       CCSwitchConfigDir(),
+	}
+}
+
+func CCSwitchConfigDir() string {
+	for _, key := range []string{"LD_GPT_CHECK_CC_SWITCH_DIR", "CC_SWITCH_CONFIG_DIR", "CC_SWITCH_HOME"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cc-switch")
+}
+
+func CCSwitchCodexProviderBaseURL() string {
+	dir := CCSwitchConfigDir()
+	if dir == "" {
+		return ""
+	}
+	currentID := ccSwitchCurrentCodexProviderID(filepath.Join(dir, "config.json"))
+	if baseURL := ccSwitchCodexProviderBaseURLFromSQLite(filepath.Join(dir, "cc-switch.db"), currentID); baseURL != "" {
+		return baseURL
+	}
+	return ccSwitchCodexProviderBaseURLFromFiles(dir, currentID)
+}
+
+func ccSwitchCurrentCodexProviderID(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var data any
+	if err := json.Unmarshal(b, &data); err != nil {
+		return ""
+	}
+	for _, key := range []string{"currentProviderCodex", "current_provider_codex"} {
+		if v := jsonStringAtPath(data, key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func ccSwitchCodexProviderBaseURLFromSQLite(dbPath, currentID string) string {
+	if _, err := os.Stat(dbPath); err != nil {
+		return ""
+	}
+	sqlitePath, err := exec.LookPath("sqlite3")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	query := `SELECT id, settings_config, is_current FROM providers WHERE app_type = 'codex'`
+	cmd := exec.CommandContext(ctx, sqlitePath, "-readonly", "-json", dbPath, query)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	var rows []struct {
+		ID             string `json:"id"`
+		SettingsConfig string `json:"settings_config"`
+		IsCurrent      int    `json:"is_current"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		return ""
+	}
+	for _, row := range rows {
+		if currentID != "" && row.ID == currentID {
+			if baseURL := codexBaseURLFromCCSwitchSettings(row.SettingsConfig); baseURL != "" {
+				return baseURL
+			}
+		}
+	}
+	for _, row := range rows {
+		if row.IsCurrent != 0 {
+			if baseURL := codexBaseURLFromCCSwitchSettings(row.SettingsConfig); baseURL != "" {
+				return baseURL
+			}
+		}
+	}
+	for _, row := range rows {
+		if baseURL := codexBaseURLFromCCSwitchSettings(row.SettingsConfig); baseURL != "" {
+			return baseURL
+		}
+	}
+	return ""
+}
+
+func ccSwitchCodexProviderBaseURLFromFiles(dir, currentID string) string {
+	var paths []string
+	for _, name := range []string{"config.json", "providers.json"} {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := strings.ToLower(entry.Name())
+			if strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".toml") {
+				paths = append(paths, filepath.Join(dir, entry.Name()))
+			}
+		}
+	}
+	seen := map[string]struct{}{}
+	for _, path := range paths {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		b, err := os.ReadFile(path)
+		if err != nil || len(b) > 4*1024*1024 {
+			continue
+		}
+		if baseURL := codexBaseURLFromCCSwitchBlob(b, currentID); baseURL != "" {
+			return baseURL
+		}
+	}
+	return ""
+}
+
+func codexBaseURLFromCCSwitchBlob(b []byte, currentID string) string {
+	var data any
+	if json.Unmarshal(b, &data) == nil {
+		if baseURL := codexBaseURLFromCCSwitchJSON(data, currentID); baseURL != "" {
+			return baseURL
+		}
+	}
+	return publicProviderBaseURLFromText(string(b))
+}
+
+func codexBaseURLFromCCSwitchSettings(raw string) string {
+	var data any
+	if err := json.Unmarshal([]byte(raw), &data); err == nil {
+		if configText := jsonStringAtPath(data, "config"); configText != "" {
+			if baseURL := publicProviderBaseURLFromCodexConfig(configText); baseURL != "" {
+				return baseURL
+			}
+		}
+		if baseURL := codexBaseURLFromCCSwitchJSON(data, ""); baseURL != "" {
+			return baseURL
+		}
+	}
+	return publicProviderBaseURLFromText(raw)
+}
+
+func codexBaseURLFromCCSwitchJSON(v any, currentID string) string {
+	if currentID != "" {
+		if obj, ok := v.(map[string]any); ok {
+			if provider := findJSONObjectByID(obj, currentID); provider != nil {
+				if baseURL := codexBaseURLFromCCSwitchJSON(provider, ""); baseURL != "" {
+					return baseURL
+				}
+			}
+		}
+	}
+	if configText := jsonStringAtPath(v, "config"); configText != "" {
+		if baseURL := publicProviderBaseURLFromCodexConfig(configText); baseURL != "" {
+			return baseURL
+		}
+	}
+	for _, key := range []string{"base_url", "baseUrl", "api_base_url", "apiBaseUrl", "url"} {
+		if baseURL := normalizePublicProviderBaseURL(jsonStringAtPath(v, key)); baseURL != "" {
+			return baseURL
+		}
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		for _, value := range x {
+			if baseURL := codexBaseURLFromCCSwitchJSON(value, ""); baseURL != "" {
+				return baseURL
+			}
+		}
+	case []any:
+		for _, value := range x {
+			if baseURL := codexBaseURLFromCCSwitchJSON(value, ""); baseURL != "" {
+				return baseURL
+			}
+		}
+	}
+	return ""
+}
+
+func findJSONObjectByID(obj map[string]any, id string) map[string]any {
+	for key, value := range obj {
+		if key == id {
+			if nested, ok := value.(map[string]any); ok {
+				return nested
+			}
+		}
+		if nested, ok := value.(map[string]any); ok {
+			if jsonStringAtPath(nested, "id") == id {
+				return nested
+			}
+			if found := findJSONObjectByID(nested, id); found != nil {
+				return found
+			}
+		}
+		if arr, ok := value.([]any); ok {
+			for _, item := range arr {
+				if nested, ok := item.(map[string]any); ok {
+					if jsonStringAtPath(nested, "id") == id {
+						return nested
+					}
+					if found := findJSONObjectByID(nested, id); found != nil {
+						return found
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func jsonStringAtPath(v any, key string) string {
+	switch x := v.(type) {
+	case map[string]any:
+		if value, ok := x[key]; ok {
+			if s, ok := value.(string); ok {
+				return strings.TrimSpace(s)
+			}
+		}
+		for _, value := range x {
+			if s := jsonStringAtPath(value, key); s != "" {
+				return s
+			}
+		}
+	case []any:
+		for _, value := range x {
+			if s := jsonStringAtPath(value, key); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func publicProviderBaseURLFromCodexConfig(configText string) string {
+	values, err := parseSimpleTOMLStrings([]byte(configText))
+	if err != nil {
+		return publicProviderBaseURLFromText(configText)
+	}
+	provider := strings.TrimSpace(values["model_provider"])
+	if provider == "" {
+		provider = strings.TrimSpace(values["provider"])
+	}
+	if provider != "" {
+		if baseURL := normalizePublicProviderBaseURL(providerBaseURLRaw(values, provider)); baseURL != "" {
+			return baseURL
+		}
+	}
+	return normalizePublicProviderBaseURL(values["base_url"])
+}
+
+func publicProviderBaseURLFromText(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "base_url") && !strings.Contains(lower, "baseurl") && !strings.Contains(lower, "api_base") && !strings.Contains(lower, "apibase") {
+			continue
+		}
+		for _, raw := range extractHTTPSURLs(line) {
+			if baseURL := normalizePublicProviderBaseURL(raw); baseURL != "" {
+				return baseURL
+			}
+		}
+	}
+	for _, raw := range extractHTTPSURLs(text) {
+		if baseURL := normalizePublicProviderBaseURL(raw); baseURL != "" {
+			return baseURL
+		}
+	}
+	return ""
+}
+
+func extractHTTPSURLs(text string) []string {
+	var urls []string
+	for _, field := range strings.FieldsFunc(text, func(r rune) bool {
+		return r <= ' ' || strings.ContainsRune(`"'<>[]{}(),`, r)
+	}) {
+		field = strings.TrimSpace(field)
+		if strings.HasPrefix(strings.ToLower(field), "https://") {
+			urls = append(urls, field)
+		}
+	}
+	return urls
+}
+
+func normalizePublicProviderBaseURL(raw string) string {
+	baseURL := NormalizeProviderBaseURL(raw)
+	if baseURL == "" || IsPrivateProviderBaseURL(baseURL) {
+		return ""
+	}
+	return baseURL
+}
+
+func privateHostname(hostname string) bool {
+	h := strings.ToLower(strings.Trim(hostname, "[]"))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") || strings.HasSuffix(h, ".local") {
+		return true
+	}
+	if parts := strings.Split(h, "."); len(parts) == 4 {
+		nums := make([]int, 4)
+		for i, part := range parts {
+			n, err := strconv.Atoi(part)
+			if err != nil || n < 0 || n > 255 {
+				return false
+			}
+			nums[i] = n
+		}
+		return nums[0] == 10 ||
+			nums[0] == 127 ||
+			(nums[0] == 169 && nums[1] == 254) ||
+			(nums[0] == 172 && nums[1] >= 16 && nums[1] <= 31) ||
+			(nums[0] == 192 && nums[1] == 168) ||
+			nums[0] == 0 ||
+			nums[0] >= 224
+	}
+	return h == "::1" || strings.HasPrefix(h, "fc") || strings.HasPrefix(h, "fd") || strings.HasPrefix(h, "fe80:")
 }
 
 func stripTOMLComment(line string) string {

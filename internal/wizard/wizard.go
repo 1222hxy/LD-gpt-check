@@ -157,6 +157,7 @@ func Run(ctx context.Context, opts Options) error {
 			}
 		}
 	} else {
+		applyCCSwitchResolutionPrompt(reader, out, l, color)
 		report.PrintSuccess(out, l.S("wizard_ready_run"), color)
 		report.PrintWarning(out, l.S("codex_args_upload_notice"), color)
 		codexStartupArgs, err = promptOptionalString(reader, out, l.S("wizard_codex_startup_args"), l.S("wizard_codex_startup_args_empty"))
@@ -262,6 +263,26 @@ func Run(ctx context.Context, opts Options) error {
 	}, lang, color)
 	report.PrintSuccess(out, l.S("wizard_done"), color)
 	return nil
+}
+
+func applyCCSwitchResolutionPrompt(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) {
+	resolution := system.DetectCCSwitchCodexResolution()
+	if resolution.LocalBaseURL == "" || resolution.ProviderBaseURL == "" {
+		return
+	}
+	report.PrintInfo(out, l.S("wizard_cc_switch_detected"), resolution.ProviderBaseURL, color)
+	report.PrintWarning(out, l.S("wizard_cc_switch_note", resolution.LocalBaseURL, resolution.ConfigDir), color)
+	yes, err := promptBool(r, out, l, l.S("wizard_cc_switch_use"), true)
+	if err != nil {
+		return
+	}
+	if yes {
+		_ = os.Unsetenv("LD_GPT_CHECK_DISABLE_CC_SWITCH")
+		report.PrintSuccess(out, l.S("wizard_cc_switch_using", resolution.ProviderBaseURL), color)
+		return
+	}
+	_ = os.Setenv("LD_GPT_CHECK_DISABLE_CC_SWITCH", "1")
+	report.PrintWarning(out, l.S("wizard_cc_switch_skipped"), color)
 }
 
 func wizardQuestionSource(q questions.Question) string {

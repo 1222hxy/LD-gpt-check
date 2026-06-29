@@ -706,6 +706,7 @@ async function adminBridgeBaseURLTestPost(request: Request, env: Env): Promise<R
   const body = await readJson<any>(request);
   const baseURL = normalizeProviderBaseURL(body.base_url);
   if (!baseURL) return jsonError("base_url must be a valid https URL", 400, "bad_request");
+  if (privateProviderBaseURL(baseURL)) return jsonError("private or local base_url cannot be tested or stored", 400, "bad_request");
   const started = Date.now();
   let status = 0;
   let ok = false;
@@ -770,6 +771,7 @@ async function bridgeSuggestionPost(request: Request, env: Env): Promise<Respons
   const body = await readJson<any>(request);
   const baseURL = normalizeProviderBaseURL(body.base_url);
   if (!baseURL) return jsonError("base_url must be a valid https URL", 400, "bad_request");
+  if (privateProviderBaseURL(baseURL)) return jsonError("private or local base_url cannot be submitted", 400, "bad_request");
   const suggestion = await upsertBridgeSuggestion(env, {
     userID: user.id,
     baseURL,
@@ -1339,6 +1341,7 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
   if (provider.channel === "unknown_bridge") {
     await upsertUnknownProviderSuggestion(env, auth.user.id, provider);
   }
+  const storedProviderHost = provider.channel === "local_private" ? "" : provider.host || str(p.codex_provider_host, MAX_STRING_LENGTH);
   const statements = [
     env.DB.prepare(
       `INSERT INTO benchmark_submissions
@@ -1378,7 +1381,7 @@ async function createSubmission(request: Request, env: Env): Promise<Response> {
       str(p.codex_version, MAX_STRING_LENGTH),
       str(p.codex_model_source, 32),
       str(p.codex_model_provider, MAX_STRING_LENGTH),
-      provider.host || str(p.codex_provider_host, MAX_STRING_LENGTH),
+      storedProviderHost,
       provider.baseURL,
       provider.channel,
       provider.bridgeID,
@@ -2339,6 +2342,7 @@ function channelLabel(channel: unknown, bridgeName: unknown, providerBaseURLOrHo
 function plainChannelLabel(channel: unknown, bridgeName: unknown, providerBaseURLOrHost: unknown = ""): string {
   const host = providerDisplayHost(providerBaseURLOrHost);
   if (channel === "official") return host ? `官方 API (${host})` : "官方 API";
+  if (channel === "local_private") return "本机代理（未归一）";
   if (channel === "bridge") {
     const name = str(bridgeName || "中转站", MAX_STRING_LENGTH);
     return host ? `${name} (${host})` : name;
@@ -2701,7 +2705,7 @@ async function syncBridgeAdminFromSubmissions(env: Env): Promise<{ scanned: numb
   for (const row of rows.results ?? []) {
     scanned++;
     const baseURL = normalizeProviderBaseURL(row.base_url);
-    if (!baseURL || officialProviderBaseURL(baseURL)) {
+    if (!baseURL || officialProviderBaseURL(baseURL) || privateProviderBaseURL(baseURL)) {
       skipped++;
       continue;
     }
@@ -3066,6 +3070,12 @@ async function safeMetadataFetch(rawURL: string, opts: { method: string; maxByte
 async function classifyProviderBaseURL(env: Env, raw: string): Promise<{ baseURL: string; host: string; channel: string; bridgeID: string | null; bridgeName: string }> {
   const baseURL = normalizeProviderBaseURL(raw);
   const host = hostFromProviderBaseURL(baseURL);
+  if (!baseURL) {
+    return { baseURL: "", host: "", channel: "unknown_bridge", bridgeID: null, bridgeName: "" };
+  }
+  if (privateProviderBaseURL(baseURL)) {
+    return { baseURL: "", host: "", channel: "local_private", bridgeID: null, bridgeName: "" };
+  }
   if (officialProviderBaseURL(baseURL)) {
     return { baseURL, host, channel: "official", bridgeID: null, bridgeName: "" };
   }
@@ -3109,7 +3119,7 @@ function normalizeBridgeBaseURLs(value: unknown): Array<{ baseURL: string; host:
   for (const item of rawItems) {
     const raw = typeof item === "string" ? item : item && typeof item === "object" ? String((item as any).base_url || "") : "";
     const baseURL = normalizeProviderBaseURL(raw);
-    if (!baseURL || seen.has(baseURL)) continue;
+    if (!baseURL || privateProviderBaseURL(baseURL) || seen.has(baseURL)) continue;
     const host = hostFromProviderBaseURL(baseURL);
     seen.add(baseURL);
     result.push({ baseURL, host, rootDomain: rootDomainFromHost(host), path: pathFromProviderBaseURL(baseURL) });
@@ -3134,6 +3144,16 @@ function normalizeProviderBaseURL(raw: unknown): string {
     return url.toString().replace(/\/$/, "");
   } catch {
     return "";
+  }
+}
+
+function privateProviderBaseURL(raw: unknown): boolean {
+  const baseURL = normalizeProviderBaseURL(raw);
+  if (!baseURL) return false;
+  try {
+    return privateHostname(new URL(baseURL).hostname);
+  } catch {
+    return false;
   }
 }
 
