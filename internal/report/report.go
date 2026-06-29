@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
@@ -53,22 +54,82 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 	if strings.TrimSpace(model) == "" {
 		model = l.S("model_local_config")
 	}
+	stream := streamLineState{enabled: isTerminalWriter(w), color: color}
 	return func(ev runner.ProgressEvent) {
 		switch ev.Type {
 		case runner.ProgressStarted:
 			fmt.Fprintln(w, Colorize(l.S("run_status_start", model, effort, ev.Total), colorCyan, color))
 		case runner.ProgressCaseStart:
+			stream.reset(w)
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_start", ev.Current, ev.Total, ev.Question.ID, ev.TestIndex), colorBlue, color))
+		case runner.ProgressCaseStream:
+			stream.write(w, l, ev.StreamText)
 		case runner.ProgressCaseDone:
+			stream.reset(w)
 			label := Colorize("FAIL", colorRed, color)
 			if ev.CaseResult.OK {
 				label = Colorize("PASS", colorGreen, color)
 			}
 			fmt.Fprintln(w, l.S("run_status_case_done", ev.Current, ev.Total, label, ev.CaseResult.TimeSeconds, ev.CaseResult.TPS))
 		case runner.ProgressCaseError:
+			stream.reset(w)
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_error", ev.Current, ev.Total, ev.Error), colorRed, color))
 		}
 	}
+}
+
+type streamLineState struct {
+	enabled bool
+	color   bool
+	buf     string
+	active  bool
+	last    time.Time
+}
+
+func (s *streamLineState) write(w io.Writer, l i18n.Localizer, text string) {
+	if !s.enabled || text == "" {
+		return
+	}
+	s.buf += text
+	now := time.Now()
+	if !s.last.IsZero() && now.Sub(s.last) < 100*time.Millisecond {
+		return
+	}
+	s.last = now
+	s.active = true
+	fmt.Fprint(w, "\r\x1b[2K")
+	fmt.Fprint(w, Colorize(l.S("run_status_stream", limitedStreamLine(s.buf, 96)), colorGray, s.color))
+}
+
+func (s *streamLineState) reset(w io.Writer) {
+	if s.enabled && s.active {
+		fmt.Fprint(w, "\r\x1b[2K")
+	}
+	s.buf = ""
+	s.active = false
+	s.last = time.Time{}
+}
+
+func streamPreview(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func limitedStreamLine(text string, maxRunes int) string {
+	text = streamPreview(text)
+	if maxRunes <= 0 || len([]rune(text)) <= maxRunes {
+		return text
+	}
+	runes := []rune(text)
+	return "..." + string(runes[len(runes)-maxRunes:])
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
 }
 
 func PrintQuestionPrompts(w io.Writer, lang i18n.Lang, qs []questions.Question, color bool) {

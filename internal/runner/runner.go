@@ -54,15 +54,17 @@ type ProgressEvent struct {
 	TestIndex  int
 	CaseResult CaseResult
 	Error      error
+	StreamText string
 }
 
 type ProgressEventType string
 
 const (
-	ProgressStarted   ProgressEventType = "started"
-	ProgressCaseStart ProgressEventType = "case_start"
-	ProgressCaseDone  ProgressEventType = "case_done"
-	ProgressCaseError ProgressEventType = "case_error"
+	ProgressStarted    ProgressEventType = "started"
+	ProgressCaseStart  ProgressEventType = "case_start"
+	ProgressCaseStream ProgressEventType = "case_stream"
+	ProgressCaseDone   ProgressEventType = "case_done"
+	ProgressCaseError  ProgressEventType = "case_error"
 )
 
 type CaseResult struct {
@@ -326,7 +328,9 @@ func runOneCodex(ctx context.Context, codex string, opts Options, q questions.Qu
 		return CaseResult{}, err
 	}
 
-	parsed, parseErr := parseEvents(stdout, opts.Lang)
+	parsed, parseErr := parseEventsWithStream(stdout, opts.Lang, func(text string) {
+		emitProgress(opts.Progress, ProgressEvent{Type: ProgressCaseStream, Question: q, TestIndex: index, StreamText: text})
+	})
 	if parseErr != nil {
 		cancel()
 		_ = cmd.Wait()
@@ -475,6 +479,10 @@ func ParseCodexStartupArgs(input string) ([]string, error) {
 }
 
 func parseEvents(r io.Reader, lang i18n.Lang) (ParsedEvents, error) {
+	return parseEventsWithStream(r, lang, nil)
+}
+
+func parseEventsWithStream(r io.Reader, lang i18n.Lang, onDelta func(string)) (ParsedEvents, error) {
 	var out ParsedEvents
 	eventTypes := make(map[string]struct{})
 	scanner := bufio.NewScanner(r)
@@ -497,6 +505,11 @@ func parseEvents(r io.Reader, lang i18n.Lang) (ParsedEvents, error) {
 		}
 		if eventUsesTool(ev) {
 			out.ToolUsed = true
+		}
+		if onDelta != nil {
+			if text := extractStreamDelta(ev); text != "" {
+				onDelta(text)
+			}
 		}
 		if isEvent(ev, "item.completed") {
 			if msg := extractAgentMessage(ev); msg != "" {
@@ -709,6 +722,50 @@ func eventName(ev map[string]any) string {
 	return ""
 }
 
+func extractStreamDelta(ev map[string]any) string {
+	name := eventName(ev)
+	if !strings.Contains(strings.ToLower(name), "delta") {
+		return ""
+	}
+	return strings.Join(collectDeltaText(ev), "")
+}
+
+func collectDeltaText(v any) []string {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make([]string, 0, 2)
+		for _, key := range []string{"delta", "text_delta", "content_delta", "output_text_delta"} {
+			if s, _ := t[key].(string); s != "" {
+				out = append(out, s)
+			}
+		}
+		if s, _ := t["text"].(string); s != "" && mapLooksLikeTextDelta(t) {
+			out = append(out, s)
+		}
+		for _, v := range t {
+			out = append(out, collectDeltaText(v)...)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			out = append(out, collectDeltaText(item)...)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func mapLooksLikeTextDelta(m map[string]any) bool {
+	for _, key := range []string{"type", "kind"} {
+		if s, _ := m[key].(string); strings.Contains(strings.ToLower(s), "delta") {
+			return true
+		}
+	}
+	return false
+}
+
 func stringField(obj map[string]any, key string) string {
 	if s, _ := obj[key].(string); s != "" {
 		return s
@@ -890,6 +947,13 @@ func nestedIntField(m map[string]any, objectKey, intKey string) int {
 		return intField(obj, intKey)
 	}
 	return 0
+}
+
+func nestedStringField(m map[string]any, objectKey, stringKey string) string {
+	if obj, ok := m[objectKey].(map[string]any); ok {
+		return stringField(obj, stringKey)
+	}
+	return ""
 }
 
 func Preview(s string, maxRunes int) string {

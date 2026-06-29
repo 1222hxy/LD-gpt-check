@@ -1,12 +1,15 @@
 package runner
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -30,6 +33,7 @@ const (
 )
 
 var apiRetryBaseDelay = 500 * time.Millisecond
+var errAPIStreamUnsupported = errors.New("api streaming unsupported")
 
 type apiBackend struct {
 	format          APIFormat
@@ -116,6 +120,19 @@ func (b *apiBackend) runOne(ctx context.Context, opts Options, q questions.Quest
 }
 
 func (b *apiBackend) request(ctx context.Context, opts Options, prompt string) (ParsedEvents, error) {
+	if opts.Progress != nil {
+		parsed, err := b.requestStream(ctx, opts, prompt)
+		if err == nil {
+			return parsed, nil
+		}
+		if !errors.Is(err, errAPIStreamUnsupported) {
+			return ParsedEvents{}, err
+		}
+	}
+	return b.requestNonStream(ctx, opts, prompt)
+}
+
+func (b *apiBackend) requestNonStream(ctx context.Context, opts Options, prompt string) (ParsedEvents, error) {
 	var resp *resty.Response
 	var err error
 	for attempt := 1; attempt <= apiMaxAttempts; attempt++ {
@@ -153,6 +170,49 @@ func (b *apiBackend) request(ctx context.Context, opts Options, prompt string) (
 	return parseAPIResponse(b.format, obj), nil
 }
 
+func (b *apiBackend) requestStream(ctx context.Context, opts Options, prompt string) (ParsedEvents, error) {
+	var resp *http.Response
+	var err error
+	for attempt := 1; attempt <= apiMaxAttempts; attempt++ {
+		resp, err = b.doStreamRequest(ctx, opts, prompt)
+		if retryableTransportError(err) && attempt < apiMaxAttempts {
+			if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*apiRetryBaseDelay); sleepErr != nil {
+				return ParsedEvents{}, sleepErr
+			}
+			continue
+		}
+		if err == nil && resp != nil && shouldRetryStatus(resp.StatusCode) && attempt < apiMaxAttempts {
+			_ = resp.Body.Close()
+			if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*apiRetryBaseDelay); sleepErr != nil {
+				return ParsedEvents{}, sleepErr
+			}
+			continue
+		}
+		break
+	}
+	if err != nil {
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_failed", classifyTransportError(err, opts.Lang)))
+	}
+	if resp == nil {
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_failed", i18n.New(opts.Lang).S("runner_api_empty_response")))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		preview := streamBodyPreview(resp.Body, b.apiKey)
+		if resp.StatusCode == httpStatusUnauthorized || resp.StatusCode == httpStatusForbidden {
+			return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_auth_failed", resp.StatusCode, preview))
+		}
+		if streamFallbackStatus(resp.StatusCode) {
+			return ParsedEvents{}, errAPIStreamUnsupported
+		}
+		if shouldRetryStatus(resp.StatusCode) {
+			return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_status_retry_exhausted", resp.StatusCode, preview))
+		}
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_status_failed", resp.StatusCode, preview))
+	}
+	return parseAPIStream(resp.Body, b.format, opts.Progress)
+}
+
 func (b *apiBackend) doRequest(ctx context.Context, opts Options, prompt string) (*resty.Response, error) {
 	req := b.client.R().
 		SetContext(ctx).
@@ -164,6 +224,46 @@ func (b *apiBackend) doRequest(ctx context.Context, opts Options, prompt string)
 		req.SetHeader("Authorization", "Bearer "+b.apiKey)
 	}
 	return req.Post(b.endpointURL)
+}
+
+func (b *apiBackend) doStreamRequest(ctx context.Context, opts Options, prompt string) (*http.Response, error) {
+	body := b.streamRequestBody(prompt, opts.ReasoningEffort)
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.endpointURL, &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "ld-gpt-check/0.1")
+	if b.format == APIFormatAnthropic {
+		req.Header.Set("x-api-key", b.apiKey)
+		req.Header.Set("anthropic-version", anthropicAPIVersion)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+b.apiKey)
+	}
+	return b.client.GetClient().Do(req)
+}
+
+func (b *apiBackend) streamRequestBody(prompt, effort string) map[string]any {
+	body := b.requestBody(prompt, effort)
+	body["stream"] = true
+	if b.format == APIFormatOpenAIChat {
+		body["stream_options"] = map[string]any{"include_usage": true}
+	}
+	return body
+}
+
+func streamFallbackStatus(status int) bool {
+	return status == 400 || status == 404 || status == 405 || status == 415 || status == 422
+}
+
+func streamBodyPreview(r io.Reader, apiKey string) string {
+	b, _ := io.ReadAll(io.LimitReader(r, apiResponseBodyLimit))
+	return bodyPreview(b, apiKey)
 }
 
 const (
@@ -266,6 +366,131 @@ func parseAPIResponse(format APIFormat, obj map[string]any) ParsedEvents {
 	}
 	parsed.InputTokens, parsed.CachedInputTokens, parsed.OutputTokens, parsed.ReasoningTokens = extractAPIUsage(obj)
 	return parsed
+}
+
+func parseAPIStream(r io.Reader, format APIFormat, progress func(ProgressEvent)) (ParsedEvents, error) {
+	var parsed ParsedEvents
+	eventTypes := map[string]struct{}{}
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	var dataLines []string
+	flush := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		payload := strings.TrimSpace(strings.Join(dataLines, "\n"))
+		dataLines = nil
+		if payload == "" || payload == "[DONE]" {
+			return nil
+		}
+		var obj map[string]any
+		dec := json.NewDecoder(strings.NewReader(payload))
+		dec.UseNumber()
+		if err := dec.Decode(&obj); err != nil {
+			return err
+		}
+		applyAPIStreamEvent(format, obj, &parsed, eventTypes, progress)
+		return nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			if err := flush(); err != nil {
+				return ParsedEvents{}, err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return ParsedEvents{}, err
+	}
+	if err := flush(); err != nil {
+		return ParsedEvents{}, err
+	}
+	parsed.EventTypes = sortedKeys(eventTypes)
+	if parsed.EventCount == 0 && parsed.FinalAnswer == "" {
+		return ParsedEvents{}, io.ErrUnexpectedEOF
+	}
+	return parsed, nil
+}
+
+func applyAPIStreamEvent(format APIFormat, obj map[string]any, parsed *ParsedEvents, eventTypes map[string]struct{}, progress func(ProgressEvent)) {
+	parsed.EventCount++
+	name := firstNonEmpty(eventName(obj), stringField(obj, "type"))
+	if name == "" {
+		name = "api." + string(format) + ".stream"
+	}
+	eventTypes[name] = struct{}{}
+	if parsed.ThreadID == "" {
+		parsed.ThreadID = firstNonEmpty(stringField(obj, "id"), nestedStringField(obj, "response", "id"), nestedStringField(obj, "message", "id"))
+	}
+	if delta := apiStreamDelta(format, obj); delta != "" {
+		parsed.FinalAnswer += delta
+		if progress != nil {
+			progress(ProgressEvent{Type: ProgressCaseStream, StreamText: delta})
+		}
+	}
+	if completed := apiStreamCompleted(format, obj); completed.FinalAnswer != "" || completed.InputTokens > 0 || completed.OutputTokens > 0 || completed.ReasoningTokens > 0 {
+		mergeParsedAPIStream(parsed, completed)
+	}
+	in, cached, out, reason := extractAPIUsage(obj)
+	if in > 0 || cached > 0 || out > 0 || reason > 0 {
+		parsed.InputTokens, parsed.CachedInputTokens, parsed.OutputTokens, parsed.ReasoningTokens = in, cached, out, reason
+	}
+}
+
+func apiStreamDelta(format APIFormat, obj map[string]any) string {
+	switch format {
+	case APIFormatOpenAIResponses:
+		if strings.Contains(stringField(obj, "type"), "output_text.delta") {
+			return textFromValue(obj["delta"])
+		}
+		return textFromValue(obj["delta"])
+	case APIFormatAnthropic:
+		if delta, _ := obj["delta"].(map[string]any); delta != nil {
+			return textFromValue(delta["text"])
+		}
+		return ""
+	default:
+		var b strings.Builder
+		choices, _ := obj["choices"].([]any)
+		for _, choice := range choices {
+			m, _ := choice.(map[string]any)
+			if delta, _ := m["delta"].(map[string]any); delta != nil {
+				b.WriteString(textFromValue(delta["content"]))
+			}
+			b.WriteString(textFromValue(m["text"]))
+		}
+		return b.String()
+	}
+}
+
+func apiStreamCompleted(format APIFormat, obj map[string]any) ParsedEvents {
+	if response, _ := obj["response"].(map[string]any); response != nil {
+		return parseAPIResponse(format, response)
+	}
+	if message, _ := obj["message"].(map[string]any); message != nil {
+		return parseAPIResponse(format, message)
+	}
+	return ParsedEvents{}
+}
+
+func mergeParsedAPIStream(dst *ParsedEvents, src ParsedEvents) {
+	if src.ThreadID != "" {
+		dst.ThreadID = src.ThreadID
+	}
+	if src.FinalAnswer != "" {
+		dst.FinalAnswer = src.FinalAnswer
+	}
+	if src.InputTokens > 0 || src.CachedInputTokens > 0 || src.OutputTokens > 0 || src.ReasoningTokens > 0 {
+		dst.InputTokens = src.InputTokens
+		dst.CachedInputTokens = src.CachedInputTokens
+		dst.OutputTokens = src.OutputTokens
+		dst.ReasoningTokens = src.ReasoningTokens
+	}
 }
 
 func openAIChatText(obj map[string]any) string {

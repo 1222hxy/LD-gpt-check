@@ -91,6 +91,27 @@ func TestParseEventsCapturesDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParseEventsStreamsDeltas(t *testing.T) {
+	input := strings.Join([]string{
+		`{"type":"item.delta","delta":"答案"}`,
+		`{"type":"item.delta","delta":"是 21"}`,
+		`{"type":"item.completed","item":{"role":"assistant","content":"答案是 21"}}`,
+	}, "\n")
+	var chunks []string
+	parsed, err := parseEventsWithStream(strings.NewReader(input), i18n.ZH, func(text string) {
+		chunks = append(chunks, text)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.FinalAnswer != "答案是 21" {
+		t.Fatalf("answer = %q", parsed.FinalAnswer)
+	}
+	if !reflect.DeepEqual(chunks, []string{"答案", "是 21"}) {
+		t.Fatalf("chunks = %#v", chunks)
+	}
+}
+
 func TestCodexArgsMatchUpstreamInvocation(t *testing.T) {
 	want := []string{
 		"exec",
@@ -301,6 +322,112 @@ func TestRunWithOpenAIResponsesAPIBackend(t *testing.T) {
 	if !summary.Cases[0].OK || summary.Cases[0].InputTokens != 11 || summary.Cases[0].ReasoningTokens != 3 {
 		t.Fatalf("case = %#v", summary.Cases[0])
 	}
+}
+
+func TestRunWithOpenAIChatAPIStreamProgress(t *testing.T) {
+	q := apiTestQuestion()
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["stream"] != true || body["stream_options"] == nil {
+			t.Fatalf("stream body = %#v", body)
+		}
+		return sseResponse(strings.Join([]string{
+			`data: {"id":"chatcmpl_stream","choices":[{"delta":{"content":"答案"}}]}`,
+			``,
+			`data: {"choices":[{"delta":{"content":"是 21"}}]}`,
+			``,
+			`data: {"usage":{"prompt_tokens":10,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":2}}}`,
+			``,
+			`data: [DONE]`,
+			``,
+		}, "\n")), nil
+	})
+
+	var chunks []string
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Timeout:          5 * time.Second,
+		Lang:             i18n.ZH,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIBaseURL:  "https://api.test/v1",
+		ModelAPIKey:      "test-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{q},
+		Progress: func(ev ProgressEvent) {
+			if ev.Type == ProgressCaseStream {
+				chunks = append(chunks, ev.StreamText)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Cases[0].OK || summary.Cases[0].InputTokens != 10 || summary.Cases[0].OutputTokens != 5 || summary.Cases[0].ReasoningTokens != 2 {
+		t.Fatalf("case = %#v", summary.Cases[0])
+	}
+	if !reflect.DeepEqual(chunks, []string{"答案", "是 21"}) {
+		t.Fatalf("chunks = %#v", chunks)
+	}
+}
+
+func TestParseAPIStreamResponsesAndAnthropicDeltas(t *testing.T) {
+	t.Run("responses", func(t *testing.T) {
+		input := strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"最终"}`,
+			``,
+			`data: {"type":"response.output_text.delta","delta":"答案：21"}`,
+			``,
+			`data: {"type":"response.completed","response":{"id":"resp_1","output_text":"最终答案：21","usage":{"input_tokens":11,"output_tokens":6,"output_tokens_details":{"reasoning_tokens":3}}}}`,
+			``,
+		}, "\n")
+		var chunks []string
+		parsed, err := parseAPIStream(strings.NewReader(input), APIFormatOpenAIResponses, func(ev ProgressEvent) {
+			if ev.Type == ProgressCaseStream {
+				chunks = append(chunks, ev.StreamText)
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.FinalAnswer != "最终答案：21" || parsed.InputTokens != 11 || parsed.ReasoningTokens != 3 {
+			t.Fatalf("parsed = %#v", parsed)
+		}
+		if !reflect.DeepEqual(chunks, []string{"最终", "答案：21"}) {
+			t.Fatalf("chunks = %#v", chunks)
+		}
+	})
+
+	t.Run("anthropic", func(t *testing.T) {
+		input := strings.Join([]string{
+			`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":12}}}`,
+			``,
+			`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"21"}}`,
+			``,
+			`data: {"type":"message_delta","usage":{"output_tokens":7}}`,
+			``,
+		}, "\n")
+		var chunks []string
+		parsed, err := parseAPIStream(strings.NewReader(input), APIFormatAnthropic, func(ev ProgressEvent) {
+			if ev.Type == ProgressCaseStream {
+				chunks = append(chunks, ev.StreamText)
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.FinalAnswer != "21" || parsed.OutputTokens != 7 {
+			t.Fatalf("parsed = %#v", parsed)
+		}
+		if !reflect.DeepEqual(chunks, []string{"21"}) {
+			t.Fatalf("chunks = %#v", chunks)
+		}
+	})
 }
 
 func TestRunWithAnthropicMessagesAPIBackend(t *testing.T) {
@@ -543,6 +670,12 @@ func textResponse(status int, body string) *http.Response {
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+func sseResponse(body string) *http.Response {
+	resp := textResponse(http.StatusOK, body)
+	resp.Header.Set("Content-Type", "text/event-stream")
+	return resp
 }
 
 func apiTestQuestion() questions.Question {
