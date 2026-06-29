@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/url"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 type CodexConfig struct {
@@ -27,6 +30,14 @@ type CCSwitchResolution struct {
 	ProviderBaseURL string
 	ProviderHost    string
 	ConfigDir       string
+	ModelAPIKey     string
+	APIFormat       string
+}
+
+type CCSwitchProviderConfig struct {
+	BaseURL   string
+	APIKey    string
+	APIFormat string
 }
 
 func CodexPath() (string, error) {
@@ -56,8 +67,11 @@ func CodexVersion() string {
 }
 
 func UploadCodexVersion(codexSandbox string) string {
-	if strings.TrimSpace(codexSandbox) == "api" {
+	switch strings.TrimSpace(codexSandbox) {
+	case "api":
 		return "api"
+	case "auth-json":
+		return "auth-json"
 	}
 	return CodexVersion()
 }
@@ -243,7 +257,8 @@ func NormalizeProviderBaseURL(raw string) string {
 	u.User = nil
 	u.RawQuery = ""
 	u.Fragment = ""
-	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = ""
+	u.Path = strings.TrimRight(u.Path, `/\`)
 	if u.Path == "" {
 		u.Path = ""
 	}
@@ -268,38 +283,41 @@ func CCSwitchAutoResolveEnabled() bool {
 }
 
 func DetectCCSwitchCodexResolution() CCSwitchResolution {
+	configDir := CCSwitchConfigDir()
+	providerConfig := CCSwitchCodexProviderConfig()
+	resolved := providerConfig.BaseURL
+	localBaseURL := ""
 	path := CodexConfigPath()
-	if path == "" {
-		return CCSwitchResolution{}
+	if path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			if values, err := parseSimpleTOMLStrings(b); err == nil {
+				provider := strings.TrimSpace(values["model_provider"])
+				if provider == "" {
+					provider = strings.TrimSpace(values["provider"])
+				}
+				if provider != "" {
+					if raw := providerBaseURLRaw(values, provider); IsPrivateProviderBaseURL(raw) {
+						localBaseURL = raw
+					}
+				}
+			}
+		}
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return CCSwitchResolution{}
-	}
-	values, err := parseSimpleTOMLStrings(b)
-	if err != nil {
-		return CCSwitchResolution{}
-	}
-	provider := strings.TrimSpace(values["model_provider"])
-	if provider == "" {
-		provider = strings.TrimSpace(values["provider"])
-	}
-	if provider == "" {
-		return CCSwitchResolution{}
-	}
-	localBaseURL := providerBaseURLRaw(values, provider)
-	if !IsPrivateProviderBaseURL(localBaseURL) {
-		return CCSwitchResolution{}
-	}
-	resolved := CCSwitchCodexProviderBaseURL()
 	if resolved == "" {
-		return CCSwitchResolution{LocalBaseURL: localBaseURL, ConfigDir: CCSwitchConfigDir()}
+		if localBaseURL == "" {
+			if _, err := os.Stat(configDir); err != nil {
+				return CCSwitchResolution{}
+			}
+		}
+		return CCSwitchResolution{LocalBaseURL: localBaseURL, ConfigDir: configDir}
 	}
 	return CCSwitchResolution{
 		LocalBaseURL:    localBaseURL,
 		ProviderBaseURL: resolved,
 		ProviderHost:    hostFromURL(resolved),
-		ConfigDir:       CCSwitchConfigDir(),
+		ConfigDir:       configDir,
+		ModelAPIKey:     providerConfig.APIKey,
+		APIFormat:       providerConfig.APIFormat,
 	}
 }
 
@@ -317,15 +335,26 @@ func CCSwitchConfigDir() string {
 }
 
 func CCSwitchCodexProviderBaseURL() string {
+	return CCSwitchCodexProviderConfig().BaseURL
+}
+
+func CCSwitchCodexProviderConfig() CCSwitchProviderConfig {
 	dir := CCSwitchConfigDir()
 	if dir == "" {
-		return ""
+		return CCSwitchProviderConfig{}
 	}
 	currentID := ccSwitchCurrentCodexProviderID(filepath.Join(dir, "config.json"))
-	if baseURL := ccSwitchCodexProviderBaseURLFromSQLite(filepath.Join(dir, "cc-switch.db"), currentID); baseURL != "" {
-		return baseURL
+	if cfg := ccSwitchCodexProviderConfigFromSQLite(filepath.Join(dir, "cc-switch.db"), currentID); !cfg.empty() {
+		return cfg
 	}
-	return ccSwitchCodexProviderBaseURLFromFiles(dir, currentID)
+	if cfg := ccSwitchCodexProviderConfigFromDBText(filepath.Join(dir, "cc-switch.db"), currentID); !cfg.empty() {
+		return cfg
+	}
+	return ccSwitchCodexProviderConfigFromFiles(dir, currentID)
+}
+
+func (c CCSwitchProviderConfig) empty() bool {
+	return c.BaseURL == "" && c.APIKey == "" && c.APIFormat == ""
 }
 
 func ccSwitchCurrentCodexProviderID(path string) string {
@@ -346,69 +375,159 @@ func ccSwitchCurrentCodexProviderID(path string) string {
 }
 
 func ccSwitchCodexProviderBaseURLFromSQLite(dbPath, currentID string) string {
+	return ccSwitchCodexProviderConfigFromSQLite(dbPath, currentID).BaseURL
+}
+
+func ccSwitchCodexProviderConfigFromSQLite(dbPath, currentID string) CCSwitchProviderConfig {
+	if cfg := ccSwitchCodexProviderConfigFromSQLiteDB(dbPath, currentID); !cfg.empty() {
+		return cfg
+	}
+	return ccSwitchCodexProviderConfigFromSQLiteCLI(dbPath, currentID)
+}
+
+func ccSwitchCodexProviderConfigFromSQLiteDB(dbPath, currentID string) CCSwitchProviderConfig {
 	if _, err := os.Stat(dbPath); err != nil {
-		return ""
+		return CCSwitchProviderConfig{}
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return CCSwitchProviderConfig{}
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, `SELECT p.id, p.settings_config, p.is_current, COALESCE(e.url, '') AS endpoint_url
+		FROM providers p
+		LEFT JOIN provider_endpoints e ON e.provider_id = p.id AND e.app_type = p.app_type
+		WHERE p.app_type = 'codex'
+		ORDER BY p.is_current DESC, p.sort_index, e.id`)
+	if err != nil {
+		return CCSwitchProviderConfig{}
+	}
+	defer rows.Close()
+	type providerRow struct {
+		id             string
+		settingsConfig string
+		isCurrent      int
+		endpointURL    string
+	}
+	var all []providerRow
+	for rows.Next() {
+		var row providerRow
+		if err := rows.Scan(&row.id, &row.settingsConfig, &row.isCurrent, &row.endpointURL); err != nil {
+			return CCSwitchProviderConfig{}
+		}
+		all = append(all, row)
+	}
+	if len(all) == 0 {
+		return CCSwitchProviderConfig{}
+	}
+	for _, row := range all {
+		if currentID != "" && row.id == currentID {
+			if cfg := ccSwitchProviderConfigFromSQLiteRow(row.settingsConfig, row.endpointURL); !cfg.empty() {
+				return cfg
+			}
+		}
+	}
+	for _, row := range all {
+		if row.isCurrent != 0 {
+			if cfg := ccSwitchProviderConfigFromSQLiteRow(row.settingsConfig, row.endpointURL); !cfg.empty() {
+				return cfg
+			}
+		}
+	}
+	for _, row := range all {
+		if cfg := ccSwitchProviderConfigFromSQLiteRow(row.settingsConfig, row.endpointURL); !cfg.empty() {
+			return cfg
+		}
+	}
+	return CCSwitchProviderConfig{}
+}
+
+func ccSwitchCodexProviderConfigFromSQLiteCLI(dbPath, currentID string) CCSwitchProviderConfig {
+	if _, err := os.Stat(dbPath); err != nil {
+		return CCSwitchProviderConfig{}
 	}
 	sqlitePath, err := exec.LookPath("sqlite3")
 	if err != nil {
-		return ""
+		return CCSwitchProviderConfig{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	query := `SELECT id, settings_config, is_current FROM providers WHERE app_type = 'codex'`
+	query := `SELECT p.id, p.settings_config, p.is_current, COALESCE(e.url, '') AS endpoint_url
+		FROM providers p
+		LEFT JOIN provider_endpoints e ON e.provider_id = p.id AND e.app_type = p.app_type
+		WHERE p.app_type = 'codex'
+		ORDER BY p.is_current DESC, p.sort_index, e.id`
 	cmd := exec.CommandContext(ctx, sqlitePath, "-readonly", "-json", dbPath, query)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return ""
+		return CCSwitchProviderConfig{}
 	}
 	var rows []struct {
 		ID             string `json:"id"`
 		SettingsConfig string `json:"settings_config"`
 		IsCurrent      int    `json:"is_current"`
+		EndpointURL    string `json:"endpoint_url"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
-		return ""
+		return CCSwitchProviderConfig{}
 	}
 	for _, row := range rows {
 		if currentID != "" && row.ID == currentID {
-			if baseURL := codexBaseURLFromCCSwitchSettings(row.SettingsConfig); baseURL != "" {
-				return baseURL
+			if cfg := ccSwitchProviderConfigFromSQLiteRow(row.SettingsConfig, row.EndpointURL); !cfg.empty() {
+				return cfg
 			}
 		}
 	}
 	for _, row := range rows {
 		if row.IsCurrent != 0 {
-			if baseURL := codexBaseURLFromCCSwitchSettings(row.SettingsConfig); baseURL != "" {
-				return baseURL
+			if cfg := ccSwitchProviderConfigFromSQLiteRow(row.SettingsConfig, row.EndpointURL); !cfg.empty() {
+				return cfg
 			}
 		}
 	}
 	for _, row := range rows {
-		if baseURL := codexBaseURLFromCCSwitchSettings(row.SettingsConfig); baseURL != "" {
-			return baseURL
+		if cfg := ccSwitchProviderConfigFromSQLiteRow(row.SettingsConfig, row.EndpointURL); !cfg.empty() {
+			return cfg
 		}
 	}
-	return ""
+	return CCSwitchProviderConfig{}
+}
+
+func ccSwitchProviderConfigFromSQLiteRow(settingsConfig, endpointURL string) CCSwitchProviderConfig {
+	cfg := codexProviderConfigFromCCSwitchSettings(settingsConfig)
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = normalizePublicProviderBaseURL(endpointURL)
+	}
+	return cfg
 }
 
 func ccSwitchCodexProviderBaseURLFromFiles(dir, currentID string) string {
+	return ccSwitchCodexProviderConfigFromFiles(dir, currentID).BaseURL
+}
+
+func ccSwitchCodexProviderConfigFromFiles(dir, currentID string) CCSwitchProviderConfig {
 	var paths []string
 	for _, name := range []string{"config.json", "providers.json"} {
 		paths = append(paths, filepath.Join(dir, name))
 	}
-	entries, err := os.ReadDir(dir)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := strings.ToLower(entry.Name())
-			if strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".toml") {
-				paths = append(paths, filepath.Join(dir, entry.Name()))
-			}
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
 		}
-	}
+		rel, err := filepath.Rel(dir, path)
+		if err == nil && strings.Count(rel, string(filepath.Separator)) > 3 {
+			return nil
+		}
+		name := strings.ToLower(entry.Name())
+		if strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".toml") ||
+			strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".sqlite") || strings.HasSuffix(name, ".sqlite3") {
+			paths = append(paths, path)
+		}
+		return nil
+	})
 	seen := map[string]struct{}{}
 	for _, path := range paths {
 		if _, ok := seen[path]; ok {
@@ -419,73 +538,112 @@ func ccSwitchCodexProviderBaseURLFromFiles(dir, currentID string) string {
 		if err != nil || len(b) > 4*1024*1024 {
 			continue
 		}
-		if baseURL := codexBaseURLFromCCSwitchBlob(b, currentID); baseURL != "" {
-			return baseURL
+		if cfg := codexProviderConfigFromCCSwitchBlob(b, currentID); !cfg.empty() {
+			return cfg
 		}
 	}
-	return ""
+	return CCSwitchProviderConfig{}
+}
+
+func ccSwitchCodexProviderBaseURLFromDBText(dbPath, currentID string) string {
+	return ccSwitchCodexProviderConfigFromDBText(dbPath, currentID).BaseURL
+}
+
+func ccSwitchCodexProviderConfigFromDBText(dbPath, currentID string) CCSwitchProviderConfig {
+	b, err := os.ReadFile(dbPath)
+	if err != nil || len(b) > 64*1024*1024 {
+		return CCSwitchProviderConfig{}
+	}
+	if currentID != "" {
+		if idx := bytes.Index(b, []byte(currentID)); idx >= 0 {
+			start := idx
+			end := min(len(b), idx+32*1024)
+			if cfg := codexProviderConfigFromCCSwitchBlob(b[start:end], currentID); !cfg.empty() {
+				return cfg
+			}
+		}
+	}
+	return codexProviderConfigFromCCSwitchBlob(b, currentID)
 }
 
 func codexBaseURLFromCCSwitchBlob(b []byte, currentID string) string {
+	return codexProviderConfigFromCCSwitchBlob(b, currentID).BaseURL
+}
+
+func codexProviderConfigFromCCSwitchBlob(b []byte, currentID string) CCSwitchProviderConfig {
 	var data any
 	if json.Unmarshal(b, &data) == nil {
-		if baseURL := codexBaseURLFromCCSwitchJSON(data, currentID); baseURL != "" {
-			return baseURL
+		if cfg := codexProviderConfigFromCCSwitchJSON(data, currentID); !cfg.empty() {
+			return cfg
 		}
 	}
-	return publicProviderBaseURLFromText(string(b))
+	return CCSwitchProviderConfig{
+		BaseURL:   publicProviderBaseURLFromText(string(b)),
+		APIKey:    apiKeyFromText(string(b)),
+		APIFormat: apiFormatFromText(string(b)),
+	}
 }
 
 func codexBaseURLFromCCSwitchSettings(raw string) string {
+	return codexProviderConfigFromCCSwitchSettings(raw).BaseURL
+}
+
+func codexProviderConfigFromCCSwitchSettings(raw string) CCSwitchProviderConfig {
 	var data any
 	if err := json.Unmarshal([]byte(raw), &data); err == nil {
-		if configText := jsonStringAtPath(data, "config"); configText != "" {
-			if baseURL := publicProviderBaseURLFromCodexConfig(configText); baseURL != "" {
-				return baseURL
-			}
-		}
-		if baseURL := codexBaseURLFromCCSwitchJSON(data, ""); baseURL != "" {
-			return baseURL
+		if cfg := codexProviderConfigFromCCSwitchJSON(data, ""); !cfg.empty() {
+			return cfg
 		}
 	}
-	return publicProviderBaseURLFromText(raw)
+	return CCSwitchProviderConfig{
+		BaseURL:   publicProviderBaseURLFromText(raw),
+		APIKey:    apiKeyFromText(raw),
+		APIFormat: apiFormatFromText(raw),
+	}
 }
 
 func codexBaseURLFromCCSwitchJSON(v any, currentID string) string {
+	return codexProviderConfigFromCCSwitchJSON(v, currentID).BaseURL
+}
+
+func codexProviderConfigFromCCSwitchJSON(v any, currentID string) CCSwitchProviderConfig {
 	if currentID != "" {
 		if obj, ok := v.(map[string]any); ok {
 			if provider := findJSONObjectByID(obj, currentID); provider != nil {
-				if baseURL := codexBaseURLFromCCSwitchJSON(provider, ""); baseURL != "" {
-					return baseURL
+				if cfg := codexProviderConfigFromCCSwitchJSON(provider, ""); !cfg.empty() {
+					return cfg
 				}
 			}
 		}
 	}
+	cfg := CCSwitchProviderConfig{
+		APIKey:    apiKeyFromJSON(v),
+		APIFormat: apiFormatFromJSON(v),
+	}
 	if configText := jsonStringAtPath(v, "config"); configText != "" {
-		if baseURL := publicProviderBaseURLFromCodexConfig(configText); baseURL != "" {
-			return baseURL
-		}
+		cfg = mergeProviderConfig(cfg, providerConfigFromCodexConfig(configText))
 	}
 	for _, key := range []string{"base_url", "baseUrl", "api_base_url", "apiBaseUrl", "url"} {
 		if baseURL := normalizePublicProviderBaseURL(jsonStringAtPath(v, key)); baseURL != "" {
-			return baseURL
+			cfg.BaseURL = baseURL
+			return cfg
 		}
 	}
 	switch x := v.(type) {
 	case map[string]any:
 		for _, value := range x {
-			if baseURL := codexBaseURLFromCCSwitchJSON(value, ""); baseURL != "" {
-				return baseURL
+			if nested := codexProviderConfigFromCCSwitchJSON(value, ""); !nested.empty() {
+				return mergeProviderConfig(cfg, nested)
 			}
 		}
 	case []any:
 		for _, value := range x {
-			if baseURL := codexBaseURLFromCCSwitchJSON(value, ""); baseURL != "" {
-				return baseURL
+			if nested := codexProviderConfigFromCCSwitchJSON(value, ""); !nested.empty() {
+				return mergeProviderConfig(cfg, nested)
 			}
 		}
 	}
-	return ""
+	return cfg
 }
 
 func findJSONObjectByID(obj map[string]any, id string) map[string]any {
@@ -543,20 +701,34 @@ func jsonStringAtPath(v any, key string) string {
 }
 
 func publicProviderBaseURLFromCodexConfig(configText string) string {
+	return providerConfigFromCodexConfig(configText).BaseURL
+}
+
+func providerConfigFromCodexConfig(configText string) CCSwitchProviderConfig {
 	values, err := parseSimpleTOMLStrings([]byte(configText))
 	if err != nil {
-		return publicProviderBaseURLFromText(configText)
+		return CCSwitchProviderConfig{
+			BaseURL:   publicProviderBaseURLFromText(configText),
+			APIKey:    apiKeyFromText(configText),
+			APIFormat: apiFormatFromText(configText),
+		}
 	}
 	provider := strings.TrimSpace(values["model_provider"])
 	if provider == "" {
 		provider = strings.TrimSpace(values["provider"])
 	}
+	cfg := CCSwitchProviderConfig{
+		APIKey:    firstNonEmptyString(apiKeyFromProviderValues(values, provider), apiKeyFromText(configText)),
+		APIFormat: firstNonEmptyString(apiFormatFromProviderValues(values, provider), apiFormatFromText(configText)),
+	}
 	if provider != "" {
 		if baseURL := normalizePublicProviderBaseURL(providerBaseURLRaw(values, provider)); baseURL != "" {
-			return baseURL
+			cfg.BaseURL = baseURL
+			return cfg
 		}
 	}
-	return normalizePublicProviderBaseURL(values["base_url"])
+	cfg.BaseURL = normalizePublicProviderBaseURL(values["base_url"])
+	return cfg
 }
 
 func publicProviderBaseURLFromText(text string) string {
@@ -598,6 +770,178 @@ func normalizePublicProviderBaseURL(raw string) string {
 		return ""
 	}
 	return baseURL
+}
+
+func mergeProviderConfig(base, override CCSwitchProviderConfig) CCSwitchProviderConfig {
+	if base.BaseURL == "" {
+		base.BaseURL = override.BaseURL
+	}
+	if base.APIKey == "" {
+		base.APIKey = override.APIKey
+	}
+	if base.APIFormat == "" {
+		base.APIFormat = override.APIFormat
+	}
+	return base
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func apiKeyFromProviderValues(values map[string]string, provider string) string {
+	keys := []string{"api_key", "apiKey", "OPENAI_API_KEY", "openai_api_key", "key"}
+	if provider != "" {
+		for _, prefix := range providerBaseURLKeys(provider) {
+			prefix = strings.TrimSuffix(prefix, ".base_url")
+			for _, key := range keys {
+				if v := strings.TrimSpace(values[prefix+"."+key]); v != "" {
+					return v
+				}
+			}
+			if envKey := strings.TrimSpace(values[prefix+".env_key"]); envKey != "" {
+				if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	for _, key := range keys {
+		if v := strings.TrimSpace(values[key]); v != "" {
+			return v
+		}
+	}
+	if envKey := strings.TrimSpace(values["env_key"]); envKey != "" {
+		return strings.TrimSpace(os.Getenv(envKey))
+	}
+	return ""
+}
+
+func apiFormatFromProviderValues(values map[string]string, provider string) string {
+	keys := []string{"api_format", "apiFormat", "format", "wire_api", "wireApi"}
+	if provider != "" {
+		for _, prefix := range providerBaseURLKeys(provider) {
+			prefix = strings.TrimSuffix(prefix, ".base_url")
+			for _, key := range keys {
+				if format := normalizeAPIFormatName(values[prefix+"."+key]); format != "" {
+					return format
+				}
+			}
+		}
+	}
+	for _, key := range keys {
+		if format := normalizeAPIFormatName(values[key]); format != "" {
+			return format
+		}
+	}
+	return ""
+}
+
+func apiKeyFromJSON(v any) string {
+	for _, key := range []string{"api_key", "apiKey", "openai_api_key", "OPENAI_API_KEY", "model_api_key", "modelApiKey", "key"} {
+		if s := jsonStringAtPath(v, key); looksLikeSecret(s) {
+			return s
+		}
+	}
+	return ""
+}
+
+func apiFormatFromJSON(v any) string {
+	for _, key := range []string{"api_format", "apiFormat", "format", "wire_api", "wireApi"} {
+		if format := normalizeAPIFormatName(jsonStringAtPath(v, key)); format != "" {
+			return format
+		}
+	}
+	return ""
+}
+
+func apiKeyFromText(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "api_key") && !strings.Contains(lower, "apikey") &&
+			!strings.Contains(lower, "openai_api_key") && !strings.Contains(lower, "model_api_key") {
+			continue
+		}
+		if secret := secretValueFromLine(line); looksLikeSecret(secret) {
+			return secret
+		}
+	}
+	return ""
+}
+
+func apiFormatFromText(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "format") && !strings.Contains(lower, "wire_api") && !strings.Contains(lower, "wireapi") {
+			continue
+		}
+		if format := normalizeAPIFormatName(line); format != "" {
+			return format
+		}
+	}
+	return ""
+}
+
+func secretValueFromLine(line string) string {
+	lower := strings.ToLower(line)
+	start := -1
+	for _, key := range []string{"openai_api_key", "model_api_key", "api_key", "apikey", "apiKey"} {
+		if idx := strings.Index(lower, strings.ToLower(key)); idx >= 0 {
+			start = idx + len(key)
+			break
+		}
+	}
+	if start >= 0 {
+		line = line[start:]
+	}
+	_, value, ok := strings.Cut(line, "=")
+	if !ok {
+		_, value, ok = strings.Cut(line, ":")
+	}
+	if !ok {
+		return ""
+	}
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"' ,`)
+	if idx := strings.IndexAny(value, `"',}`); idx >= 0 {
+		value = value[:idx]
+	}
+	fields := strings.Fields(value)
+	if len(fields) > 0 {
+		value = fields[0]
+	}
+	return strings.Trim(value, `"' ,`)
+}
+
+func looksLikeSecret(v string) bool {
+	v = strings.TrimSpace(v)
+	if len(v) < 8 {
+		return false
+	}
+	lower := strings.ToLower(v)
+	if strings.Contains(lower, "http://") || strings.Contains(lower, "https://") {
+		return false
+	}
+	return !strings.ContainsAny(v, "\n\r\t ")
+}
+
+func normalizeAPIFormatName(v string) string {
+	s := strings.ToLower(strings.TrimSpace(v))
+	switch {
+	case strings.Contains(s, "anthropic") || strings.Contains(s, "claude"):
+		return "anthropic-messages"
+	case strings.Contains(s, "response"):
+		return "openai-responses"
+	case strings.Contains(s, "chat") || strings.Contains(s, "completion"):
+		return "openai-chat"
+	default:
+		return ""
+	}
 }
 
 func privateHostname(hostname string) bool {

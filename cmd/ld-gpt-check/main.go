@@ -16,6 +16,7 @@ import (
 
 	"github.com/1222hxy/LD-gpt-check/internal/api"
 	"github.com/1222hxy/LD-gpt-check/internal/auth"
+	"github.com/1222hxy/LD-gpt-check/internal/codexauth"
 	"github.com/1222hxy/LD-gpt-check/internal/config"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
@@ -27,7 +28,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.2.8"
+var version = "0.2.9"
 var assetSuffix = ""
 var gitCommit = ""
 var gitCommitDate = ""
@@ -84,6 +85,8 @@ func run(ctx context.Context, args []string, lang i18n.Lang) error {
 		return logoutCmd(ctx, args[1:], lang)
 	case "update":
 		return updateCmd(ctx, args[1:], lang)
+	case "doctor":
+		return doctorCmd(ctx, args[1:], lang)
 	case "version", "--version", "-v":
 		printVersion(os.Stdout)
 		return nil
@@ -312,6 +315,8 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	effort := fs.String("r", "medium", l.S("flag_effort"))
 	effortLong := fs.String("reasoning-effort", "", l.S("flag_effort"))
 	backend := fs.String("backend", string(runner.BackendAuto), l.S("flag_backend"))
+	authJSON := fs.Bool("auth-json", false, l.S("flag_auth_json"))
+	authPath := fs.String("auth-path", "", l.S("flag_auth_path"))
 	apiFormat := fs.String("api-format", "", l.S("flag_api_format"))
 	modelAPIBase := fs.String("model-api-base-url", os.Getenv("LD_GPT_CHECK_MODEL_API_BASE_URL"), l.S("flag_model_api_base"))
 	modelAPIKey := fs.String("model-api-key", "", l.S("flag_model_api_key"))
@@ -342,6 +347,9 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	}
 	if *testsLong > 0 {
 		*tests = *testsLong
+	}
+	if *authJSON {
+		*backend = string(runner.BackendAuthJSON)
 	}
 	if *tests <= 0 {
 		return fmt.Errorf("%s", l.S("flag_count_positive", "tests"))
@@ -390,7 +398,8 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if *upload && strings.TrimSpace(*codexStartupArgs) != "" {
 		fmt.Fprintln(progressOut, l.S("codex_args_upload_notice"))
 	}
-	if runner.Backend(*backend) != runner.BackendAPI {
+	normalizedBackend, _ := runner.NormalizeBackend(runner.Backend(*backend))
+	if normalizedBackend == runner.BackendCodex || normalizedBackend == runner.BackendAuto {
 		if resolution := system.DetectCCSwitchCodexResolution(); resolution.ProviderBaseURL != "" && system.CCSwitchAutoResolveEnabled() {
 			fmt.Fprintf(progressOut, l.S("cc_switch_auto_using")+"\n", resolution.ProviderBaseURL)
 		}
@@ -408,6 +417,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		ModelAPIBaseURL:  *modelAPIBase,
 		ModelAPIKey:      *modelAPIKey,
 		CodexStartupArgs: *codexStartupArgs,
+		AuthPath:         *authPath,
 		QuestionSuite:    *suite,
 		Questions:        selected,
 		Progress:         progress,
@@ -455,6 +465,71 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 		}
 	}
 	return nil
+}
+
+func doctorCmd(ctx context.Context, args []string, lang i18n.Lang) error {
+	_ = ctx
+	l := i18n.New(lang)
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	authJSON := fs.Bool("auth-json", false, l.S("flag_auth_json"))
+	authPath := fs.String("auth-path", "", l.S("flag_auth_path"))
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%s", l.S("unexpected_args", fs.Args()))
+	}
+	if path, err := system.CodexPath(); err == nil {
+		fmt.Println(l.S("doctor_codex_cli", path))
+	} else {
+		fmt.Println(l.S("doctor_codex_cli", l.S("doctor_missing")))
+	}
+	if *authJSON {
+		printAuthJSONDoctor(l, *authPath)
+	}
+	return nil
+}
+
+func printAuthJSONDoctor(l i18n.Localizer, path string) {
+	resolved := codexauth.ResolveAuthPath(path)
+	fmt.Println(l.S("doctor_auth_json_title"))
+	fmt.Println(l.S("doctor_auth_json_path", resolved))
+	auth, err := codexauth.Load(resolved)
+	if err != nil {
+		fmt.Println(l.S("doctor_auth_json_file_missing", err))
+		return
+	}
+	info := auth.Info()
+	fmt.Println(l.S("doctor_auth_json_file_found"))
+	fmt.Println(l.S("doctor_auth_json_auth_mode", valueOrDash(info.AuthMode)))
+	fmt.Println(l.S("doctor_auth_json_token", presentLabel(l, info.HasAccessToken)))
+	fmt.Println(l.S("doctor_auth_json_refresh", presentLabel(l, info.HasRefreshToken)))
+	fmt.Println(l.S("doctor_auth_json_id", presentLabel(l, info.HasIDToken)))
+	fmt.Println(l.S("doctor_auth_json_status", valueOrDash(info.AccessStatus)))
+	if info.AccessExpiresAt != "" {
+		fmt.Println(l.S("doctor_auth_json_exp", info.AccessExpiresAt))
+	}
+	if info.Email != "" {
+		fmt.Println(l.S("doctor_auth_json_email", info.Email))
+	}
+	if info.PlanType != "" {
+		fmt.Println(l.S("doctor_auth_json_plan", info.PlanType))
+	}
+}
+
+func presentLabel(l i18n.Localizer, ok bool) string {
+	if ok {
+		return l.S("doctor_present")
+	}
+	return l.S("doctor_missing")
+}
+
+func valueOrDash(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "-"
+	}
+	return strings.TrimSpace(v)
 }
 
 func progressModel(model string) string {

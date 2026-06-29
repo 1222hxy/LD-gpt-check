@@ -358,7 +358,13 @@ func parseAPIResponse(format APIFormat, obj map[string]any) ParsedEvents {
 	}
 	switch format {
 	case APIFormatOpenAIResponses:
-		parsed.FinalAnswer = firstNonEmpty(textFromValue(obj["output_text"]), textFromValue(obj["output"]))
+		parsed.FinalAnswer = firstNonEmpty(
+			textFromValue(obj["output_text"]),
+			textFromValue(obj["output"]),
+			textFromValue(obj["content"]),
+			textFromValue(obj["text"]),
+			textFromValue(nestedValue(obj, "message", "content")),
+		)
 	case APIFormatAnthropic:
 		parsed.FinalAnswer = textFromValue(obj["content"])
 	default:
@@ -366,6 +372,13 @@ func parseAPIResponse(format APIFormat, obj map[string]any) ParsedEvents {
 	}
 	parsed.InputTokens, parsed.CachedInputTokens, parsed.OutputTokens, parsed.ReasoningTokens = extractAPIUsage(obj)
 	return parsed
+}
+
+func nestedValue(m map[string]any, objectKey, valueKey string) any {
+	if obj, ok := m[objectKey].(map[string]any); ok {
+		return obj[valueKey]
+	}
+	return nil
 }
 
 func parseAPIStream(r io.Reader, format APIFormat, progress func(ProgressEvent)) (ParsedEvents, error) {

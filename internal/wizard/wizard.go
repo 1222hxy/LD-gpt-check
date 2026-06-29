@@ -13,6 +13,7 @@ import (
 
 	"github.com/1222hxy/LD-gpt-check/internal/api"
 	"github.com/1222hxy/LD-gpt-check/internal/auth"
+	"github.com/1222hxy/LD-gpt-check/internal/codexauth"
 	"github.com/1222hxy/LD-gpt-check/internal/config"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
@@ -122,6 +123,9 @@ func Run(ctx context.Context, opts Options) error {
 	apiFormat := runner.APIFormat("")
 	modelAPIBase := ""
 	modelAPIKey := ""
+	credentialSource := ""
+	configSource := ""
+	authPath := ""
 	codexStartupArgs := ""
 	codexPath, codexErr := system.CodexPath()
 	if codexErr == nil {
@@ -129,9 +133,48 @@ func Run(ctx context.Context, opts Options) error {
 	} else {
 		report.PrintWarning(out, l.S("wizard_codex_missing"), color)
 	}
-	backend, err = promptBackend(reader, out, l, color, codexErr == nil)
-	if err != nil {
-		return err
+	authJSONAvailable := false
+	if auth, err := codexauth.Load(""); err == nil {
+		status := codexauth.AccessTokenStatus(auth)
+		if authJSONUsableInWizard(auth, status) {
+			authJSONAvailable = true
+			authPath = auth.AuthPath
+			report.PrintSuccess(out, l.S("wizard_auth_json_found", auth.AuthPath, status), color)
+		}
+	}
+	ccSwitchResolution := system.DetectCCSwitchCodexResolution()
+	if ccSwitchResolution.ProviderBaseURL != "" {
+		report.PrintSuccess(out, l.S("wizard_cc_switch_detected", ccSwitchResolution.ProviderBaseURL), color)
+	}
+	if codexErr == nil {
+		backend = runner.BackendCodex
+		report.PrintSuccess(out, l.S("wizard_backend_codex_auto"), color)
+	} else if ccSwitchResolution.ProviderBaseURL != "" {
+		if yes, err := promptBool(reader, out, l, l.S("wizard_cc_switch_api_use"), true); err != nil {
+			return err
+		} else if yes {
+			backend = runner.BackendAPI
+			modelAPIBase = ccSwitchResolution.ProviderBaseURL
+			modelAPIKey = ccSwitchResolution.ModelAPIKey
+			configSource = l.S("wizard_config_source_cc_switch")
+			if modelAPIKey != "" {
+				credentialSource = l.S("wizard_credential_cc_switch_key")
+			}
+			if format, ok := runner.NormalizeAPIFormat(runner.APIFormat(ccSwitchResolution.APIFormat)); ok {
+				apiFormat = format
+			}
+			report.PrintSuccess(out, l.S("wizard_cc_switch_using", ccSwitchResolution.ProviderBaseURL), color)
+		} else {
+			backend, err = promptBackend(reader, out, l, color, false, authJSONAvailable)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		backend, err = promptBackend(reader, out, l, color, false, authJSONAvailable)
+		if err != nil {
+			return err
+		}
 	}
 	if backend == runner.BackendCodex && codexErr != nil {
 		report.PrintWarning(out, l.S("wizard_need_api_without_codex"), color)
@@ -140,25 +183,41 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if backend == runner.BackendAPI {
 		report.PrintSuccess(out, l.S("wizard_ready_api_run"), color)
-		apiFormat, err = promptAPIFormat(reader, out, l, color)
+		if apiFormat == "" {
+			apiFormat, err = promptAPIFormat(reader, out, l, color)
+			if err != nil {
+				return err
+			}
+		} else {
+			report.PrintInfo(out, l.S("wizard_api_format"), wizardAPIFormatLabel(l, apiFormat), color)
+		}
+		modelAPIBase, err = promptString(reader, out, l, l.S("wizard_model_api_base"), firstNonEmpty(modelAPIBase, defaultAPIBaseURL(apiFormat)))
 		if err != nil {
 			return err
 		}
-		modelAPIBase, err = promptString(reader, out, l, l.S("wizard_model_api_base"), defaultAPIBaseURL(apiFormat))
-		if err != nil {
-			return err
-		}
-		report.PrintWarning(out, l.S("wizard_api_key_warning"), color)
-		modelAPIKey = strings.TrimSpace(os.Getenv("LD_GPT_CHECK_MODEL_API_KEY"))
+		modelAPIKey = firstNonEmpty(modelAPIKey, os.Getenv("LD_GPT_CHECK_MODEL_API_KEY"))
 		if modelAPIKey == "" {
+			report.PrintWarning(out, l.S("wizard_api_key_warning"), color)
 			modelAPIKey, err = promptMaskedString(reader, out, l, l.S("wizard_model_api_key"), in)
 			if err != nil {
 				return err
 			}
+			credentialSource = l.S("wizard_credential_manual_key")
+		} else if credentialSource == "" {
+			credentialSource = l.S("wizard_credential_env_key")
+		} else if ccSwitchResolution.ModelAPIKey != "" && modelAPIKey == ccSwitchResolution.ModelAPIKey {
+			report.PrintSuccess(out, l.S("wizard_cc_switch_key_using"), color)
 		}
+		printExtractedRunConfig(out, l, color, backend, configSource, modelAPIBase, apiFormat, credentialSource, authPath)
+	} else if backend == runner.BackendAuthJSON {
+		configSource = l.S("wizard_config_source_auth_json")
+		credentialSource = l.S("wizard_credential_auth_json")
+		report.PrintSuccess(out, l.S("wizard_ready_auth_json_run"), color)
+		printExtractedRunConfig(out, l, color, backend, configSource, modelAPIBase, apiFormat, credentialSource, authPath)
 	} else {
-		applyCCSwitchResolutionPrompt(reader, out, l, color)
+		applyCCSwitchResolutionPrompt(reader, out, l, color, ccSwitchResolution)
 		report.PrintSuccess(out, l.S("wizard_ready_run"), color)
+		printExtractedRunConfig(out, l, color, backend, l.S("wizard_config_source_codex_cli"), modelAPIBase, apiFormat, l.S("wizard_credential_codex_cli"), authPath)
 		report.PrintWarning(out, l.S("codex_args_upload_notice"), color)
 		codexStartupArgs, err = promptOptionalString(reader, out, l.S("wizard_codex_startup_args"), l.S("wizard_codex_startup_args_empty"))
 		if err != nil {
@@ -210,6 +269,7 @@ func Run(ctx context.Context, opts Options) error {
 		APIFormat:        apiFormat,
 		ModelAPIBaseURL:  modelAPIBase,
 		ModelAPIKey:      modelAPIKey,
+		AuthPath:         authPath,
 		CodexStartupArgs: codexStartupArgs,
 		QuestionSuite:    selectedQuestion.ID,
 		Questions:        []questions.Question{selectedQuestion},
@@ -265,13 +325,43 @@ func Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
-func applyCCSwitchResolutionPrompt(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) {
-	resolution := system.DetectCCSwitchCodexResolution()
-	if resolution.LocalBaseURL == "" || resolution.ProviderBaseURL == "" {
+func printExtractedRunConfig(out io.Writer, l i18n.Localizer, color bool, backend runner.Backend, source, baseURL string, format runner.APIFormat, credentialSource, authPath string) {
+	report.PrintInfo(out, l.S("wizard_extracted_config"), firstNonEmpty(source, wizardBackendSummary(l, backend)), color)
+	report.PrintInfo(out, l.S("wizard_extracted_backend"), wizardBackendSummary(l, backend), color)
+	if strings.TrimSpace(baseURL) != "" {
+		report.PrintInfo(out, l.S("wizard_extracted_base_url"), baseURL, color)
+	}
+	if backend == runner.BackendAPI && format != "" {
+		report.PrintInfo(out, l.S("wizard_extracted_api_format"), wizardAPIFormatLabel(l, format), color)
+	}
+	if backend == runner.BackendAuthJSON && strings.TrimSpace(authPath) != "" {
+		report.PrintInfo(out, l.S("wizard_extracted_auth_json"), authPath, color)
+	}
+	if strings.TrimSpace(credentialSource) != "" {
+		report.PrintInfo(out, l.S("wizard_extracted_credential"), credentialSource, color)
+	}
+}
+
+func wizardBackendSummary(l i18n.Localizer, backend runner.Backend) string {
+	switch backend {
+	case runner.BackendAPI:
+		return l.S("wizard_record_backend_api")
+	case runner.BackendAuthJSON:
+		return l.S("wizard_record_backend_auth_json")
+	default:
+		return l.S("wizard_record_backend_codex")
+	}
+}
+
+func applyCCSwitchResolutionPrompt(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool, resolution system.CCSwitchResolution) {
+	if resolution.ProviderBaseURL == "" {
 		return
 	}
-	report.PrintInfo(out, l.S("wizard_cc_switch_detected"), resolution.ProviderBaseURL, color)
-	report.PrintWarning(out, l.S("wizard_cc_switch_note", resolution.LocalBaseURL, resolution.ConfigDir), color)
+	if strings.TrimSpace(resolution.LocalBaseURL) != "" {
+		report.PrintWarning(out, l.S("wizard_cc_switch_note", resolution.LocalBaseURL, resolution.ConfigDir), color)
+	} else {
+		report.PrintWarning(out, l.S("wizard_cc_switch_installed_note", resolution.ConfigDir), color)
+	}
 	yes, err := promptBool(r, out, l, l.S("wizard_cc_switch_use"), true)
 	if err != nil {
 		return
@@ -377,10 +467,25 @@ func progressModel(model string) string {
 	return ""
 }
 
-func promptBackend(r *bufio.Reader, out io.Writer, l i18n.Localizer, color, codexAvailable bool) (runner.Backend, error) {
+func authJSONUsableInWizard(auth *codexauth.CodexAuth, status string) bool {
+	if auth == nil {
+		return false
+	}
+	if status != "missing" && status != "expired" {
+		return true
+	}
+	return strings.TrimSpace(auth.RefreshToken) != ""
+}
+
+func promptBackend(r *bufio.Reader, out io.Writer, l i18n.Localizer, color, codexAvailable, authJSONAvailable bool) (runner.Backend, error) {
 	if codexAvailable {
 		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_codex"), color))
-		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api"), color))
+		nextAPIChoice := "2"
+		if authJSONAvailable {
+			fmt.Fprintln(out, report.Muted(l.S("wizard_backend_auth_json", 2), color))
+			nextAPIChoice = "3"
+		}
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api_numbered", nextAPIChoice), color))
 		for {
 			choice, err := promptString(r, out, l, l.S("wizard_backend"), "1")
 			if err != nil {
@@ -389,10 +494,19 @@ func promptBackend(r *bufio.Reader, out io.Writer, l i18n.Localizer, color, code
 			switch strings.ToLower(strings.TrimSpace(choice)) {
 			case "1", "codex", "local", "cli":
 				return runner.BackendCodex, nil
-			case "2", "api", "http":
+			case "2", "auth-json", "auth_json", "authjson":
+				if authJSONAvailable {
+					return runner.BackendAuthJSON, nil
+				}
+				return runner.BackendAPI, nil
+			case "3", "api", "http":
 				return runner.BackendAPI, nil
 			default:
 				if backend, ok := runner.NormalizeBackend(runner.Backend(choice)); ok && backend != runner.BackendAuto {
+					if backend == runner.BackendAuthJSON && !authJSONAvailable {
+						fmt.Fprintln(out, l.S("wizard_backend_invalid"))
+						continue
+					}
 					return backend, nil
 				}
 				fmt.Fprintln(out, l.S("wizard_backend_invalid"))
@@ -400,17 +514,31 @@ func promptBackend(r *bufio.Reader, out io.Writer, l i18n.Localizer, color, code
 		}
 	}
 
-	fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api_primary"), color))
-	fmt.Fprintln(out, report.Muted(l.S("wizard_backend_exit"), color))
+	if authJSONAvailable {
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_auth_json", 1), color))
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api_numbered", "2"), color))
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_exit_numbered", "3"), color))
+	} else {
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_api_primary"), color))
+		fmt.Fprintln(out, report.Muted(l.S("wizard_backend_exit"), color))
+	}
 	for {
 		choice, err := promptString(r, out, l, l.S("wizard_backend"), "1")
 		if err != nil {
 			return "", err
 		}
 		switch strings.ToLower(strings.TrimSpace(choice)) {
-		case "1", "api", "http":
+		case "1", "auth-json", "auth_json", "authjson":
+			if authJSONAvailable {
+				return runner.BackendAuthJSON, nil
+			}
 			return runner.BackendAPI, nil
-		case "2", "exit", "quit", "skip", "取消", "退出":
+		case "2", "api", "http":
+			if authJSONAvailable {
+				return runner.BackendAPI, nil
+			}
+			return runner.BackendCodex, nil
+		case "3", "exit", "quit", "skip", "取消", "退出":
 			return runner.BackendCodex, nil
 		default:
 			fmt.Fprintln(out, l.S("wizard_backend_invalid"))
@@ -419,7 +547,7 @@ func promptBackend(r *bufio.Reader, out io.Writer, l i18n.Localizer, color, code
 }
 
 func promptRunModel(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool, backend runner.Backend) (string, error) {
-	if backend == runner.BackendAPI {
+	if backend == runner.BackendAPI || backend == runner.BackendAuthJSON {
 		return promptAPIModel(r, out, l, color)
 	}
 	return promptModel(r, out, l, color)
@@ -482,6 +610,17 @@ func defaultAPIBaseURL(format runner.APIFormat) string {
 		return "https://api.anthropic.com/v1"
 	default:
 		return "https://api.openai.com/v1"
+	}
+}
+
+func wizardAPIFormatLabel(l i18n.Localizer, format runner.APIFormat) string {
+	switch format {
+	case runner.APIFormatOpenAIResponses:
+		return l.S("wizard_record_api_format_responses")
+	case runner.APIFormatAnthropic:
+		return l.S("wizard_record_api_format_anthropic")
+	default:
+		return l.S("wizard_record_api_format_chat")
 	}
 }
 

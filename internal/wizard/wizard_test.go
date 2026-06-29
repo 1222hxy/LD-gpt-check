@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1222hxy/LD-gpt-check/internal/codexauth"
 	"github.com/1222hxy/LD-gpt-check/internal/config"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
@@ -73,7 +74,7 @@ func TestPromptBoolDefaultsAndChineseInput(t *testing.T) {
 
 func TestPromptBackendSelectsAPIWhenCodexAvailable(t *testing.T) {
 	var out bytes.Buffer
-	got, err := promptBackend(bufio.NewReader(strings.NewReader("2\n")), &out, i18n.New(i18n.ZH), false, true)
+	got, err := promptBackend(bufio.NewReader(strings.NewReader("2\n")), &out, i18n.New(i18n.ZH), false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,12 +88,35 @@ func TestPromptBackendSelectsAPIWhenCodexAvailable(t *testing.T) {
 
 func TestPromptBackendDefaultsToAPIWithoutCodex(t *testing.T) {
 	var out bytes.Buffer
-	got, err := promptBackend(bufio.NewReader(strings.NewReader("\n")), &out, i18n.New(i18n.ZH), false, false)
+	got, err := promptBackend(bufio.NewReader(strings.NewReader("\n")), &out, i18n.New(i18n.ZH), false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != runner.BackendAPI {
 		t.Fatalf("backend = %q", got)
+	}
+}
+
+func TestPromptBackendCanSelectAuthJSON(t *testing.T) {
+	var out bytes.Buffer
+	got, err := promptBackend(bufio.NewReader(strings.NewReader("2\n")), &out, i18n.New(i18n.ZH), false, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != runner.BackendAuthJSON {
+		t.Fatalf("backend = %q", got)
+	}
+	if !strings.Contains(out.String(), "OpenAI 官方渠道") || !strings.Contains(out.String(), "API 模式") {
+		t.Fatalf("missing auth-json option:\n%s", out.String())
+	}
+}
+
+func TestAuthJSONWizardAllowsRefreshTokenOnly(t *testing.T) {
+	if !authJSONUsableInWizard(&codexauth.CodexAuth{RefreshToken: "refresh"}, "missing") {
+		t.Fatal("refresh_token should make auth-json selectable")
+	}
+	if authJSONUsableInWizard(&codexauth.CodexAuth{}, "missing") {
+		t.Fatal("missing access and refresh token should not be selectable")
 	}
 }
 
@@ -286,7 +310,7 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 		Stdin:   strings.NewReader(input),
 		Stdout:  &out,
 	}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\noutput:\n%s", err, out.String())
 	}
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
@@ -315,5 +339,88 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "wizard-key") {
 		t.Fatalf("wizard output should not include API key:\n%s", out.String())
+	}
+}
+
+func TestWizardUsesCCSwitchAPIConfigWhenCodexMissing(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), config.ConfigFileName)
+	codexHome := t.TempDir()
+	ccSwitchHome := t.TempDir()
+	t.Setenv(config.ConfigEnvVarName, configPath)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", ccSwitchHome)
+	t.Setenv("LD_GPT_CHECK_MODEL_API_KEY", "")
+	if err := os.WriteFile(filepath.Join(ccSwitchHome, "config.json"), []byte(`{
+  "currentProviderCodex": "krill",
+  "providers": {
+    "krill": {
+      "baseUrl": "https://api.krill-ai.example/codex/v1",
+      "apiKey": "sk-from-cc-switch",
+      "wireApi": "responses"
+    }
+  }
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunBenchmark := runBenchmark
+	oldLoadRemoteQuestions := loadRemoteQuestions
+	defer func() {
+		runBenchmark = oldRunBenchmark
+		loadRemoteQuestions = oldLoadRemoteQuestions
+	}()
+	loadRemoteQuestions = func(ctx context.Context, rawURL string, allowHTTP bool) ([]questions.Question, error) {
+		return nil, errors.New("remote down")
+	}
+	var captured runner.Options
+	runBenchmark = func(ctx context.Context, opts runner.Options) (runner.Summary, error) {
+		captured = opts
+		return runner.Summary{
+			Model:        opts.Model,
+			Tests:        1,
+			Correct:      1,
+			Accuracy:     100,
+			CodexSandbox: "api",
+			Cases: []runner.CaseResult{{
+				Index:         1,
+				OK:            true,
+				Status:        "completed",
+				AnswerPreview: "21",
+			}},
+		}, nil
+	}
+
+	input := strings.Join([]string{
+		"否",
+		"是",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"1",
+		"5s",
+		"否",
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	if err := Run(context.Background(), Options{
+		Version: "test",
+		Lang:    i18n.ZH,
+		Stdin:   strings.NewReader(input),
+		Stdout:  &out,
+	}); err != nil {
+		t.Fatalf("%v\noutput:\n%s", err, out.String())
+	}
+	if captured.Backend != runner.BackendAPI ||
+		captured.APIFormat != runner.APIFormatOpenAIResponses ||
+		captured.ModelAPIBaseURL != "https://api.krill-ai.example/codex/v1" ||
+		captured.ModelAPIKey != "sk-from-cc-switch" {
+		t.Fatalf("captured options = %#v", captured)
+	}
+	text := out.String()
+	if !strings.Contains(text, "CC Switch") || !strings.Contains(text, "已从 CC Switch 读取 API Key") || strings.Contains(text, "sk-from-cc-switch") {
+		t.Fatalf("unexpected output:\n%s", text)
 	}
 }

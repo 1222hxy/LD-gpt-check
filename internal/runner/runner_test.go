@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -484,6 +485,149 @@ func TestRunWithAnthropicMessagesAPIBackend(t *testing.T) {
 	}
 }
 
+func TestRunWithAuthJSONBackend(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	accessToken := runnerTestJWT(map[string]any{
+		"email": "person@example.com",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": "acct_secret",
+			"chatgpt_plan_type":  "plus",
+		},
+	})
+	if err := os.WriteFile(authPath, []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"`+accessToken+`"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://chatgpt.com/backend-api/codex/responses" {
+			t.Fatalf("url = %s", r.URL.String())
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+accessToken {
+			t.Fatalf("authorization = %q", got)
+		}
+		if got := r.Header.Get("Originator"); got != "codex_cli_rs" {
+			t.Fatalf("originator = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != "gpt-5.5" || body["input"] != apiTestQuestion().Prompt {
+			t.Fatalf("body = %#v", body)
+		}
+		reasoning, _ := body["reasoning"].(map[string]any)
+		if reasoning["effort"] != "xhigh" {
+			t.Fatalf("reasoning = %#v", reasoning)
+		}
+		return jsonResponse(http.StatusOK, map[string]any{
+			"id":          "resp_auth_1",
+			"output_text": "最终答案：21",
+			"usage": map[string]any{
+				"input_tokens":  15,
+				"output_tokens": 6,
+				"output_tokens_details": map[string]any{
+					"reasoning_tokens": 4,
+				},
+			},
+		})
+	})
+
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.5",
+		ReasoningEffort:  "xhigh",
+		Tests:            1,
+		Timeout:          5 * time.Second,
+		Lang:             i18n.ZH,
+		Backend:          BackendAuthJSON,
+		AuthPath:         authPath,
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{apiTestQuestion()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Cases[0].OK || summary.Cases[0].InputTokens != 15 || summary.Cases[0].ReasoningTokens != 4 {
+		t.Fatalf("case = %#v", summary.Cases[0])
+	}
+	if summary.CodexModelProvider != "auth-json" || summary.CodexProviderBaseURL != "https://chatgpt.com/backend-api/codex" || summary.CodexSandbox != "auth-json" {
+		t.Fatalf("metadata = %#v", summary)
+	}
+	if strings.Contains(summary.CodexInvocation, accessToken) || !strings.Contains(summary.CodexInvocation, `"token_status":"valid"`) || !strings.Contains(summary.CodexInvocation, "p***@example.com") {
+		t.Fatalf("unsafe invocation = %s", summary.CodexInvocation)
+	}
+}
+
+func TestAuthJSONBackendRequiresUsableAccessToken(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"tokens":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(context.Background(), Options{
+		Model:           "gpt-5.5",
+		ReasoningEffort: "medium",
+		Tests:           1,
+		Backend:         BackendAuthJSON,
+		AuthPath:        authPath,
+		Questions:       []questions.Question{apiTestQuestion()},
+	})
+	if err == nil || !strings.Contains(err.Error(), "access_token") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAuthJSONBackendRefreshesMissingAccessToken(t *testing.T) {
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"tokens":{"refresh_token":"refresh-secret"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	refreshedToken := runnerTestJWT(map[string]any{
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	var refreshed bool
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.String() {
+		case "https://auth.openai.com/oauth/token":
+			refreshed = true
+			if got := r.Header.Get("Content-Type"); !strings.Contains(got, "application/x-www-form-urlencoded") {
+				t.Fatalf("refresh content-type = %q", got)
+			}
+			return jsonResponse(http.StatusOK, map[string]any{
+				"access_token": refreshedToken,
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			})
+		case "https://chatgpt.com/backend-api/codex/responses":
+			if got := r.Header.Get("Authorization"); got != "Bearer "+refreshedToken {
+				t.Fatalf("authorization = %q", got)
+			}
+			return jsonResponse(http.StatusOK, map[string]any{
+				"id":          "resp_auth_refresh",
+				"output_text": "21",
+			})
+		default:
+			t.Fatalf("unexpected URL = %s", r.URL.String())
+			return nil, nil
+		}
+	})
+
+	summary, err := Run(context.Background(), Options{
+		Model:            "gpt-5.5",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Backend:          BackendAuthJSON,
+		AuthPath:         authPath,
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{apiTestQuestion()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !refreshed || !summary.Cases[0].OK {
+		t.Fatalf("refreshed=%v case=%#v", refreshed, summary.Cases[0])
+	}
+}
+
 func TestAPIBackendRequiresKey(t *testing.T) {
 	_, err := Run(context.Background(), Options{
 		Model:           "gpt-5.4",
@@ -690,4 +834,11 @@ func apiTestQuestion() questions.Question {
 			IndependentMatch: true,
 		},
 	}
+}
+
+func runnerTestJWT(claims map[string]any) string {
+	header, _ := json.Marshal(map[string]any{"alg": "none"})
+	payload, _ := json.Marshal(claims)
+	return base64.RawURLEncoding.EncodeToString(header) + "." +
+		base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }

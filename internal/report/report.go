@@ -349,10 +349,14 @@ func firstNonEmpty(values ...string) string {
 }
 
 func wizardBackendLabel(l i18n.Localizer, backend runner.Backend) string {
-	if backend == runner.BackendAPI {
+	switch backend {
+	case runner.BackendAPI:
 		return l.S("wizard_record_backend_api")
+	case runner.BackendAuthJSON:
+		return l.S("wizard_record_backend_auth_json")
+	default:
+		return l.S("wizard_record_backend_codex")
 	}
-	return l.S("wizard_record_backend_codex")
 }
 
 func wizardAPIFormatLabel(l i18n.Localizer, format runner.APIFormat) string {

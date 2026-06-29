@@ -1,6 +1,7 @@
 package system
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -109,6 +110,101 @@ base_url = "http://127.0.0.1:18443/v1"
 	}
 }
 
+func TestDetectCCSwitchResolutionWithoutCodexProxy(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "codex")
+	ccSwitchHome := filepath.Join(home, ".cc-switch")
+	if err := os.MkdirAll(codexHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ccSwitchHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", ccSwitchHome)
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`model = "gpt-5.5"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ccSwitchHome, "providers.json"), []byte(`{
+  "providers": [{"id":"krill","baseUrl":"https://api.krill-ai.example/codex/v1"}]
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resolution := DetectCCSwitchCodexResolution()
+	if resolution.LocalBaseURL != "" || resolution.ProviderBaseURL != "https://api.krill-ai.example/codex/v1" {
+		t.Fatalf("resolution = %#v", resolution)
+	}
+}
+
+func TestCCSwitchProviderBaseURLScansDBWithoutSQLiteCommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LD_GPT_CHECK_CC_SWITCH_DIR", home)
+	if err := os.WriteFile(filepath.Join(home, "config.json"), []byte(`{"currentProviderCodex":"krill"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dbLike := []byte(`noise old https://api.old.example/v1 krill {"base_url":"https://api.krill-ai.example/codex/v1","api_key":"sk-ccswitch-secret","wire_api":"responses"} tail`)
+	if err := os.WriteFile(filepath.Join(home, "cc-switch.db"), dbLike, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := CCSwitchCodexProviderConfig()
+	if cfg.BaseURL != "https://api.krill-ai.example/codex/v1" || cfg.APIKey != "sk-ccswitch-secret" || cfg.APIFormat != "openai-responses" {
+		t.Fatalf("provider config = %#v", cfg)
+	}
+}
+
+func TestCCSwitchProviderConfigMergesConfigAndNestedAuthKey(t *testing.T) {
+	raw := `{
+  "config": "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://api.krill-ai.example/codex/v1\"\nwire_api = \"responses\"\n",
+  "auth": {
+    "OPENAI_API_KEY": "sk-realistic-secret"
+  }
+}`
+	cfg := codexProviderConfigFromCCSwitchSettings(raw)
+	if cfg.BaseURL != "https://api.krill-ai.example/codex/v1" || cfg.APIKey != "sk-realistic-secret" || cfg.APIFormat != "openai-responses" {
+		t.Fatalf("provider config = %#v", cfg)
+	}
+}
+
+func TestCCSwitchSQLiteReaderSelectsCodexNotClaude(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "cc-switch.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  sort_index INTEGER,
+  PRIMARY KEY (id, app_type)
+);
+CREATE TABLE provider_endpoints (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider_id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  url TEXT NOT NULL
+);
+INSERT INTO providers(id, app_type, name, settings_config, is_current, sort_index) VALUES
+  ('claude-krill', 'claude', 'Krill Claude', '{"env":{"ANTHROPIC_BASE_URL":"https://claude-wrong.example/v1","ANTHROPIC_AUTH_TOKEN":"claude-secret"}}', 1, 1),
+  ('codex-krill', 'codex', 'Krill Codex', '{"config":"model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://codex-right.example/v1%5C\"\nwire_api = \"responses\"\n","auth":{"OPENAI_API_KEY":"sk-codex-secret"}}', 1, 1);
+INSERT INTO provider_endpoints(provider_id, app_type, url) VALUES
+  ('claude-krill', 'claude', 'https://claude-wrong.example/v1'),
+  ('codex-krill', 'codex', 'https://codex-right.example/v1');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := ccSwitchCodexProviderConfigFromSQLiteDB(dbPath, "")
+	if cfg.BaseURL != "https://codex-right.example/v1" || cfg.APIKey != "sk-codex-secret" || cfg.APIFormat != "openai-responses" {
+		t.Fatalf("provider config = %#v", cfg)
+	}
+}
+
 func TestCodexConfigInfoDoesNotDefaultLocalProxyToOpenAI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
@@ -138,6 +234,8 @@ func TestNormalizeProviderBaseURL(t *testing.T) {
 		"https://api.example.com/tenant/path/?token=secret": "https://api.example.com/tenant/path",
 		"https://user:pass@api.example.com/v1":              "https://api.example.com/v1",
 		"https://api.example.com":                           "https://api.example.com",
+		"https://api.example.com/v1%5C":                     "https://api.example.com/v1",
+		`https://api.example.com/v1\`:                       "https://api.example.com/v1",
 		"http://api.example.com/v1":                         "",
 		"not a url":                                         "",
 	}

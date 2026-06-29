@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/1222hxy/LD-gpt-check/internal/codexauth"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
 	"github.com/1222hxy/LD-gpt-check/internal/questions"
 	"github.com/1222hxy/LD-gpt-check/internal/system"
@@ -40,6 +41,7 @@ type Options struct {
 	ModelAPIBaseURL  string
 	ModelAPIKey      string
 	APIHTTPTransport http.RoundTripper
+	AuthPath         string
 	CodexStartupArgs string
 	QuestionSuite    string
 	Questions        []questions.Question
@@ -162,9 +164,10 @@ type QuestionSummary struct {
 type Backend string
 
 const (
-	BackendAuto  Backend = "auto"
-	BackendCodex Backend = "codex"
-	BackendAPI   Backend = "api"
+	BackendAuto     Backend = "auto"
+	BackendCodex    Backend = "codex"
+	BackendAPI      Backend = "api"
+	BackendAuthJSON Backend = "auth-json"
 )
 
 type APIFormat string
@@ -192,6 +195,8 @@ func NormalizeBackend(v Backend) (Backend, bool) {
 		return BackendCodex, true
 	case "api", "http":
 		return BackendAPI, true
+	case "auth-json", "auth_json", "authjson", "codex-auth", "codex_auth":
+		return BackendAuthJSON, true
 	default:
 		return "", false
 	}
@@ -243,6 +248,7 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	}
 	var codex string
 	var api *apiBackend
+	var authJSON *authJSONBackend
 	switch backend {
 	case BackendCodex:
 		codex, err = system.CodexPath()
@@ -251,6 +257,11 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		}
 	case BackendAPI:
 		api, err = newAPIBackend(opts)
+		if err != nil {
+			return Summary{}, err
+		}
+	case BackendAuthJSON:
+		authJSON, err = newAuthJSONBackend(opts)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -268,6 +279,8 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 			var err error
 			if backend == BackendAPI {
 				res, err = api.runOne(ctx, opts, q, i)
+			} else if backend == BackendAuthJSON {
+				res, err = authJSON.runOne(ctx, opts, q, i)
 			} else {
 				res, err = runOneCodex(ctx, codex, opts, q, i)
 			}
@@ -560,6 +573,8 @@ func summarize(opts Options, backend Backend, displayModel string, cases []CaseR
 	}
 	if backend == BackendAPI {
 		applyAPIMetadata(&s, opts)
+	} else if backend == BackendAuthJSON {
+		applyAuthJSONMetadata(&s, opts)
 	} else {
 		s.CodexSandbox = "read-only"
 		s.CodexEphemeral = true
@@ -584,6 +599,54 @@ func summarize(opts Options, backend Backend, displayModel string, cases []CaseR
 		}
 	}
 	return s
+}
+
+func applyAuthJSONMetadata(s *Summary, opts Options) {
+	auth, _ := codexauth.Load(opts.AuthPath)
+	tokenStatus := ""
+	authPath := codexauth.ResolveAuthPath(opts.AuthPath)
+	email := ""
+	plan := ""
+	if auth != nil {
+		tokenStatus = codexauth.AccessTokenStatus(auth)
+		authPath = auth.AuthPath
+		email = codexauth.MaskEmail(auth.Email)
+		plan = auth.PlanType
+	}
+	s.CodexModelSource = "explicit"
+	s.CodexModelProvider = "auth-json"
+	s.CodexProviderHost = "chatgpt.com"
+	s.CodexProviderBaseURL = codexauth.CodexResponsesProviderBaseURL
+	s.CodexSandbox = "auth-json"
+	s.CodexEphemeral = false
+	s.CodexSkipGitRepoCheck = false
+	s.CodexDisabledFeatures = nil
+	s.CodexInvocation = sanitizedAuthJSONInvocation(opts, authPath, tokenStatus, email, plan)
+}
+
+func sanitizedAuthJSONInvocation(opts Options, authPath, tokenStatus, email, plan string) string {
+	safe := struct {
+		Backend         string `json:"backend"`
+		Model           string `json:"model"`
+		AuthPath        string `json:"auth_path"`
+		TokenStatus     string `json:"token_status,omitempty"`
+		Email           string `json:"email,omitempty"`
+		Plan            string `json:"plan,omitempty"`
+		PromptFromSuite bool   `json:"prompt_from_suite"`
+	}{
+		Backend:         string(BackendAuthJSON),
+		Model:           strings.TrimSpace(opts.Model),
+		AuthPath:        authPath,
+		TokenStatus:     tokenStatus,
+		Email:           email,
+		Plan:            plan,
+		PromptFromSuite: true,
+	}
+	b, err := json.Marshal(safe)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func SHA256Hex(value string) string {
@@ -647,6 +710,9 @@ func displayModelName(opts Options, backend Backend) (string, error) {
 		return requested, nil
 	}
 	if backend == BackendAPI {
+		return "", errors.New(i18n.New(opts.Lang).S("runner_model_required"))
+	}
+	if backend == BackendAuthJSON {
 		return "", errors.New(i18n.New(opts.Lang).S("runner_model_required"))
 	}
 	configured, err := system.CodexConfiguredModel()
