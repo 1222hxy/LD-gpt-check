@@ -33,6 +33,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
   const modelBreakdown = buildModelBreakdown(selectedModels, days);
   const questionQuality = buildQuestionQuality(days, selectedModels.length);
   const recentSubmissions = buildRecentSubmissions(selectedModels);
+  const userBridgeUsage = buildUserBridgeUsage(recentSubmissions);
   const segments = buildSegments(selectedModels.length);
   const summary = summarize(trend, modelBreakdown, segments);
   const hourlyBuckets = buildHourlyBuckets(days, selectedModels);
@@ -50,6 +51,7 @@ export function buildDashboardPayload({ range = "30d", model = "all" } = {}) {
     modelBreakdown,
     questionQuality,
     recentSubmissions,
+    userBridgeUsage,
     segments,
     hourlyBuckets,
     statistics,
@@ -132,6 +134,65 @@ function buildRecentSubmissions(models) {
       createdAt: new Date(now - index * 42 * 60 * 1000).toISOString(),
       status: accuracy > 0.86 ? "healthy" : accuracy > 0.78 ? "watch" : "regression",
       ...provider,
+    };
+  });
+}
+
+function buildUserBridgeUsage(recentSubmissions) {
+  const byUser = new Map();
+  for (const submission of recentSubmissions) {
+    const displayName = submission.user?.anonymous
+      ? `anonymous:${submission.channelLabel || submission.codexProviderHost || "unknown"}`
+      : submission.user?.username || submission.user?.display_name || "user";
+    const current = byUser.get(displayName) || {
+      user: submission.user,
+      submissions: 0,
+      accuracyWeightedSum: 0,
+      lastSubmissionAt: "",
+      channels: new Map(),
+    };
+    current.submissions += 1;
+    current.accuracyWeightedSum += submission.accuracy;
+    if (submission.createdAt > current.lastSubmissionAt) current.lastSubmissionAt = submission.createdAt;
+    const channelKey = submission.channelLabel || submission.codexProviderHost || "unknown";
+    const channel = current.channels.get(channelKey) || {
+      codexChannel: submission.codexChannel,
+      codexBridgeName: submission.codexBridgeName,
+      codexProviderBaseURL: submission.codexProviderBaseURL,
+      codexProviderHost: submission.codexProviderHost,
+      channelLabel: submission.channelLabel,
+      submissions: 0,
+      accuracyWeightedSum: 0,
+    };
+    channel.submissions += 1;
+    channel.accuracyWeightedSum += submission.accuracy;
+    current.channels.set(channelKey, channel);
+    byUser.set(displayName, current);
+  }
+  return [...byUser.values()].map((item) => {
+    const channels = [...item.channels.values()]
+      .map((channel) => {
+        const { accuracyWeightedSum, ...rest } = channel;
+        return {
+          ...rest,
+          accuracy: round(accuracyWeightedSum / channel.submissions, 3),
+        };
+      })
+      .sort((a, b) => b.submissions - a.submissions)
+      .slice(0, 3);
+    const primary = channels[0] || {};
+    return {
+      user: item.user,
+      submissions: item.submissions,
+      accuracy: round(item.accuracyWeightedSum / item.submissions, 3),
+      lastSubmissionAt: item.lastSubmissionAt,
+      codexChannel: primary.codexChannel,
+      codexBridgeName: primary.codexBridgeName,
+      codexProviderBaseURL: primary.codexProviderBaseURL,
+      codexProviderHost: primary.codexProviderHost,
+      channelLabel: primary.channelLabel,
+      channelCount: channels.length,
+      channels,
     };
   });
 }

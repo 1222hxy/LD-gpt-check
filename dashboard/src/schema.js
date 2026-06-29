@@ -63,6 +63,41 @@ const RecentSubmissionSchema = z.object({
   channelLabel: z.string().optional(),
 });
 
+const UserBridgeUsageSchema = z.object({
+  user: z.union([
+    z.string(),
+    z.object({
+      anonymous: z.boolean().optional(),
+      display_name: z.string().optional(),
+      username: z.string().optional(),
+      avatar_url: z.string().optional(),
+      linuxdo_url: z.string().optional(),
+    }),
+  ]),
+  submissions: z.number(),
+  accuracy: z.number(),
+  lastSubmissionAt: z.string(),
+  codexChannel: z.string().optional(),
+  codexBridgeName: z.string().optional(),
+  codexProviderBaseURL: z.string().optional(),
+  codexProviderHost: z.string().optional(),
+  channelLabel: z.string().optional(),
+  channelCount: z.number().optional(),
+  channels: z
+    .array(
+      z.object({
+        codexChannel: z.string().optional(),
+        codexBridgeName: z.string().optional(),
+        codexProviderBaseURL: z.string().optional(),
+        codexProviderHost: z.string().optional(),
+        channelLabel: z.string().optional(),
+        submissions: z.number(),
+        accuracy: z.number(),
+      }),
+    )
+    .optional(),
+});
+
 const SegmentSchema = z.object({
   label: z.string(),
   count: z.number(),
@@ -444,6 +479,7 @@ export const DashboardOverviewSchema = z.object({
   modelBreakdown: z.array(ModelBreakdownSchema),
   questionQuality: z.array(QuestionQualitySchema),
   recentSubmissions: z.array(RecentSubmissionSchema),
+  userBridgeUsage: z.array(UserBridgeUsageSchema).optional().default([]),
   segments: z.array(SegmentSchema),
   hourlyBuckets: z.array(HourlyBucketSchema),
   statistics: StatisticsSchema,

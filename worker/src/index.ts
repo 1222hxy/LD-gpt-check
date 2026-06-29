@@ -1373,7 +1373,7 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
     `SELECT id, upload_id, model, reasoning_effort, question_count, attempt_count, correct_count,
             accuracy, avg_time_seconds, avg_tps, is_anonymous,
-            codex_provider_base_url, codex_channel, codex_bridge_id, bridges.name AS codex_bridge_name,
+            codex_provider_base_url, codex_provider_host, codex_channel, codex_bridge_id, bridges.name AS codex_bridge_name,
             benchmark_submissions.created_at
      FROM benchmark_submissions
      LEFT JOIN bridges ON bridges.id = benchmark_submissions.codex_bridge_id
@@ -1386,6 +1386,7 @@ async function listSubmissions(request: Request, env: Env): Promise<Response> {
       ...row,
       anonymous: !!row.is_anonymous,
       user: submissionDisplayUser(auth.user, !!row.is_anonymous),
+      channelLabel: plainChannelLabel(row.codex_channel, row.codex_bridge_name, row.codex_provider_base_url || row.codex_provider_host),
     })),
   });
 }
@@ -1483,6 +1484,24 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
      ORDER BY count DESC, label ASC
      LIMIT 12`
   ).bind(...binds).all<any>();
+  const userBridgeRows = await env.DB.prepare(
+    `SELECT
+       CASE WHEN s.is_anonymous = 1 THEN 'anonymous' ELSE s.user_id END AS user_key,
+       MAX(s.is_anonymous) AS is_anonymous,
+       users.username, users.login, users.name, users.avatar_url, users.avatar_template,
+       s.codex_provider_base_url, s.codex_provider_host, s.codex_channel,
+       bridges.name AS codex_bridge_name,
+       COUNT(*) AS submissions,
+       AVG(CASE WHEN s.accuracy > 1 THEN s.accuracy / 100.0 ELSE s.accuracy END) AS accuracy,
+       MAX(s.created_at) AS last_submission_at
+     FROM benchmark_submissions s
+     JOIN users ON users.id = s.user_id
+     LEFT JOIN bridges ON bridges.id = s.codex_bridge_id
+     WHERE ${where}
+     GROUP BY user_key, s.is_anonymous, s.codex_channel, s.codex_provider_base_url, s.codex_provider_host, bridges.name
+     ORDER BY submissions DESC, last_submission_at DESC
+     LIMIT 160`
+  ).bind(...binds).all<any>();
   const hourlyRows = await env.DB.prepare(
     `SELECT CAST(strftime('%H', s.created_at) AS INTEGER) AS hour,
             COUNT(*) AS submissions, SUM(s.attempt_count) AS attempts,
@@ -1548,6 +1567,7 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     count: int(row.count),
     accuracy: ratio(row.accuracy),
   }));
+  const userBridgeUsage = summarizeUserBridgeUsage(userBridgeRows.results ?? []);
   const hourlyBuckets = normalizeHourlyBuckets(hourlyRows.results ?? []);
   const accuracyValues = (sampleRows.results ?? []).map((row: any) => ratio(row.accuracy)).filter((value: number) => Number.isFinite(value));
   const latencyValues = (sampleRows.results ?? []).map((row: any) => round(num(row.avg_time_seconds), 1)).filter((value: number) => Number.isFinite(value) && value > 0);
@@ -1584,6 +1604,7 @@ async function dashboardOverview(request: Request, env: Env): Promise<Response> 
     modelBreakdown: modelBreakdown.map(({ attempts, ...item }: any) => item),
     questionQuality,
     recentSubmissions,
+    userBridgeUsage,
     segments,
     hourlyBuckets,
     statistics,
@@ -2200,6 +2221,68 @@ function plainChannelLabel(channel: unknown, bridgeName: unknown, providerBaseUR
   if (channel === "unknown_bridge") return host ? `未识别中转站 (${host})` : "未识别中转站";
   const fallback = str(channel || "", 32);
   return fallback ? (host ? `${fallback} (${host})` : fallback) : "-";
+}
+
+function summarizeUserBridgeUsage(rows: any[]): any[] {
+  const byUser = new Map<string, any>();
+  for (const row of rows) {
+    const anonymous = !!row.is_anonymous;
+    const submissions = int(row.submissions);
+    const accuracy = ratio(row.accuracy);
+    const channel = str(row.codex_channel || "unknown", 32);
+    const bridgeName = str(row.codex_bridge_name || "", MAX_STRING_LENGTH);
+    const baseURL = str(row.codex_provider_base_url || "", MAX_STRING_LENGTH);
+    const host = str(row.codex_provider_host || providerDisplayHost(baseURL), MAX_STRING_LENGTH);
+    const key = anonymous ? `anonymous:${channel}:${baseURL || host}` : str(row.user_key || "", MAX_STRING_LENGTH);
+    if (!key) continue;
+    const channelLabel = plainChannelLabel(channel, bridgeName, baseURL || host);
+    let item = byUser.get(key);
+    if (!item) {
+      item = {
+        user: submissionDisplayUser(row, anonymous),
+        submissions: 0,
+        accuracyWeightedSum: 0,
+        lastSubmissionAt: "",
+        channels: [],
+      };
+      byUser.set(key, item);
+    }
+    item.submissions += submissions;
+    item.accuracyWeightedSum += accuracy * submissions;
+    const lastSubmissionAt = str(row.last_submission_at || "", MAX_STRING_LENGTH);
+    if (lastSubmissionAt > item.lastSubmissionAt) item.lastSubmissionAt = lastSubmissionAt;
+    item.channels.push({
+      codexChannel: channel,
+      codexBridgeName: bridgeName,
+      codexProviderBaseURL: baseURL,
+      codexProviderHost: host,
+      channelLabel,
+      submissions,
+      accuracy,
+    });
+  }
+  return [...byUser.values()]
+    .map((item) => {
+      const channels = item.channels
+        .sort((a: any, b: any) => b.submissions - a.submissions || a.channelLabel.localeCompare(b.channelLabel))
+        .slice(0, 3);
+      const primary = channels[0] || {};
+      return {
+        user: item.user,
+        submissions: item.submissions,
+        accuracy: item.submissions > 0 ? round(item.accuracyWeightedSum / item.submissions, 3) : 0,
+        lastSubmissionAt: item.lastSubmissionAt,
+        codexChannel: primary.codexChannel || "unknown",
+        codexBridgeName: primary.codexBridgeName || "",
+        codexProviderBaseURL: primary.codexProviderBaseURL || "",
+        codexProviderHost: primary.codexProviderHost || "",
+        channelLabel: primary.channelLabel || "-",
+        channelCount: channels.length,
+        channels,
+      };
+    })
+    .sort((a, b) => b.submissions - a.submissions || b.lastSubmissionAt.localeCompare(a.lastSubmissionAt))
+    .slice(0, 12);
 }
 
 function providerDisplayHost(value: unknown): string {

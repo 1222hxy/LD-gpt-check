@@ -116,6 +116,7 @@ function App() {
             <QualityPanel questions={data.questionQuality} />
             <SegmentPanel segments={data.segments} />
           </div>
+          <UserBridgePanel users={data.userBridgeUsage || []} />
           <RecentPanel submissions={data.recentSubmissions} />
         </div>
       </section>
@@ -1149,6 +1150,49 @@ function SegmentPanel({ segments }) {
             <b>{percent(segment.accuracy)}</b>
           </div>
         ))}
+      </div>
+    </Panel>
+  );
+}
+
+function UserBridgePanel({ users }) {
+  if (!users.length) {
+    return (
+      <Panel title="用户中转站" icon={Users} action="数据不足">
+        <EmptyState detail="当前筛选范围内还没有可展示的用户渠道数据。" />
+      </Panel>
+    );
+  }
+  return (
+    <Panel title="用户中转站" icon={Users} action={`${users.length} 组`}>
+      <div className="min-w-0 overflow-x-auto">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>主要渠道 / 中转站</th>
+              <th>提交</th>
+              <th>准确率</th>
+              <th>最近使用</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((item, index) => (
+              <tr key={`${normalizeSubmissionUser(item.user).displayName}-${item.channelLabel || index}`}>
+                <td>
+                  <SubmissionUserCell user={item.user} />
+                </td>
+                <td>
+                  <ChannelCell submission={item} />
+                  {Number(item.channelCount || 0) > 1 ? <span>{item.channelCount} 个渠道</span> : null}
+                </td>
+                <td>{item.submissions}</td>
+                <td>{percent(item.accuracy)}</td>
+                <td>{relativeTime(item.lastSubmissionAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Panel>
   );
