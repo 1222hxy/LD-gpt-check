@@ -95,10 +95,13 @@ jobs:
           fi
 
           mkdir -p dist
+          commit="$(git rev-parse --short=12 HEAD)"
+          commit_date="$(git log -1 --format=%cI)"
+          recent_commits="$(git log -5 --pretty=format:'%h %s' | paste -sd '|' -)"
 
           CGO_ENABLED=0 go build \
             -trimpath \
-            -ldflags="-s -w -X main.version=${version} -X main.assetSuffix=${SUFFIX}" \
+            -ldflags="-s -w -X main.version=${version} -X main.assetSuffix=${SUFFIX} -X main.gitCommit=${commit} -X main.gitCommitDate=${commit_date} -X 'main.recentCommits=${recent_commits}'" \
             -o "dist/${asset_name}" \
             ./cmd/ld-gpt-check
 

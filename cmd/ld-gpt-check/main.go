@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -28,6 +29,10 @@ import (
 
 var version = "0.2.6"
 var assetSuffix = ""
+var gitCommit = ""
+var gitCommitDate = ""
+var gitModified = ""
+var recentCommits = ""
 
 var runWizard = wizard.Run
 var runAutoUpdateCheck = autoUpdateCheck
@@ -80,7 +85,7 @@ func run(ctx context.Context, args []string, lang i18n.Lang) error {
 	case "update":
 		return updateCmd(ctx, args[1:], lang)
 	case "version", "--version", "-v":
-		fmt.Println(version)
+		printVersion(os.Stdout)
 		return nil
 	case "help", "-h", "--help":
 		usage(l)
@@ -88,6 +93,89 @@ func run(ctx context.Context, args []string, lang i18n.Lang) error {
 	default:
 		return fmt.Errorf("%s", l.S("unknown_command", args[0]))
 	}
+}
+
+func printVersion(out io.Writer) {
+	info := buildVersionInfo()
+	fmt.Fprintln(out, info.Version)
+	if info.Commit != "" {
+		line := "commit: " + info.Commit
+		if info.CommitDate != "" {
+			line += " (" + info.CommitDate + ")"
+		}
+		if info.Modified {
+			line += " dirty"
+		}
+		fmt.Fprintln(out, line)
+	}
+	if len(info.RecentCommits) > 0 {
+		fmt.Fprintln(out, "recent commits:")
+		for _, c := range info.RecentCommits {
+			fmt.Fprintln(out, "  "+c)
+		}
+	}
+}
+
+type versionInfo struct {
+	Version       string
+	Commit        string
+	CommitDate    string
+	Modified      bool
+	RecentCommits []string
+}
+
+func buildVersionInfo() versionInfo {
+	info := versionInfo{
+		Version:       version,
+		Commit:        strings.TrimSpace(gitCommit),
+		CommitDate:    strings.TrimSpace(gitCommitDate),
+		Modified:      strings.EqualFold(strings.TrimSpace(gitModified), "true"),
+		RecentCommits: splitRecentCommits(recentCommits),
+	}
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range build.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				if info.Commit == "" {
+					info.Commit = shortCommit(setting.Value)
+				}
+			case "vcs.time":
+				if info.CommitDate == "" {
+					info.CommitDate = setting.Value
+				}
+			case "vcs.modified":
+				if gitModified == "" {
+					info.Modified = setting.Value == "true"
+				}
+			}
+		}
+	}
+	info.Commit = shortCommit(info.Commit)
+	return info
+}
+
+func splitRecentCommits(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	raw = strings.ReplaceAll(raw, "|", "\n")
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func shortCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
 }
 
 func shouldAutoCheck(args []string) bool {

@@ -18,7 +18,7 @@ git push origin v0.2.0
 ## 工作流做什么
 
 1. 运行 `go test ./...`。
-2. 用 tag 注入 CLI 版本号，例如 `v0.2.0` 会构建出 `ld-gpt-check version` 返回 `0.2.0`。
+2. 用 tag 注入 CLI 版本号，例如 `v0.2.0` 会构建出 `ld-gpt-check version` 首行返回 `0.2.0`，并附带构建 commit 与最近提交记录。
 3. 构建以下平台的裸二进制文件：
 
 ```text
