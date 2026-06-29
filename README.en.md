@@ -9,6 +9,8 @@
 
 LD-gpt-check runs benchmark questions through your local Codex CLI, then records correctness, token usage, latency, TPS, model metadata, and optional community uploads.
 
+It also supports API mode. API mode covers OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages, so most model providers and proxy services can be tested by entering a base URL, API key, and model name: OpenAI / Codex, Claude / Claude Code, DeepSeek, and OpenAI-compatible domestic model services are all typical targets.
+
 The main experience is intentionally simple:
 
 1. 📦 Install the CLI.
@@ -36,6 +38,8 @@ ld-gpt-check
 ```
 
 The wizard helps with model selection, reasoning effort, test count, Linux.do login, upload choice, and result display.
+
+If local Codex is unavailable, the wizard can switch to API mode and use OpenAI-compatible or Anthropic-compatible endpoints.
 
 Binary download notes, detailed commands, JSON output, local question files, and self-hosting options are documented in [docs/commands.md](docs/commands.md).
 

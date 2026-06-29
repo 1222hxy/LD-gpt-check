@@ -58,6 +58,7 @@ API 模式必须提供模型名，可以用 `-m` 或 `--model`。
 - `--api-format`：`openai-chat`、`openai-responses`、`anthropic-messages`
 - `--model-api-base-url`：模型 API Base URL，例如 `https://api.openai.com/v1` 或中转站地址
 - `--model-api-key`：模型 API Key；更推荐用 `LD_GPT_CHECK_MODEL_API_KEY`
+- `--codex-args`：本机 Codex 模式的额外启动参数字符串，例如 `--codex-args '-c model_provider=my_provider'`
 - `-r, --reasoning-effort`：`low`、`medium`、`high`、`xhigh`
 - `-n, --tests`：测试次数，默认 5
 - `--upload`：上传结果
@@ -72,7 +73,10 @@ ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload
 ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --upload --anonymous
 ld-gpt-check run -m gpt-5.5 -r xhigh -n 5 --json
 ld-gpt-check run -r high -n 10 --timeout 10m
+ld-gpt-check run -r xhigh -n 5 --codex-args '-c model_provider=my_provider'
 ```
+
+为了确保公平，`--codex-args` 会写入上传摘要里的 `codex_invocation`，随结果一同提交。不要在启动参数里放 API Key、token 或其他私密信息。
 
 ### API 调用格式
 
@@ -170,6 +174,8 @@ https://codexgo.yhklab.com/api/v1/questions
 ```
 
 如果远程拉取失败，会自动回退到内置 `candy_21` 原题。
+
+题库 JSON 字段、grader 类型和配置规范见 [题库配置格式](question-bank-format.md)。
 
 列出题目：
 

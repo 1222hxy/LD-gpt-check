@@ -227,6 +227,7 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	apiFormat := fs.String("api-format", "", l.S("flag_api_format"))
 	modelAPIBase := fs.String("model-api-base-url", os.Getenv("LD_GPT_CHECK_MODEL_API_BASE_URL"), l.S("flag_model_api_base"))
 	modelAPIKey := fs.String("model-api-key", "", l.S("flag_model_api_key"))
+	codexStartupArgs := fs.String("codex-args", "", l.S("flag_codex_args"))
 	tests := fs.Int("n", runner.DefaultTests, l.S("flag_tests"))
 	testsLong := fs.Int("tests", 0, l.S("flag_tests"))
 	timeout := fs.Duration("timeout", runner.DefaultTimeout, l.S("flag_timeout"))
@@ -298,20 +299,24 @@ func runCmd(ctx context.Context, args []string, lang i18n.Lang) error {
 	if *jsonOut {
 		progressOut = os.Stderr
 	}
+	if *upload && strings.TrimSpace(*codexStartupArgs) != "" {
+		fmt.Fprintln(progressOut, l.S("codex_args_upload_notice"))
+	}
 	progress := report.PrintProgress(progressOut, lang, resolvedProgressModel, *effort, report.ColorEnabled(progressOut))
 	summary, err := runner.Run(ctx, runner.Options{
-		Model:           *model,
-		ReasoningEffort: *effort,
-		Tests:           *tests,
-		Timeout:         *timeout,
-		Lang:            lang,
-		Backend:         runner.Backend(*backend),
-		APIFormat:       runner.APIFormat(*apiFormat),
-		ModelAPIBaseURL: *modelAPIBase,
-		ModelAPIKey:     *modelAPIKey,
-		QuestionSuite:   *suite,
-		Questions:       selected,
-		Progress:        progress,
+		Model:            *model,
+		ReasoningEffort:  *effort,
+		Tests:            *tests,
+		Timeout:          *timeout,
+		Lang:             lang,
+		Backend:          runner.Backend(*backend),
+		APIFormat:        runner.APIFormat(*apiFormat),
+		ModelAPIBaseURL:  *modelAPIBase,
+		ModelAPIKey:      *modelAPIKey,
+		CodexStartupArgs: *codexStartupArgs,
+		QuestionSuite:    *suite,
+		Questions:        selected,
+		Progress:         progress,
 	})
 	if err != nil {
 		return err

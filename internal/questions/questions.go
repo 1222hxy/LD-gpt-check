@@ -61,6 +61,7 @@ type LoadOptions struct {
 	CacheDir              string
 	AllowHTTP             bool
 	FallbackOnRemoteError bool
+	DisableCache          bool
 }
 
 func Builtin() []Question {
@@ -94,7 +95,7 @@ func Load(ctx context.Context, opts LoadOptions) ([]Question, error) {
 		questions = merge(questions, q)
 	}
 	if opts.URL != "" {
-		q, err := LoadRemote(ctx, opts.URL, opts.CacheDir, opts.AllowHTTP)
+		q, err := loadRemote(ctx, opts.URL, opts.CacheDir, opts.AllowHTTP, opts.DisableCache)
 		if err != nil {
 			if !opts.FallbackOnRemoteError {
 				return nil, err
@@ -119,6 +120,14 @@ func LoadFile(path string) ([]Question, error) {
 }
 
 func LoadRemote(ctx context.Context, rawURL, cacheDir string, allowHTTP bool) ([]Question, error) {
+	return loadRemote(ctx, rawURL, cacheDir, allowHTTP, false)
+}
+
+func LoadRemoteNoCache(ctx context.Context, rawURL string, allowHTTP bool) ([]Question, error) {
+	return loadRemote(ctx, rawURL, "", allowHTTP, true)
+}
+
+func loadRemote(ctx context.Context, rawURL, cacheDir string, allowHTTP, disableCache bool) ([]Question, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("invalid question url %q", rawURL)
@@ -129,10 +138,13 @@ func LoadRemote(ctx context.Context, rawURL, cacheDir string, allowHTTP bool) ([
 			return nil, fmt.Errorf("question url must use https")
 		}
 	}
-	if cacheDir == "" {
+	cachePath := ""
+	if !disableCache && cacheDir == "" {
 		cacheDir = DefaultCacheDir()
 	}
-	cachePath := filepath.Join(cacheDir, cacheName(rawURL)+".json")
+	if !disableCache {
+		cachePath = filepath.Join(cacheDir, cacheName(rawURL)+".json")
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -153,15 +165,22 @@ func LoadRemote(ctx context.Context, rawURL, cacheDir string, allowHTTP bool) ([
 			if parseErr != nil {
 				return nil, parseErr
 			}
-			_ = os.MkdirAll(cacheDir, 0700)
-			_ = os.WriteFile(cachePath, b, 0600)
+			if !disableCache {
+				_ = os.MkdirAll(cacheDir, 0700)
+				_ = os.WriteFile(cachePath, b, 0600)
+			}
 			return q, nil
 		}
 		err = fmt.Errorf("question url returned HTTP %d", resp.StatusCode)
 	}
 
-	if b, readErr := os.ReadFile(cachePath); readErr == nil {
-		return Parse(b)
+	if !disableCache {
+		if b, readErr := os.ReadFile(cachePath); readErr == nil {
+			return Parse(b)
+		}
+	}
+	if err == nil {
+		err = fmt.Errorf("question url request failed")
 	}
 	return nil, err
 }

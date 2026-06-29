@@ -40,6 +40,7 @@ type Options struct {
 	ModelAPIBaseURL  string
 	ModelAPIKey      string
 	APIHTTPTransport http.RoundTripper
+	CodexStartupArgs string
 	QuestionSuite    string
 	Questions        []questions.Question
 	Progress         func(ProgressEvent)
@@ -306,7 +307,10 @@ func runOneCodex(ctx context.Context, codex string, opts Options, q questions.Qu
 		runCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
 	}
 	defer cancel()
-	args := codexArgs(opts.Model, opts.ReasoningEffort)
+	args, err := codexArgsWithCustom(opts.Model, opts.ReasoningEffort, opts.CodexStartupArgs)
+	if err != nil {
+		return CaseResult{}, err
+	}
 	cmd := exec.CommandContext(runCtx, codex, args...)
 	cmd.Stdin = strings.NewReader(q.Prompt)
 
@@ -393,6 +397,11 @@ func caseResultFromParsed(opts Options, q questions.Question, index int, parsed 
 }
 
 func codexArgs(model, effort string) []string {
+	args, _ := codexArgsWithCustom(model, effort, "")
+	return args
+}
+
+func codexArgsWithCustom(model, effort, custom string) ([]string, error) {
 	args := []string{
 		"exec",
 		"--json",
@@ -405,7 +414,64 @@ func codexArgs(model, effort string) []string {
 	if system.ConcreteCodexModel(model) {
 		args = append(args, "-m", strings.TrimSpace(model))
 	}
-	return args
+	customArgs, err := ParseCodexStartupArgs(custom)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, customArgs...)
+	return args, nil
+}
+
+func ParseCodexStartupArgs(input string) ([]string, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, nil
+	}
+	var args []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if b.Len() > 0 {
+			args = append(args, b.String())
+			b.Reset()
+		}
+	}
+	for _, r := range input {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+			continue
+		}
+		switch {
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if escaped {
+		return nil, errors.New("codex startup args cannot end with a backslash")
+	}
+	if quote != 0 {
+		return nil, errors.New("codex startup args contain an unterminated quote")
+	}
+	flush()
+	return args, nil
 }
 
 func parseEvents(r io.Reader, lang i18n.Lang) (ParsedEvents, error) {
@@ -486,7 +552,7 @@ func summarize(opts Options, backend Backend, displayModel string, cases []CaseR
 		s.CodexEphemeral = true
 		s.CodexSkipGitRepoCheck = true
 		s.CodexDisabledFeatures = []string{"memories"}
-		s.CodexInvocation = sanitizedInvocation(opts.Model, opts.ReasoningEffort)
+		s.CodexInvocation = sanitizedInvocation(opts.Model, opts.ReasoningEffort, opts.CodexStartupArgs)
 		applyCodexConfigMetadata(&s, opts.Model)
 	}
 	if n > 0 {
@@ -529,11 +595,15 @@ func applyCodexConfigMetadata(s *Summary, requestedModel string) {
 	}
 }
 
-func sanitizedInvocation(model, effort string) string {
-	args := codexArgs(model, effort)
+func sanitizedInvocation(model, effort, customArgs string) string {
+	args, err := codexArgsWithCustom(model, effort, customArgs)
+	if err != nil {
+		return ""
+	}
 	safe := struct {
 		Command              string   `json:"command"`
 		Args                 []string `json:"args"`
+		CustomStartupArgs    string   `json:"custom_startup_args,omitempty"`
 		PromptFromStdin      bool     `json:"prompt_from_stdin"`
 		Sandbox              string   `json:"sandbox"`
 		Ephemeral            bool     `json:"ephemeral"`
@@ -543,6 +613,7 @@ func sanitizedInvocation(model, effort string) string {
 	}{
 		Command:              "codex",
 		Args:                 args,
+		CustomStartupArgs:    strings.TrimSpace(customArgs),
 		PromptFromStdin:      true,
 		Sandbox:              "read-only",
 		Ephemeral:            true,

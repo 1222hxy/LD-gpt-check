@@ -124,6 +124,39 @@ func TestCodexArgsMatchUpstreamInvocation(t *testing.T) {
 	}
 }
 
+func TestCodexStartupArgsAreParsedAndRecorded(t *testing.T) {
+	parsed, err := ParseCodexStartupArgs(`-c model_provider="custom provider" --profile test`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantParsed := []string{"-c", "model_provider=custom provider", "--profile", "test"}
+	if !reflect.DeepEqual(parsed, wantParsed) {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+
+	args, err := codexArgsWithCustom("gpt-5.5", "high", `-c model_provider="custom provider" --profile test`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range wantParsed {
+		found := false
+		for _, arg := range args {
+			if arg == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing custom arg %q in %#v", want, args)
+		}
+	}
+
+	invocation := sanitizedInvocation("gpt-5.5", "high", `--profile test`)
+	if !strings.Contains(invocation, `"custom_startup_args":"--profile test"`) || !strings.Contains(invocation, `"--profile"`) {
+		t.Fatalf("invocation did not record custom args: %s", invocation)
+	}
+}
+
 func TestDisplayModelNameUsesCodexConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)

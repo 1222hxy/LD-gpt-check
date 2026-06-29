@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/1222hxy/LD-gpt-check/internal/config"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
 )
 
@@ -183,6 +185,52 @@ func TestPromptDuration(t *testing.T) {
 	}
 }
 
+func TestPromptQuestionDefaultsToClassicWhenRemoteFails(t *testing.T) {
+	oldLoadRemoteQuestions := loadRemoteQuestions
+	defer func() { loadRemoteQuestions = oldLoadRemoteQuestions }()
+	loadRemoteQuestions = func(ctx context.Context, rawURL string, allowHTTP bool) ([]questions.Question, error) {
+		return nil, errors.New("remote down")
+	}
+
+	var out bytes.Buffer
+	got, err := promptQuestion(context.Background(), bufio.NewReader(strings.NewReader("\n")), &out, i18n.New(i18n.ZH), false, "https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != questions.DefaultSuite {
+		t.Fatalf("question = %#v", got)
+	}
+	if !strings.Contains(out.String(), "远程题目拉取失败") || !strings.Contains(out.String(), "经典题") {
+		t.Fatalf("missing fallback prompt:\n%s", out.String())
+	}
+}
+
+func TestPromptQuestionCanSelectRemoteQuestion(t *testing.T) {
+	oldLoadRemoteQuestions := loadRemoteQuestions
+	defer func() { loadRemoteQuestions = oldLoadRemoteQuestions }()
+	loadRemoteQuestions = func(ctx context.Context, rawURL string, allowHTTP bool) ([]questions.Question, error) {
+		if rawURL != "https://api.example.com/api/v1/questions" {
+			t.Fatalf("remote URL = %q", rawURL)
+		}
+		return []questions.Question{{
+			ID: "remote_1", Version: "1", Title: "Remote One", Prompt: "Remote?",
+			Grader: questions.Grader{Type: "exact", Expected: "ok"},
+		}}, nil
+	}
+
+	var out bytes.Buffer
+	got, err := promptQuestion(context.Background(), bufio.NewReader(strings.NewReader("2\n")), &out, i18n.New(i18n.ZH), false, "https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "remote_1" {
+		t.Fatalf("question = %#v", got)
+	}
+	if !strings.Contains(out.String(), "远程题") || !strings.Contains(out.String(), "Remote One") {
+		t.Fatalf("missing remote prompt:\n%s", out.String())
+	}
+}
+
 func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), config.ConfigFileName)
 	t.Setenv(config.ConfigEnvVarName, configPath)
@@ -190,7 +238,14 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	t.Setenv("LD_GPT_CHECK_MODEL_API_KEY", "")
 
 	oldRunBenchmark := runBenchmark
-	defer func() { runBenchmark = oldRunBenchmark }()
+	oldLoadRemoteQuestions := loadRemoteQuestions
+	defer func() {
+		runBenchmark = oldRunBenchmark
+		loadRemoteQuestions = oldLoadRemoteQuestions
+	}()
+	loadRemoteQuestions = func(ctx context.Context, rawURL string, allowHTTP bool) ([]questions.Question, error) {
+		return nil, errors.New("remote down")
+	}
 	var captured runner.Options
 	runBenchmark = func(ctx context.Context, opts runner.Options) (runner.Summary, error) {
 		captured = opts
@@ -212,6 +267,7 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	input := strings.Join([]string{
 		"否",
 		"是",
+		"",
 		"",
 		"1",
 		"https://api.example.com/v1",
@@ -242,6 +298,9 @@ func TestWizardRunsAPIModeWithoutSavingKey(t *testing.T) {
 	if captured.Backend != runner.BackendAPI || captured.APIFormat != runner.APIFormatOpenAIChat ||
 		captured.ModelAPIBaseURL != "https://api.example.com/v1" || captured.ModelAPIKey != "wizard-key" {
 		t.Fatalf("captured options = %#v", captured)
+	}
+	if captured.QuestionSuite != questions.DefaultSuite || len(captured.Questions) != 1 || captured.Questions[0].ID != questions.DefaultSuite {
+		t.Fatalf("captured question options = %#v", captured)
 	}
 	if !strings.Contains(out.String(), "API 模式") || !strings.Contains(out.String(), "临时 API Key") {
 		t.Fatalf("missing API prompts:\n%s", out.String())

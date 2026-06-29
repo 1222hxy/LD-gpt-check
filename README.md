@@ -9,6 +9,8 @@
 
 LD-gpt-check 是一个轻量但完整的社区 Bench，用本机 Codex CLI 跑固定题集，记录模型是否答对、token 消耗、耗时和 TPS，并可选择上传到社区 Dashboard 做统计观察。
 
+除了本机 Codex CLI，也支持 API 模式。API 模式目前覆盖 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三种常见协议，所以大多数模型服务和中转站都能接入：OpenAI / Codex、Claude / Claude Code、DeepSeek、国产兼容 OpenAI 协议的模型服务等，都可以通过填写 Base URL、API Key 和模型名来测试。
+
 它不是复杂平台，也不是只能开发者使用的脚本。核心体验是：
 
 1. 📦 安装 CLI。
@@ -38,6 +40,7 @@ ld-gpt-check
 CLI 会进入向导，自动带你完成常见操作：
 
 - 🤖 选择或识别 Codex 使用的模型。
+- 🔌 没有本机 Codex 时，可改用 API 模式，支持 OpenAI / Anthropic 兼容接口。
 - 🧠 选择 reasoning effort。
 - 🔢 设置测试次数，默认 5 次。
 - 🔐 通过 Linux.do 设备码登录。

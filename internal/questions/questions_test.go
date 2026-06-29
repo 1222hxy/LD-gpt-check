@@ -2,6 +2,10 @@ package questions
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,5 +83,39 @@ func TestLoadFallsBackWhenDefaultRemoteFails(t *testing.T) {
 	}
 	if len(qs) != 1 || qs[0].ID != DefaultSuite {
 		t.Fatalf("questions = %#v", qs)
+	}
+}
+
+func TestLoadRemoteNoCacheDoesNotReadCachedQuestionBank(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cacheDir := t.TempDir()
+	cachePath := filepath.Join(cacheDir, cacheName(server.URL)+".json")
+	if err := os.WriteFile(cachePath, []byte(`{
+	  "schema_version": "1",
+	  "questions": [{
+	    "id": "cached",
+	    "version": "1",
+	    "title": "Cached",
+	    "prompt": "Cached?",
+	    "grader": {"type": "number", "expected": "1"}
+	  }]
+	}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cached, err := LoadRemote(context.Background(), server.URL, cacheDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cached) != 1 || cached[0].ID != "cached" {
+		t.Fatalf("cached questions = %#v", cached)
+	}
+
+	if _, err := LoadRemoteNoCache(context.Background(), server.URL, true); err == nil {
+		t.Fatal("expected no-cache remote load to fail instead of reading cache")
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/1222hxy/LD-gpt-check/internal/auth"
 	"github.com/1222hxy/LD-gpt-check/internal/config"
 	"github.com/1222hxy/LD-gpt-check/internal/i18n"
+	"github.com/1222hxy/LD-gpt-check/internal/questions"
 	"github.com/1222hxy/LD-gpt-check/internal/report"
 	"github.com/1222hxy/LD-gpt-check/internal/runner"
 	"github.com/1222hxy/LD-gpt-check/internal/system"
@@ -29,6 +30,7 @@ type Options struct {
 }
 
 var runBenchmark = runner.Run
+var loadRemoteQuestions = questions.LoadRemoteNoCache
 
 func Run(ctx context.Context, opts Options) error {
 	in := opts.Stdin
@@ -111,11 +113,16 @@ func Run(ctx context.Context, opts Options) error {
 		report.PrintSuccess(out, l.S("wizard_done_next"), color)
 		return nil
 	}
+	selectedQuestion, err := promptQuestion(ctx, reader, out, l, color, apiBase)
+	if err != nil {
+		return err
+	}
 
 	backend := runner.BackendCodex
 	apiFormat := runner.APIFormat("")
 	modelAPIBase := ""
 	modelAPIKey := ""
+	codexStartupArgs := ""
 	codexPath, codexErr := system.CodexPath()
 	if codexErr == nil {
 		report.PrintSuccess(out, l.S("wizard_codex_found", codexPath), color)
@@ -151,6 +158,11 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	} else {
 		report.PrintSuccess(out, l.S("wizard_ready_run"), color)
+		report.PrintWarning(out, l.S("codex_args_upload_notice"), color)
+		codexStartupArgs, err = promptOptionalString(reader, out, l.S("wizard_codex_startup_args"), l.S("wizard_codex_startup_args_empty"))
+		if err != nil {
+			return err
+		}
 	}
 	model, err := promptRunModel(reader, out, l, color, backend)
 	if err != nil {
@@ -187,16 +199,19 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	summary, err := runBenchmark(ctx, runner.Options{
-		Model:           model,
-		ReasoningEffort: effort,
-		Tests:           tests,
-		Timeout:         timeout,
-		Lang:            lang,
-		Backend:         backend,
-		APIFormat:       apiFormat,
-		ModelAPIBaseURL: modelAPIBase,
-		ModelAPIKey:     modelAPIKey,
-		Progress:        report.PrintProgress(out, lang, progressModel(model), effort, color),
+		Model:            model,
+		ReasoningEffort:  effort,
+		Tests:            tests,
+		Timeout:          timeout,
+		Lang:             lang,
+		Backend:          backend,
+		APIFormat:        apiFormat,
+		ModelAPIBaseURL:  modelAPIBase,
+		ModelAPIKey:      modelAPIKey,
+		CodexStartupArgs: codexStartupArgs,
+		QuestionSuite:    selectedQuestion.ID,
+		Questions:        []questions.Question{selectedQuestion},
+		Progress:         report.PrintProgress(out, lang, progressModel(model), effort, color),
 	})
 	if err != nil {
 		return err
@@ -223,6 +238,36 @@ func Run(ctx context.Context, opts Options) error {
 
 	report.PrintSuccess(out, l.S("wizard_done"), color)
 	return nil
+}
+
+func promptQuestion(ctx context.Context, r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool, apiBase string) (questions.Question, error) {
+	choices := append([]questions.Question(nil), questions.Builtin()...)
+	remoteURL := strings.TrimRight(apiBase, "/") + "/api/v1/questions"
+	remote, err := loadRemoteQuestions(ctx, remoteURL, true)
+	if err != nil {
+		report.PrintWarning(out, l.S("wizard_questions_remote_failed", err), color)
+	} else {
+		choices = append(choices, remote...)
+	}
+
+	for i, q := range choices {
+		if i == 0 {
+			fmt.Fprintln(out, report.Muted(l.S("wizard_question_classic", i+1, q.Title, q.ID), color))
+			continue
+		}
+		fmt.Fprintln(out, report.Muted(l.S("wizard_question_remote", i+1, q.Title, q.ID), color))
+	}
+	for {
+		choice, err := promptString(r, out, l, l.S("wizard_question"), "1")
+		if err != nil {
+			return questions.Question{}, err
+		}
+		idx, err := strconv.Atoi(choice)
+		if err == nil && idx >= 1 && idx <= len(choices) {
+			return choices[idx-1], nil
+		}
+		fmt.Fprintln(out, l.S("wizard_question_invalid", len(choices)))
+	}
 }
 
 func promptModel(r *bufio.Reader, out io.Writer, l i18n.Localizer, color bool) (string, error) {
