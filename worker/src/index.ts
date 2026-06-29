@@ -71,6 +71,9 @@ export default {
 
       if (request.method === "GET" && matches(path, "/", "/account")) return withCommonHeaders(await accountPage(request, env), request, env, requestID);
       if (request.method === "GET" && path === "/admin") return withCommonHeaders(await adminPage(request, env), request, env, requestID);
+      if (matches(request.method, "GET", "HEAD") && matches(path, "/admin/questions/", "/admin/bridges/")) {
+        return withCommonHeaders(redirect(path.replace(/\/$/, "") + url.search), request, env, requestID);
+      }
       if (matches(request.method, "GET", "HEAD") && matches(path, "/admin/questions", "/admin/questions/", "/admin/bridges", "/admin/bridges/")) return withCommonHeaders(await adminStaticPage(request, env), request, env, requestID);
       if (matches(request.method, "GET", "HEAD") && path === "/dashboard") return withCommonHeaders(redirect("/dashboard/"), request, env, requestID);
       if (request.method === "GET" && path === "/health") return withCommonHeaders(json({ ok: true }), request, env, requestID);
@@ -734,10 +737,11 @@ async function adminPage(request: Request, env: Env): Promise<Response> {
 async function adminStaticPage(request: Request, env: Env): Promise<Response> {
   const user = await getWebUser(request, env);
   const url = new URL(request.url);
-  if (!user) return redirect(`/auth/linuxdo/start?next=${encodeURIComponent(url.pathname)}`);
+  const canonicalPath = url.pathname.replace(/\/$/, "");
+  if (!user) return redirect(`/auth/linuxdo/start?next=${encodeURIComponent(canonicalPath)}`);
   if (!isAdminUser(user, env)) return html(resultPage("无权访问", "当前 Linux.do 账号不在管理员列表中。"), 403);
   const assetURL = new URL(request.url);
-  assetURL.pathname = `${url.pathname.replace(/\/$/, "")}/index.html`;
+  assetURL.pathname = `${canonicalPath}/index.html`;
   const assetResp = await env.ASSETS.fetch(new Request(assetURL.toString(), request));
   if (!assetResp.ok) return assetResp;
   if (request.method === "HEAD") return assetResp;
