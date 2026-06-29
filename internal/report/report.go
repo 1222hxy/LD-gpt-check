@@ -68,7 +68,6 @@ func PrintProgress(w io.Writer, lang i18n.Lang, model, effort string, color bool
 			fmt.Fprintln(w, l.S("run_status_case_done", ev.Current, ev.Total, label, ev.CaseResult.TimeSeconds, ev.CaseResult.TPS))
 		case runner.ProgressCaseError:
 			fmt.Fprintln(w, Colorize(l.S("run_status_case_error", ev.Current, ev.Total, ev.Error), colorRed, color))
-			printQuestionPrompt(w, l, ev.Question, l.S("run_status_failed_question"), color)
 		}
 	}
 }

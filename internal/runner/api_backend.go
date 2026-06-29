@@ -29,6 +29,8 @@ const (
 	apiMaxAttempts       = 3
 )
 
+var apiRetryBaseDelay = 500 * time.Millisecond
+
 type apiBackend struct {
 	format          APIFormat
 	model           string
@@ -114,18 +116,24 @@ func (b *apiBackend) request(ctx context.Context, opts Options, prompt string) (
 		if !shouldRetryAPI(resp, err) || attempt == apiMaxAttempts {
 			break
 		}
-		if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*500*time.Millisecond); sleepErr != nil {
+		if sleepErr := sleepWithContext(ctx, time.Duration(attempt)*apiRetryBaseDelay); sleepErr != nil {
 			return ParsedEvents{}, sleepErr
 		}
 	}
 	if err != nil {
 		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_failed", classifyTransportError(err, opts.Lang)))
 	}
+	if resp == nil {
+		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_failed", i18n.New(opts.Lang).S("runner_api_empty_response")))
+	}
 	if resp.IsError() {
 		status := resp.StatusCode()
 		preview := bodyPreview(resp.Body(), b.apiKey)
 		if status == httpStatusUnauthorized || status == httpStatusForbidden {
 			return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_auth_failed", status, preview))
+		}
+		if shouldRetryStatus(status) {
+			return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_status_retry_exhausted", status, preview))
 		}
 		return ParsedEvents{}, fmt.Errorf("%s", i18n.New(opts.Lang).S("runner_api_status_failed", status, preview))
 	}
@@ -165,6 +173,10 @@ func shouldRetryAPI(resp *resty.Response, err error) bool {
 		return false
 	}
 	status := resp.StatusCode()
+	return shouldRetryStatus(status)
+}
+
+func shouldRetryStatus(status int) bool {
 	return status == httpStatusTooMany || status == 408 || status >= 500
 }
 

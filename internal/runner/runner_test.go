@@ -364,6 +364,10 @@ func TestAPIBackendRedactsKeyFromErrorBody(t *testing.T) {
 }
 
 func TestAPIBackendRetriesBrokenStream(t *testing.T) {
+	oldDelay := apiRetryBaseDelay
+	apiRetryBaseDelay = time.Nanosecond
+	defer func() { apiRetryBaseDelay = oldDelay }()
+
 	q := apiTestQuestion()
 	attempts := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -419,6 +423,39 @@ func TestAPIBackendAuthFailureHint(t *testing.T) {
 		t.Fatal("expected auth error")
 	}
 	if !strings.Contains(err.Error(), "认证失败") || !strings.Contains(err.Error(), "Key") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAPIBackendRetriesServerErrorThenExplainsExhaustion(t *testing.T) {
+	oldDelay := apiRetryBaseDelay
+	apiRetryBaseDelay = time.Nanosecond
+	defer func() { apiRetryBaseDelay = oldDelay }()
+
+	attempts := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		attempts++
+		return textResponse(http.StatusBadGateway, "temporary upstream error"), nil
+	})
+
+	_, err := Run(context.Background(), Options{
+		Model:            "gpt-5.4",
+		ReasoningEffort:  "medium",
+		Tests:            1,
+		Backend:          BackendAPI,
+		APIFormat:        APIFormatOpenAIChat,
+		ModelAPIBaseURL:  "https://api.test/v1",
+		ModelAPIKey:      "secret-key",
+		APIHTTPTransport: transport,
+		Questions:        []questions.Question{apiTestQuestion()},
+	})
+	if err == nil {
+		t.Fatal("expected server error")
+	}
+	if attempts != apiMaxAttempts {
+		t.Fatalf("attempts = %d", attempts)
+	}
+	if !strings.Contains(err.Error(), "自动重试仍失败") {
 		t.Fatalf("err = %v", err)
 	}
 }

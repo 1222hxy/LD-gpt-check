@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /auth/
+Disallow: /device
+Disallow: /logout
+
+Sitemap: https://codexgo.yhklab.com/sitemap.xml

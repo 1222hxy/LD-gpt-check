@@ -1,0 +1,10 @@
+{
+  "name": "LD-gpt-check",
+  "short_name": "LD-gpt-check",
+  "description": "Codex / GPT 能力回归检测 CLI",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#f7fbff",
+  "theme_color": "#2563eb",
+  "lang": "zh-CN"
+}

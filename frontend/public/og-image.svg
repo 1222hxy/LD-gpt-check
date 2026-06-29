@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">LD-gpt-check - Codex health check CLI</title>
+  <desc id="desc">Open source CLI for checking Codex and GPT regression with reproducible benchmark runs.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EFF6FF"/>
+      <stop offset="0.48" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#F5F3FF"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="120" y1="140" x2="760" y2="255" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563EB"/>
+      <stop offset="0.52" stop-color="#0891B2"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#2563EB" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <path d="M0 485C170 402 296 518 469 443C656 362 745 168 942 216C1055 244 1134 334 1200 302V630H0V485Z" fill="#DBEAFE" opacity="0.6"/>
+  <path d="M0 112H1200M0 222H1200M0 332H1200M0 442H1200M0 552H1200M164 0V630M328 0V630M492 0V630M656 0V630M820 0V630M984 0V630" stroke="#BFDBFE" stroke-opacity="0.45" stroke-width="1"/>
+  <g filter="url(#shadow)">
+    <rect x="90" y="92" width="1020" height="446" rx="28" fill="#FFFFFF" opacity="0.92"/>
+    <rect x="90" y="92" width="1020" height="446" rx="28" fill="none" stroke="#BFDBFE" stroke-width="2"/>
+  </g>
+  <text x="132" y="203" fill="url(#brand)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="74" font-weight="760" letter-spacing="0">LD-gpt-check</text>
+  <text x="136" y="278" fill="#0F172A" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="42" font-weight="700" letter-spacing="0">Codex 体检 CLI</text>
+  <text x="138" y="342" fill="#475569" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="26" font-weight="500" letter-spacing="0">本地运行固定测试题，记录正确率、tokens、耗时和 TPS。</text>
+  <g transform="translate(136 397)">
+    <rect width="208" height="54" rx="12" fill="#EFF6FF" stroke="#BFDBFE"/>
+    <text x="24" y="35" fill="#1D4ED8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" font-weight="700">open source</text>
+  </g>
+  <g transform="translate(368 397)">
+    <rect width="190" height="54" rx="12" fill="#ECFEFF" stroke="#A5F3FC"/>
+    <text x="24" y="35" fill="#0E7490" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" font-weight="700">local run</text>
+  </g>
+  <g transform="translate(582 397)">
+    <rect width="232" height="54" rx="12" fill="#F5F3FF" stroke="#DDD6FE"/>
+    <text x="24" y="35" fill="#6D28D9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" font-weight="700">summary only</text>
+  </g>
+</svg>

@@ -28,6 +28,7 @@ ADMIN_LINUXDO_IDS = "29368"
 binding = "DB"
 database_name = "ld-gpt-check"
 database_id = "replace-with-your-d1-database-id"
+migrations_dir = "migrations"
 
 # Configure secrets with:
 # wrangler secret put LINUXDO_CLIENT_ID

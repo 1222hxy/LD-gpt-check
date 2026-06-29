@@ -58,7 +58,7 @@ func TestPrintSummaryPanelIncludesMetrics(t *testing.T) {
 	}
 }
 
-func TestPrintProgressErrorIncludesQuestionPrompt(t *testing.T) {
+func TestPrintProgressErrorDoesNotRepeatQuestionPrompt(t *testing.T) {
 	var out bytes.Buffer
 	progress := PrintProgress(&out, i18n.ZH, "gpt-5.4", "medium", false)
 	progress(runner.ProgressEvent{
@@ -73,10 +73,11 @@ func TestPrintProgressErrorIncludesQuestionPrompt(t *testing.T) {
 		Error: assertError("boom"),
 	})
 	text := out.String()
-	for _, want := range []string{"运行失败", "失败题目：原题标题", "这里是完整原题内容"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("progress output missing %q:\n%s", want, text)
-		}
+	if !strings.Contains(text, "运行失败") {
+		t.Fatalf("progress output missing failure:\n%s", text)
+	}
+	if strings.Contains(text, "这里是完整原题内容") || strings.Contains(text, "失败题目") {
+		t.Fatalf("error output should not repeat question prompt:\n%s", text)
 	}
 }
 

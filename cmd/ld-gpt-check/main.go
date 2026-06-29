@@ -26,7 +26,7 @@ import (
 	"golang.org/x/term"
 )
 
-var version = "0.2.3"
+var version = "0.2.4"
 var assetSuffix = ""
 
 var runWizard = wizard.Run
@@ -34,8 +34,16 @@ var runAutoUpdateCheck = autoUpdateCheck
 
 func main() {
 	lang := currentLang()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		<-signals
+		cancel()
+		fmt.Fprintln(os.Stderr, i18n.New(lang).S("canceled"))
+		os.Exit(130)
+	}()
 	if err := run(ctx, os.Args[1:], lang); err != nil {
 		l := i18n.New(lang)
 		if err == context.Canceled {

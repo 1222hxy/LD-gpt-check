@@ -80,6 +80,7 @@ ADMIN_LINUXDO_IDS = "29368"
 binding = "DB"
 database_name = "ld-gpt-check"
 database_id = "YOUR_DATABASE_ID"
+migrations_dir = "migrations"
 ```
 
 说明：
@@ -165,27 +166,30 @@ wrangler secret put TURNSTILE_SECRET_KEY
 
 ## 5. 初始化数据库 schema
 
-在 `worker/` 目录执行：
+完整迁移规范见 [D1 数据库迁移指南](database-migrations.md)。这里给出首次部署的最小流程。
+
+新建空库时，在 `worker/` 目录执行：
 
 ```bash
-wrangler d1 execute ld-gpt-check --file=./schema.sql --remote
+npx wrangler d1 execute ld-gpt-check --remote --file=./schema.sql
 ```
 
-如果是在已有 submission 表的远程 D1 上升级，按顺序执行迁移：
+已有远程库升级时，不要直接重复执行 `schema.sql`。先查看待执行迁移：
 
 ```bash
-wrangler d1 execute ld-gpt-check --file=./migrations/0001_add_submission_diagnostics.sql --remote
-wrangler d1 execute ld-gpt-check --file=./migrations/0002_add_upload_v3_and_linuxdo_profile.sql --remote
-wrangler d1 execute ld-gpt-check --file=./migrations/0003_add_question_banks.sql --remote
-wrangler d1 execute ld-gpt-check --file=./migrations/0004_add_anonymous_submissions.sql --remote
-wrangler d1 execute ld-gpt-check --file=./migrations/0005_add_provider_bridges.sql --remote
-wrangler d1 execute ld-gpt-check --file=./migrations/0006_bridge_suggestions_ai_icons.sql --remote
+npx wrangler d1 migrations list ld-gpt-check --remote
+```
+
+如果旧库已经手动执行过 `0001` 到 `0006`，但这里仍列出这些旧 migration，先按迁移指南中的“现有远程库一次性基线修复”登记旧迁移记录。之后执行：
+
+```bash
+npx wrangler d1 migrations apply ld-gpt-check --remote
 ```
 
 验证表是否创建成功：
 
 ```bash
-wrangler d1 execute ld-gpt-check --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
+npx wrangler d1 execute ld-gpt-check --remote --command="SELECT name FROM sqlite_master WHERE type='table';"
 ```
 
 应看到 `users`、`device_sessions`、`access_tokens`、`benchmark_submissions`、`benchmark_question_results`、`benchmark_attempts`、`oauth_states`、`web_sessions`、`question_banks`、`bridges`、`bridge_base_urls`、`bridge_suggestions` 等表。
@@ -377,16 +381,17 @@ wrangler secret put LINUXDO_CLIENT_SECRET
 
 ### D1 报 no such table
 
-说明 remote D1 没有执行 schema，或绑定了错误的 database id。
+说明 Worker 绑定的 remote D1 缺少目标表。常见原因是新库未初始化、已有库漏执行 migration，或 `database_id` 绑定到了错误数据库。
 
 处理：
 
 ```bash
 cd worker
-wrangler d1 execute ld-gpt-check --file=./schema.sql --remote
+npx wrangler d1 execute ld-gpt-check --remote --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+npx wrangler d1 migrations list ld-gpt-check --remote
 ```
 
-同时检查 `worker/wrangler.toml` 中的 `database_id`。
+如果这是全新的空库，按第 5 节执行 `schema.sql` 初始化。如果这是已有库，按 [D1 数据库迁移指南](database-migrations.md) 执行 migration 或一次性基线修复，不要重复执行 `schema.sql`。同时检查 `worker/wrangler.toml` 中的 `database_id` 是否指向正确 D1。
 
 ### CLI 提示 unauthorized
 

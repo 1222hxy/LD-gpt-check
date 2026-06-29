@@ -234,7 +234,9 @@ ld-gpt-check run -m gpt-5.5 --question-file ./questions.json --suite custom_1 -n
 cp worker/wrangler.toml.example worker/wrangler.toml
 wrangler d1 create ld-gpt-check
 cd worker
-wrangler d1 execute ld-gpt-check --file=./schema.sql --remote
+# 新建空库初始化：
+npx wrangler d1 execute ld-gpt-check --remote --file=./schema.sql
+# 已有远程库升级请按 docs/database-migrations.md 执行 migration，不要重复执行 schema.sql。
 wrangler secret put LINUXDO_CLIENT_ID
 wrangler secret put LINUXDO_CLIENT_SECRET
 wrangler secret put TOKEN_SECRET
